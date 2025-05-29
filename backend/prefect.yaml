@@ -26,7 +26,7 @@ deployments:
       name: default-agent-pool
       work_queue_name: default
     schedule:
-      cron: "*/15 * * * *"
+      cron: "0 0 * * 0"  # Once a week, Sunday at 00:00 UTC
       timezone: "UTC"
     tags: ["cleanup", "scheduled", "maintenance"]
     parameters: {}
