@@ -22,8 +22,7 @@ services:
     rootDir: frontend
     dockerfilePath: Dockerfile
     healthCheckPath: /
-    dockerCommand: >
-      /app/_build/prod/rel/frontend/bin/frontend start
+    dockerCommand: /app/bin/frontend start
     envVars:
       - key: PREFECT_API_URL
         value: http://meatspace:4200/api
