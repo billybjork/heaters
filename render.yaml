@@ -1,0 +1,49 @@
+envVarGroups:
+  - name: app-secrets
+    envVars:
+      - key: AWS_REGION
+        value: "us-west-1"
+
+# ───────────── Databases ─────────────
+databases: 
+  - name: app-db
+    plan: basic-1gb
+    postgresMajorVersion: 16
+    ipAllowList: []
+
+# ───────────── Services ─────────────
+services:
+
+# --- Phoenix LiveView Web -------------------------------------------
+  - name: phoenix-web
+    type: web
+    env: docker
+    plan: starter
+    rootDir: frontend
+    dockerfilePath: Dockerfile
+    healthCheckPath: /
+    dockerCommand: >
+      /app/_build/prod/rel/frontend/bin/frontend start
+    envVars:
+      - key: PREFECT_API_URL
+        value: http://meatspace:4200/api
+      - key: INTAKE_DEPLOYMENT_ID
+        value: 28e9a4bc-0d70-4873-96f4-6bab7877073d
+      - key: INTAKE_DEPLOYMENT_SLUG
+        value: meatspace-ingest/intake-default
+      - key: DATABASE_URL
+        fromDatabase:
+          name: app-db
+          property: connectionString
+      - key: PHX_SERVER
+        value: "true"
+      - key: PHX_HOST
+        value: phoenix-web-yupe.onrender.com
+      - key: PORT
+        value: "4000"
+      - key: SECRET_KEY_BASE
+        generateValue: true
+      - fromGroup: app-secrets
+      - key: SECRET_KEY_BASE
+        generateValue: true
+      - fromGroup: app-secrets

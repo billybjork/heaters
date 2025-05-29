@@ -1,54 +1,45 @@
 import Config
 
-# … your existing DB, endpoint, live_reload, logger, etc. configs above …
+# ───────────────────────────────────────────
+#  Database — local Postgres for dev only
+# ───────────────────────────────────────────
+config :frontend, Frontend.Repo,
+  username: "postgres",
+  password: "postgres",
+  hostname: "localhost",
+  database: "frontend_dev",
+  stacktrace: true,
+  show_sensitive_data_on_connection_error: true,
+  pool_size: 10
 
-# Watchers: bundle JS/CSS in dev
-# If DISABLE_ASSET_WATCHERS is set, we turn them off (useful in Docker).
-watchers =
-  if System.get_env("DISABLE_ASSET_WATCHERS") do
-    []
-  else
-    [
-      # JS compilation via esbuild (native binary, not a JS script)
-      node: [
-        "node_modules/esbuild/bin/esbuild",
-        "--watch",
-        "--bundle", "js/app.js",
-        "--target=es2017",
-        "--outdir=../priv/static/assets",
-        "--external:/fonts/*",
-        "--external:/images/*",
-        cd: Path.expand("../assets", __DIR__),
-        env: %{"NODE_PATH" => Path.expand("../deps", __DIR__)}
-      ],
-      # CSS compilation via Tailwind CLI (JS script)
-      node: [
-        "node_modules/tailwindcss/lib/cli.js",
-        "--input=css/app.css",
-        "--output=../priv/static/assets/app.css",
-        "--config=tailwind.config.js",
-        "--watch",
-        cd: Path.expand("../assets", __DIR__)
-      ]
-    ]
-  end
-
+# ───────────────────────────────────────────
+#  Phoenix endpoint
+# ───────────────────────────────────────────
 config :frontend, FrontendWeb.Endpoint,
   http: [ip: {0, 0, 0, 0}, port: 4000],
   check_origin: false,
   code_reloader: true,
   debug_errors: true,
-  secret_key_base: "Hcf01GGw0FYxDuBv8DYlZVdkYmxTfFai9aTdCBHzKowVAZE6/nQrGcYm5btt06wI",
-  watchers: watchers
+  secret_key_base: "1yyvat8bVNahXZFsX5tOvQ2sc75yXYCOC8dTG6pzDpBR4w32TTFftWpI+suyC1jc",
+  watchers: []
 
-# Watch static and templates for browser reloading.
+# Live-reload patterns
 config :frontend, FrontendWeb.Endpoint,
   live_reload: [
     patterns: [
-      ~r"priv/static/assets/.*(js|css|png|jpeg|jpg|gif|svg)$",
+      ~r"priv/static/.*(js|css|png|jpeg|jpg|gif|svg)$",
       ~r"priv/gettext/.*(po)$",
-      ~r"lib/frontend_web/(controllers|live|components|layouts)/.*(ex|heex)$"
+      ~r"lib/frontend_web/(controllers|live|components)/.*(ex|heex)$"
     ]
   ]
 
-# … rest of your dev.exs unchanged …
+config :frontend, dev_routes: true
+config :logger, :console, format: "[$level] $message\n"
+config :phoenix, :stacktrace_depth, 20
+config :phoenix, :plug_init_mode, :runtime
+config :phoenix_live_view, :debug_heex_annotations, true
+
+# Load .env in dev if you want overrides (e.g. DATABASE_URL)
+if Code.ensure_loaded?(Dotenvy) and File.exists?(".env") do
+  Dotenvy.load()
+end
