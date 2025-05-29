@@ -15,8 +15,7 @@ database_url =
     For example: ecto://USER:PASS@HOST/DATABASE
     """
 
-config :frontend, :cloudfront_domain,
-  System.fetch_env!("CLOUDFRONT_DOMAIN")
+config :frontend, :cloudfront_domain, System.fetch_env!("CLOUDFRONT_DOMAIN")
 
 maybe_ipv6 =
   if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
@@ -38,13 +37,12 @@ ssl_opts =
   end
 
 config :frontend, Frontend.Repo,
-  url: (
-    if render_db? and not String.contains?(database_url, "sslmode") do
-      database_url <> "?sslmode=require"
-    else
-      database_url
-    end
-  ),
+  url:
+    (if render_db? and not String.contains?(database_url, "sslmode") do
+       database_url <> "?sslmode=require"
+     else
+       database_url
+     end),
   ssl: render_db?,
   ssl_opts: ssl_opts,
   pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),

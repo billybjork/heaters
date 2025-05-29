@@ -29,14 +29,14 @@ defmodule FrontendWeb.QueryLive do
     socket =
       socket
       |> assign(
-           filter_opts: opts,
-           filters: filters,
-           main_clip: main_clip,
-           similars: similars,
-           page: 1,
-           sort_asc?: true,
-           per_page: @per_page
-         )
+        filter_opts: opts,
+        filters: filters,
+        main_clip: main_clip,
+        similars: similars,
+        page: 1,
+        sort_asc?: true,
+        per_page: @per_page
+      )
 
     {:ok, socket}
   end
@@ -44,14 +44,16 @@ defmodule FrontendWeb.QueryLive do
   @impl true
   def handle_event("pick_main", %{"clip_id" => id_str}, socket) do
     id = String.to_integer(id_str)
-    main  = Clips.get_clip!(id)
+    main = Clips.get_clip!(id)
     %{filters: f, sort_asc?: sa} = socket.assigns
-    sims  = Clips.similar_clips(id, f, sa, 1, @per_page)
+    sims = Clips.similar_clips(id, f, sa, 1, @per_page)
 
-    {:noreply, assign(socket,
-                      main_clip: main,
-                      similars:  sims,
-                      page: 1)}
+    {:noreply,
+     assign(socket,
+       main_clip: main,
+       similars: sims,
+       page: 1
+     )}
   end
 
   @impl true
@@ -63,11 +65,19 @@ defmodule FrontendWeb.QueryLive do
     }
 
     main_clip = Clips.random_embedded_clip(filters)
-    similars  = if main_clip, do: Clips.similar_clips(main_clip.id, filters, true, 1, @per_page), else: []
+
+    similars =
+      if main_clip, do: Clips.similar_clips(main_clip.id, filters, true, 1, @per_page), else: []
 
     {:noreply,
      socket
-     |> assign(filters: filters, main_clip: main_clip, similars: similars, page: 1, sort_asc?: true)}
+     |> assign(
+       filters: filters,
+       main_clip: main_clip,
+       similars: similars,
+       page: 1,
+       sort_asc?: true
+     )}
   end
 
   @impl true
@@ -106,9 +116,9 @@ defmodule FrontendWeb.QueryLive do
   end
 
   defp maybe_nil(""), do: nil
-  defp maybe_nil(x),  do: x
+  defp maybe_nil(x), do: x
 
-  defp to_int_or_nil(nil),    do: nil
-  defp to_int_or_nil(""),     do: nil
+  defp to_int_or_nil(nil), do: nil
+  defp to_int_or_nil(""), do: nil
   defp to_int_or_nil(s) when is_binary(s), do: String.to_integer(s)
 end

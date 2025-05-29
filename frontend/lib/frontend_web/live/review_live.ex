@@ -26,10 +26,12 @@ defmodule FrontendWeb.ReviewLive do
   alias Frontend.Clips
   alias Frontend.Clips.Clip
 
-  @prefetch            6      # 1 current + 5 future
-  @refill_threshold    3
-  @history_limit       5
-  @sibling_page_size   24     # thumbnails per page in the grid
+  # 1 current + 5 future
+  @prefetch 6
+  @refill_threshold 3
+  @history_limit 5
+  # thumbnails per page in the grid
+  @sibling_page_size 24
 
   # -------------------------------------------------------------------------
   # Mount – build initial queue
@@ -42,11 +44,11 @@ defmodule FrontendWeb.ReviewLive do
     socket =
       socket
       |> assign(
-        flash_action:  nil,
-        id_mode?:      false,
-        sibling_page:  1,
+        flash_action: nil,
+        id_mode?: false,
+        sibling_page: 1,
         sibling_page_size: @sibling_page_size,
-        siblings:      []
+        siblings: []
       )
 
     case clips do
@@ -54,18 +56,20 @@ defmodule FrontendWeb.ReviewLive do
         {:ok,
          assign(socket,
            page_state: :empty,
-           current:    nil,
-           future:     [],
-           history:    [])}
+           current: nil,
+           future: [],
+           history: []
+         )}
 
       [cur | fut] ->
         {:ok,
          socket
          |> assign(
-           current:      cur,
-           future:       fut,
-           history:      [],
-           page_state:   :reviewing)
+           current: cur,
+           future: fut,
+           history: [],
+           page_state: :reviewing
+         )
          |> assign_siblings(cur, 1)}
     end
   end
@@ -101,12 +105,15 @@ defmodule FrontendWeb.ReviewLive do
   # SPLIT (must precede generic "select" clause)
   # ─────────────────────────────────────────────────────────────────────────
   @impl true
-  def handle_event("select", %{"action" => "split", "frame" => frame_val},
-                   %{assigns: %{current: clip}} = socket) do
+  def handle_event(
+        "select",
+        %{"action" => "split", "frame" => frame_val},
+        %{assigns: %{current: clip}} = socket
+      ) do
     frame =
       case frame_val do
         v when is_integer(v) -> v
-        v when is_binary(v)  -> Integer.parse(v) |> elem(0)
+        v when is_binary(v) -> Integer.parse(v) |> elem(0)
       end
 
     socket =
@@ -125,13 +132,15 @@ defmodule FrontendWeb.ReviewLive do
   # ─────────────────────────────────────────────────────────────────────────
   for action <- ["merge", "group"] do
     @impl true
-    def handle_event("select",
-                     %{"action" => unquote(action), "target_id" => tgt_str},
-                     %{assigns: %{current: curr}} = socket)
-                     when is_binary(tgt_str) and tgt_str != "" do
-      with {tgt_id, ""}      <- Integer.parse(tgt_str),
-           %Clip{} = tgt      <- Clips.get_clip!(tgt_id),
-           true               <- tgt.source_video_id == curr.source_video_id do
+    def handle_event(
+          "select",
+          %{"action" => unquote(action), "target_id" => tgt_str},
+          %{assigns: %{current: curr}} = socket
+        )
+        when is_binary(tgt_str) and tgt_str != "" do
+      with {tgt_id, ""} <- Integer.parse(tgt_str),
+           %Clip{} = tgt <- Clips.get_clip!(tgt_id),
+           true <- tgt.source_video_id == curr.source_video_id do
         socket =
           socket
           |> assign(flash_action: unquote(action))
@@ -141,12 +150,10 @@ defmodule FrontendWeb.ReviewLive do
           |> assign(id_mode?: false)
           |> put_flash(:info, "#{flash_verb(unquote(action))} #{tgt.id} ↔ #{curr.id}")
 
-        {:noreply,
-         persist_async(socket, {String.to_atom(unquote(action)), tgt, curr})}
+        {:noreply, persist_async(socket, {String.to_atom(unquote(action)), tgt, curr})}
       else
         _ ->
-          {:noreply,
-           put_flash(socket, :error, "Invalid target clip ID for #{unquote(action)}")}
+          {:noreply, put_flash(socket, :error, "Invalid target clip ID for #{unquote(action)}")}
       end
     end
   end
@@ -155,8 +162,11 @@ defmodule FrontendWeb.ReviewLive do
   # MERGE & GROUP (original “with previous clip” behaviour)
   # ─────────────────────────────────────────────────────────────────────────
   @impl true
-  def handle_event("select", %{"action" => "merge"},
-                   %{assigns: %{current: curr, history: [prev | _]}} = socket) do
+  def handle_event(
+        "select",
+        %{"action" => "merge"},
+        %{assigns: %{current: curr, history: [prev | _]}} = socket
+      ) do
     socket =
       socket
       |> assign(flash_action: "merge")
@@ -169,8 +179,11 @@ defmodule FrontendWeb.ReviewLive do
   end
 
   @impl true
-  def handle_event("select", %{"action" => "group"},
-                   %{assigns: %{current: curr, history: [prev | _]}} = socket) do
+  def handle_event(
+        "select",
+        %{"action" => "group"},
+        %{assigns: %{current: curr, history: [prev | _]}} = socket
+      ) do
     socket =
       socket
       |> assign(flash_action: "group")
@@ -184,8 +197,7 @@ defmodule FrontendWeb.ReviewLive do
 
   # Ignore merge / group if no previous clip (defence-in-depth)
   @impl true
-  def handle_event("select", %{"action" => action},
-                   %{assigns: %{history: []}} = socket)
+  def handle_event("select", %{"action" => action}, %{assigns: %{history: []}} = socket)
       when action in ["merge", "group"] do
     {:noreply, socket}
   end
@@ -194,8 +206,7 @@ defmodule FrontendWeb.ReviewLive do
   # Generic SELECT (approve, skip, archive, …)
   # ─────────────────────────────────────────────────────────────────────────
   @impl true
-  def handle_event("select", %{"action" => action},
-                   %{assigns: %{current: clip}} = socket) do
+  def handle_event("select", %{"action" => action}, %{assigns: %{current: clip}} = socket) do
     socket =
       socket
       |> assign(flash_action: action)
@@ -215,16 +226,20 @@ defmodule FrontendWeb.ReviewLive do
     do: {:noreply, socket}
 
   @impl true
-  def handle_event("undo", _params,
-                   %{assigns: %{history: [prev | rest], current: cur, future: fut}} = socket) do
+  def handle_event(
+        "undo",
+        _params,
+        %{assigns: %{history: [prev | rest], current: cur, future: fut}} = socket
+      ) do
     socket =
       socket
       |> assign(
-           flash_action: nil,
-           current:      prev,
-           future:       [cur | fut],
-           history:      rest,
-           page_state:   :reviewing)
+        flash_action: nil,
+        current: prev,
+        future: [cur | fut],
+        history: rest,
+        page_state: :reviewing
+      )
       |> refill_future()
       |> assign_siblings(prev, 1)
       |> clear_flash()
@@ -273,7 +288,7 @@ defmodule FrontendWeb.ReviewLive do
         |> Enum.filter(& &1)
         |> Enum.map(& &1.id)
 
-      needed    = @prefetch - (length(assigns.future) + 1)
+      needed = @prefetch - (length(assigns.future) + 1)
       new_clips = Clips.next_pending_review_clips(needed, exclude_ids)
 
       update(socket, :future, &(&1 ++ new_clips))
@@ -311,6 +326,7 @@ defmodule FrontendWeb.ReviewLive do
         page,
         @sibling_page_size
       )
+
     assign(socket, siblings: sibs, sibling_page: page)
   end
 
@@ -319,7 +335,7 @@ defmodule FrontendWeb.ReviewLive do
   # -------------------------------------------------------------------------
 
   @impl true
-  def handle_async({:persist, _}, {:ok, _}, socket),   do: {:noreply, socket}
+  def handle_async({:persist, _}, {:ok, _}, socket), do: {:noreply, socket}
   @impl true
   def handle_async({:persist, clip_id}, {:exit, reason}, socket) do
     require Logger
@@ -328,7 +344,7 @@ defmodule FrontendWeb.ReviewLive do
   end
 
   @impl true
-  def handle_async({:merge_pair, _}, {:ok, _}, socket),   do: {:noreply, socket}
+  def handle_async({:merge_pair, _}, {:ok, _}, socket), do: {:noreply, socket}
   @impl true
   def handle_async({:merge_pair, {prev_id, curr_id}}, {:exit, reason}, socket) do
     require Logger
@@ -337,7 +353,7 @@ defmodule FrontendWeb.ReviewLive do
   end
 
   @impl true
-  def handle_async({:group_pair, _}, {:ok, _}, socket),   do: {:noreply, socket}
+  def handle_async({:group_pair, _}, {:ok, _}, socket), do: {:noreply, socket}
   @impl true
   def handle_async({:group_pair, {prev_id, curr_id}}, {:exit, reason}, socket) do
     require Logger
@@ -346,7 +362,7 @@ defmodule FrontendWeb.ReviewLive do
   end
 
   @impl true
-  def handle_async({:split, _}, {:ok, _}, socket),   do: {:noreply, socket}
+  def handle_async({:split, _}, {:ok, _}, socket), do: {:noreply, socket}
   @impl true
   def handle_async({:split, clip_id}, {:exit, reason}, socket) do
     require Logger
@@ -358,10 +374,10 @@ defmodule FrontendWeb.ReviewLive do
   # Flash verb helper
   # -------------------------------------------------------------------------
   defp flash_verb("approve"), do: "Approved"
-  defp flash_verb("skip"),    do: "Skipped"
+  defp flash_verb("skip"), do: "Skipped"
   defp flash_verb("archive"), do: "Archived"
-  defp flash_verb("merge"),   do: "Merged"
-  defp flash_verb("group"),   do: "Grouped"
-  defp flash_verb("split"),   do: "Split"
-  defp flash_verb(other),     do: String.capitalize(other)
+  defp flash_verb("merge"), do: "Merged"
+  defp flash_verb("group"), do: "Grouped"
+  defp flash_verb("split"), do: "Split"
+  defp flash_verb(other), do: String.capitalize(other)
 end

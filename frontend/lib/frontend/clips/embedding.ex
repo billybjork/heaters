@@ -27,7 +27,8 @@ defmodule Frontend.Clips.Embedding do
     belongs_to :clip, Clip, type: :integer
 
     # Store embeddings as a Postgres vector
-    field :embedding, Vector    # uses Pgvector.Ecto.Vector :contentReference[oaicite:0]{index=0}
+    # uses Pgvector.Ecto.Vector :contentReference[oaicite:0]{index=0}
+    field :embedding, Vector
 
     field :model_name, :string
     field :model_version, :string

@@ -4,7 +4,7 @@ defmodule FrontendWeb.VideoController do
 
   def create(conn, %{"url" => url}) do
     case Intake.submit(url) do
-      :ok            ->
+      :ok ->
         conn
         |> put_flash(:info, "Submitted!")
         |> redirect(to: get_referrer(conn))

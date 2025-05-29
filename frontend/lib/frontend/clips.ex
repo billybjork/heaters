@@ -42,11 +42,11 @@ defmodule Frontend.Clips do
 
   @action_map %{
     "approve" => "selected_approve",
-    "skip"    => "selected_skip",
+    "skip" => "selected_skip",
     "archive" => "selected_archive",
-    "undo"    => "selected_undo",
-    "group"   => "selected_group_source",
-    "split"   => "selected_split"
+    "undo" => "selected_undo",
+    "group" => "selected_group_source",
+    "split" => "selected_split"
   }
 
   # -------------------------------------------------------------------------
@@ -92,8 +92,9 @@ defmodule Frontend.Clips do
 
   @doc "Log `ui_action` for `clip`, mark it reviewed (or *un-review* on undo), and return the next clip to review in one SQL round-trip."
   def select_clip_and_fetch_next(%Clip{id: clip_id}, ui_action) do
-    reviewer_id = "admin"  # TODO: pull from auth
-    db_action   = Map.get(@action_map, ui_action, ui_action)
+    # TODO: pull from auth
+    reviewer_id = "admin"
+    db_action = Map.get(@action_map, ui_action, ui_action)
 
     {:ok, %{rows: rows}} =
       Repo.query(
@@ -123,7 +124,7 @@ defmodule Frontend.Clips do
     next_clip =
       case rows do
         [[id]] -> load_clip_with_assocs(id)
-        _      -> nil
+        _ -> nil
       end
 
     {:ok, {next_clip, %{clip_id: clip_id, action: db_action}}}
@@ -139,16 +140,24 @@ defmodule Frontend.Clips do
   @doc "Handle a **merge** request between *prev ⇠ current* clips."
   def request_merge_and_fetch_next(%Clip{id: prev_id}, %Clip{id: curr_id}) do
     reviewer_id = "admin"
-    now         = DateTime.utc_now()
+    now = DateTime.utc_now()
 
     Repo.transaction(fn ->
       # log both sides
       %ClipEvent{}
-      |> ClipEvent.changeset(%{clip_id: prev_id, action: "selected_merge_target", reviewer_id: reviewer_id})
+      |> ClipEvent.changeset(%{
+        clip_id: prev_id,
+        action: "selected_merge_target",
+        reviewer_id: reviewer_id
+      })
       |> Repo.insert!()
 
       %ClipEvent{}
-      |> ClipEvent.changeset(%{clip_id: curr_id, action: "selected_merge_source", reviewer_id: reviewer_id})
+      |> ClipEvent.changeset(%{
+        clip_id: curr_id,
+        action: "selected_merge_source",
+        reviewer_id: reviewer_id
+      })
       |> Repo.insert!()
 
       # mark reviewed & attach metadata
@@ -181,17 +190,26 @@ defmodule Frontend.Clips do
   @doc "Handle a **group** request between *prev ⇠ current* clips."
   def request_group_and_fetch_next(%Clip{id: prev_id}, %Clip{id: curr_id}) do
     reviewer_id = "admin"
-    now         = DateTime.utc_now()
+    now = DateTime.utc_now()
 
     Repo.transaction(fn ->
       # target side
       %ClipEvent{}
-      |> ClipEvent.changeset(%{clip_id: prev_id, action: "selected_group_target", reviewer_id: reviewer_id})
+      |> ClipEvent.changeset(%{
+        clip_id: prev_id,
+        action: "selected_group_target",
+        reviewer_id: reviewer_id
+      })
       |> Repo.insert!()
 
       # source side
       %ClipEvent{}
-      |> ClipEvent.changeset(%{clip_id: curr_id, action: "selected_group_source", reviewer_id: reviewer_id, event_data: %{"group_with_clip_id" => prev_id}})
+      |> ClipEvent.changeset(%{
+        clip_id: curr_id,
+        action: "selected_group_source",
+        reviewer_id: reviewer_id,
+        event_data: %{"group_with_clip_id" => prev_id}
+      })
       |> Repo.insert!()
 
       # mark reviewed
@@ -219,12 +237,17 @@ defmodule Frontend.Clips do
   @doc "Handle a **split** request on `clip` at `frame_num`."
   def request_split_and_fetch_next(%Clip{id: clip_id}, frame_num) when is_integer(frame_num) do
     reviewer_id = "admin"
-    now         = DateTime.utc_now()
+    now = DateTime.utc_now()
 
     Repo.transaction(fn ->
       # record event
       %ClipEvent{}
-      |> ClipEvent.changeset(%{clip_id: clip_id, action: "selected_split", reviewer_id: reviewer_id, event_data: %{"split_at_frame" => frame_num}})
+      |> ClipEvent.changeset(%{
+        clip_id: clip_id,
+        action: "selected_split",
+        reviewer_id: reviewer_id,
+        event_data: %{"split_at_frame" => frame_num}
+      })
       |> Repo.insert!()
 
       # mark reviewed & attach metadata
@@ -276,10 +299,11 @@ defmodule Frontend.Clips do
   """
   def for_source_video_with_sprites(source_video_id, exclude_id, page, page_size) do
     Clip
-    |> join(:inner, [c], ca in assoc(c, :clip_artifacts),
-         on: ca.artifact_type == "sprite_sheet")
-    |> where([c, _ca],
-         c.source_video_id == ^source_video_id and c.id != ^exclude_id)
+    |> join(:inner, [c], ca in assoc(c, :clip_artifacts), on: ca.artifact_type == "sprite_sheet")
+    |> where(
+      [c, _ca],
+      c.source_video_id == ^source_video_id and c.id != ^exclude_id
+    )
     |> distinct([c, _ca], c.id)
     |> order_by([c, _ca], asc: c.id)
     |> offset(^((page - 1) * page_size))
@@ -327,9 +351,11 @@ defmodule Frontend.Clips do
     base =
       Embedding
       |> join(
-           :inner, [e], c in Clip,
-           on: c.id == e.clip_id and c.ingest_state == "embedded"
-         )
+        :inner,
+        [e],
+        c in Clip,
+        on: c.id == e.clip_id and c.ingest_state == "embedded"
+      )
 
     base =
       if m do
@@ -358,19 +384,22 @@ defmodule Frontend.Clips do
     |> select([_e, c], c)
     |> Repo.one()
     |> case do
-         nil  -> nil
-         clip -> Repo.preload(clip, :source_video)
-       end
+      nil -> nil
+      clip -> Repo.preload(clip, :source_video)
+    end
   end
 
   @doc """
   Given a main clip and the active filters, return page `page` of its neighbors,
   ordered by vector similarity (<=>), ascending or descending.
   """
-  def similar_clips(main_clip_id,
-                    %{model_name: m, generation_strategy: g, source_video_id: sv_id},
-                    asc?, page, per) do
-
+  def similar_clips(
+        main_clip_id,
+        %{model_name: m, generation_strategy: g, source_video_id: sv_id},
+        asc?,
+        page,
+        per
+      ) do
     main_vec =
       Embedding
       |> where([e], e.clip_id == ^main_clip_id)
@@ -381,28 +410,29 @@ defmodule Frontend.Clips do
     Embedding
     |> where([e], e.clip_id != ^main_clip_id)
     |> maybe_filter(m, g)
-    |> join(:inner, [e], c in Clip,
-         on: c.id == e.clip_id and c.ingest_state == "embedded")
+    |> join(:inner, [e], c in Clip, on: c.id == e.clip_id and c.ingest_state == "embedded")
     # only keep clips from the chosen source video, if any
     |> (fn q -> if sv_id, do: where(q, [_, c], c.source_video_id == ^sv_id), else: q end).()
     |> order_by_similarity(main_vec, asc?)
     |> offset(^((page - 1) * per))
     |> limit(^per)
-    |> select([e, c],
-         %{
-           clip:         c,
-           similarity_pct:
-             fragment("round((1 - (? <=> ?)) * 100)::int", e.embedding, ^main_vec)
-         })
+    |> select(
+      [e, c],
+      %{
+        clip: c,
+        similarity_pct: fragment("round((1 - (? <=> ?)) * 100)::int", e.embedding, ^main_vec)
+      }
+    )
     |> Repo.all()
     |> Enum.map(fn %{clip: clip} = row ->
-         %{row | clip: Repo.preload(clip, [:clip_artifacts])}
-       end)
+      %{row | clip: Repo.preload(clip, [:clip_artifacts])}
+    end)
   end
 
   defp maybe_filter(query, nil, nil), do: query
+
   defp maybe_filter(query, m, g) do
-  query
+    query
     |> (fn q -> if m, do: where(q, [e], e.model_name == ^m), else: q end).()
     |> (fn q -> if g, do: where(q, [e], e.generation_strategy == ^g), else: q end).()
   end
@@ -410,6 +440,7 @@ defmodule Frontend.Clips do
   defp order_by_similarity(query, main_embedding, true = _asc?) do
     order_by(query, [e, _c], asc: fragment("? <=> ?", e.embedding, ^main_embedding))
   end
+
   defp order_by_similarity(query, main_embedding, false = _desc?) do
     order_by(query, [e, _c], desc: fragment("? <=> ?", e.embedding, ^main_embedding))
   end
@@ -425,5 +456,4 @@ defmodule Frontend.Clips do
     |> select([c], count("*"))
     |> Repo.one()
   end
-
 end

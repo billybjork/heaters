@@ -7,5 +7,4 @@ defmodule Frontend.Repo.Migrations.AddUpdatedAtToClipEvents do
       add_if_not_exists :updated_at, :utc_datetime_usec
     end
   end
-
 end

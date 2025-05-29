@@ -9,8 +9,7 @@ config :frontend,
   generators: [timestamp_type: :utc_datetime]
 
 # Tell Ecto/Postgres about our custom types (for the `vector` column)
-config :frontend, Frontend.Repo,
-  types: Frontend.PostgresTypes
+config :frontend, Frontend.Repo, types: Frontend.PostgresTypes
 
 # Configures the endpoint
 config :frontend, FrontendWeb.Endpoint,
@@ -21,7 +20,8 @@ config :frontend, FrontendWeb.Endpoint,
     layout: false
   ],
   pubsub_server: Frontend.PubSub,
-  live_view: [signing_salt: "KWvQc1I2"] # Replace with a secure salt from `mix phx.gen.secret 32`
+  # Replace with a secure salt from `mix phx.gen.secret 32`
+  live_view: [signing_salt: "KWvQc1I2"]
 
 # Configures Elixir's Logger
 config :logger, :console,
@@ -33,10 +33,10 @@ config :phoenix, :json_library, Jason
 
 # Configure esbuild (the bundler used for JS/CSS)
 config :esbuild,
-  version: "0.18.17", # Use the latest appropriate version
+  # Use the latest appropriate version
+  version: "0.18.17",
   default: [
-    args:
-      ~w(
+    args: ~w(
         js/app.js
         --bundle
         --target=es2017

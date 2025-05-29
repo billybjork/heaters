@@ -19,21 +19,22 @@ defmodule Frontend.Intake do
   @spec submit(String.t()) :: :ok | {:error, String.t()}
   def submit(url) when is_binary(url) do
     with {:ok, id} <- insert_source_video(url),
-         :ok       <- create_prefect_run(id, url) do
+         :ok <- create_prefect_run(id, url) do
       :ok
     end
   end
 
-    # -- step 1: insert into source_videos -------------------------------
+  # -- step 1: insert into source_videos -------------------------------
 
-    defp insert_source_video(url) do
+  defp insert_source_video(url) do
     is_http? = String.starts_with?(url, ["http://", "https://"])
 
     # For URLs give a tiny placeholder that satisfies NOT-NULL
     # For local files keep the derived filename
     title =
       if is_http? do
-        "?"                  # will be overwritten by intake_task
+        # will be overwritten by intake_task
+        "?"
       else
         url
         |> Path.basename(".mp4")
@@ -41,17 +42,17 @@ defmodule Frontend.Intake do
       end
 
     fields = %{
-      title:        title,
+      title: title,
       ingest_state: "new",
       original_url: if(is_http?, do: url, else: nil),
-      web_scraped:  is_http?,
-      created_at:   DateTime.utc_now(),
-      updated_at:   DateTime.utc_now()
+      web_scraped: is_http?,
+      created_at: DateTime.utc_now(),
+      updated_at: DateTime.utc_now()
     }
 
     case Repo.insert_all(@source_videos, [fields], returning: [:id]) do
       {1, [%{id: id} | _]} -> {:ok, id}
-      _                    -> {:error, "DB insert failed"}
+      _ -> {:error, "DB insert failed"}
     end
   rescue
     e -> {:error, "DB error: #{Exception.message(e)}"}
@@ -60,7 +61,8 @@ defmodule Frontend.Intake do
   # -- step 2: call Prefect API ----------------------------------------
 
   defp create_prefect_run(id, url) do
-    api        = System.get_env("PREFECT_API_URL") || "http://localhost:4200/api"
+    api = System.get_env("PREFECT_API_URL") || "http://localhost:4200/api"
+
     deployment =
       System.get_env("INTAKE_DEPLOYMENT_ID") ||
         raise """
@@ -70,9 +72,9 @@ defmodule Frontend.Intake do
 
     body = %{
       parameters: %{
-        "source_video_id"    => id,
-        "input_source"       => url,
-        "re_encode_for_qt"   => true,
+        "source_video_id" => id,
+        "input_source" => url,
+        "re_encode_for_qt" => true,
         "overwrite_existing" => false
       },
       idempotency_key: "frontend_submit_#{id}"
