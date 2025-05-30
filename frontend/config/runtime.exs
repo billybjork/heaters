@@ -1,13 +1,9 @@
 import Config
 
-# Enable Phoenix server if PHX_SERVER is set
 if System.get_env("PHX_SERVER") do
   config :frontend, FrontendWeb.Endpoint, server: true
 end
 
-# ───────────────────────────────────────────
-#  Common runtime config (all envs)
-# ───────────────────────────────────────────
 database_url =
   System.get_env("DATABASE_URL") ||
     raise """
@@ -19,13 +15,10 @@ config :frontend, :cloudfront_domain, System.fetch_env!("CLOUDFRONT_DOMAIN")
 
 maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 
-# Are we on Render’s managed Postgres?
 render_db? = String.contains?(database_url, ".render.com")
+db_host   = URI.parse(database_url).host |> to_charlist()
 
-# Extract the host (as charlist) for SNI
-db_host = URI.parse(database_url).host |> to_charlist()
-
-# Build SSL options when talking to Render
+# when on Render, point at Alpine’s CA bundle
 ssl_opts =
   if render_db? do
     [
@@ -38,7 +31,6 @@ ssl_opts =
     []
   end
 
-# If Render URL lacks sslmode, append it
 repo_url =
   if render_db? and not String.contains?(database_url, "sslmode") do
     database_url <> "?sslmode=require"
@@ -48,14 +40,10 @@ repo_url =
 
 config :frontend, Frontend.Repo,
   url: repo_url,
-  ssl: true,
-  ssl_opts: ssl_opts,
-  pool_size: String.to_integer(System.get_env("POOL_SIZE") || "6"),
+  ssl: ssl_opts,
+  pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
   socket_options: maybe_ipv6
 
-# ───────────────────────────────────────────
-#  Production-only settings
-# ───────────────────────────────────────────
 if config_env() == :prod do
   secret_key_base =
     System.get_env("SECRET_KEY_BASE") ||
