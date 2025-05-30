@@ -1,3 +1,10 @@
+volumes:
+  prefect_pgdata:
+
+networks:
+  app-network:
+    driver: bridge
+
 services:
 
   # 1) Prefect metadata Postgres
@@ -73,6 +80,7 @@ services:
       AWS_ACCESS_KEY_ID:    ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       CLOUDFRONT_DOMAIN:    ${CLOUDFRONT_DOMAIN}
+    mem_limit: 8g
     volumes:
       - ./backend:/app
     command: >
@@ -102,10 +110,3 @@ services:
     networks:
       - app-network
     command: ["/app/bin/frontend", "start"]
-
-volumes:
-  prefect_pgdata:
-
-networks:
-  app-network:
-    driver: bridge

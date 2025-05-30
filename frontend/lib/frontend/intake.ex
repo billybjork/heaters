@@ -53,46 +53,53 @@ defmodule Frontend.Intake do
     e -> {:error, "DB error: #{Exception.message(e)}"}
   end
 
-  defp create_prefect_run(id, url) do
-    api = System.get_env("PREFECT_API_URL") || "http://localhost:4200/api"
+  defp resolve_deployment_id(api, ref) do
+    cond do
+      Regex.match?(~r/^[0-9a-f-]{36}$/, ref) ->
+        {:ok, ref}
 
-    deployment =
-      System.get_env("INTAKE_DEPLOYMENT_ID") ||
-        System.get_env("INTAKE_DEPLOYMENT_SLUG") ||
-        raise """
-        Missing INTAKE_DEPLOYMENT_ID or INTAKE_DEPLOYMENT_SLUG.
-        Please set one in the environment.
-        """
+      true ->
+        [flow, dep] = String.split(ref, "/", parts: 2)
+        enc_flow = URI.encode(flow, &URI.char_unreserved?/1)
+        enc_dep  = URI.encode(dep,  &URI.char_unreserved?/1)
 
-    {prefix, ref} =
-      if String.contains?(deployment, "/") do
-        {"/deployments/name/", deployment}
-      else
-        {"/deployments/", deployment}
-      end
+        case Req.get(url: "#{api}/deployments/name/#{enc_flow}/#{enc_dep}") do
+          {:ok, %Req.Response{status: 200, body: %{"id" => id}}} ->
+            {:ok, id}
 
-    body = %{
-      parameters: %{
-        "source_video_id" => id,
-        "input_source" => url,
-        "re_encode_for_qt" => true,
-        "overwrite_existing" => false
-      },
-      idempotency_key: "frontend_submit_#{id}"
-    }
+          {:ok, %Req.Response{status: status, body: body}} ->
+            {:error, "Prefect returned #{status}: #{inspect(body)}"}
 
-    case Req.post(url: "#{api}#{prefix}#{ref}/create_flow_run", json: body) do
-      {:ok, %{status: 201}} ->
-        :ok
+          {:error, reason} ->
+            {:error, "HTTP error: #{inspect(reason)}"}
+        end
+    end
+  end
 
-      {:ok, %{status: status, body: resp}} ->
-        {:error, "Prefect API #{status}: #{inspect(resp)}"}
+  defp create_prefect_run(source_id, url) do
+    api = System.get_env("PREFECT_API_URL", "http://localhost:4200/api")
+    ref = System.get_env("INTAKE_DEPLOYMENT_ID") ||
+          System.get_env("INTAKE_DEPLOYMENT_SLUG") ||
+          raise "INTAKE_DEPLOYMENT_ID or INTAKE_DEPLOYMENT_SLUG must be set"
 
-      {:error, %Mint.TransportError{reason: reason}} ->
-        {:error, "Prefect connection failed: #{reason}"}
-
-      {:error, other} ->
-        {:error, "Prefect call failed: #{inspect(other)}"}
+    with {:ok, deployment_id} <- resolve_deployment_id(api, ref),
+        {:ok, %Req.Response{status: 201}} <- Req.post(
+                url: "#{api}/deployments/#{deployment_id}/create_flow_run",
+                json: %{
+                  parameters: %{
+                    "source_video_id"    => source_id,
+                    "input_source"       => url,
+                    "re_encode_for_qt"   => true,
+                    "overwrite_existing" => false
+                  },
+                  idempotency_key: "frontend_submit_#{source_id}"
+                })
+    do
+      :ok
+    else
+      {:error, msg} -> {:error, msg}
+      {:ok, %Req.Response{status: status, body: body}} ->
+        {:error, "Flow-run creation failed (#{status}): #{inspect(body)}"}
     end
   end
 end
