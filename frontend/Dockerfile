@@ -1,33 +1,55 @@
-# 1) Node assets
+# frontend/Dockerfile
+
+# -----------------------
+# 1) Node stage: build JS assets
+# -----------------------
 FROM node:18-slim AS node_build
+
 WORKDIR /app/assets
-COPY assets/{package.json,package-lock.json} ./
-COPY assets/js ./js
-COPY assets/css ./css
+
+# copy package manifests explicitly (no brace-expansion)
+COPY ["assets/package.json", "assets/package-lock.json", "./"]
+COPY assets/js           ./js
+COPY assets/css          ./css
 COPY assets/postcss.config.js ./
+
 RUN mkdir -p ../priv/static/assets \
  && npm ci \
  && npm run deploy
 
-# 2) Elixir build
+# -----------------------
+# 2) Elixir build stage: compile + release
+# -----------------------
 FROM hexpm/elixir:1.16.2-erlang-26.2.4-alpine-3.19.1 AS build
-ENV MIX_ENV=prod LANG=C.UTF-8
+
+ENV MIX_ENV=prod \
+    LANG=C.UTF-8
+
 WORKDIR /app
+
 RUN apk add --no-cache build-base git
+
 COPY mix.exs mix.lock ./
 RUN mix local.hex --force \
   && mix local.rebar --force \
   && mix deps.get --only prod \
   && mix deps.compile
+
+# bring in compiled assets from the node stage
 COPY --from=node_build /app/priv/static/assets ./priv/static/assets
-COPY lib ./lib
-COPY config ./config
+
+COPY lib       ./lib
+COPY config    ./config
 COPY priv/repo ./priv/repo
 RUN mix compile \
  && mix release --overwrite
 
-# 3) Runtime
+# -----------------------
+# 3) Runtime image: slim Elixir release container
+# -----------------------
 FROM alpine:3.19.1 AS app
+
+# install SSL & CA bundle and update it
 RUN apk add --no-cache \
       openssl \
       ca-certificates \
@@ -36,10 +58,13 @@ RUN apk add --no-cache \
       ncurses \
     && update-ca-certificates
 
+# enable HTTP server
 ENV PHX_SERVER=true
 ENV PORT=4000
 
 WORKDIR /app
 COPY --from=build /app/_build/prod/rel/frontend ./
+
 EXPOSE 4000
+
 CMD ["/app/bin/frontend", "start"]
