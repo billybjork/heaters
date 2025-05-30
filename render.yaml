@@ -5,12 +5,13 @@ envVarGroups:
         value: "us-west-1"
 
 # ───────────── Databases ─────────────
-databases: 
+databases:
   - name: app-db
     plan: basic-1gb
     postgresMajorVersion: 16
     ipAllowList:
-      - "50.1.246.139/32"
+      - source: "50.1.246.139/32"
+        description: "El Segundo House"
 
 # ───────────── Services ─────────────
 services:
