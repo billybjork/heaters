@@ -55,18 +55,20 @@ RUN mix release --overwrite
 # -----------------------
 FROM alpine:3.19.1 AS app
 
-# Needed for SSL, compression, etc.
-RUN apk add --no-cache openssl ca-certificates
+# minimal set the VM needs at runtime
+RUN apk add --no-cache \
+      openssl \
+      ca-certificates \
+      libstdc++ \
+      libgcc \
+      ncurses
 
 WORKDIR /app
-
-# Copy only the release folder in
 COPY --from=build /app/_build/prod/rel/frontend ./
 
-# Copy your entrypoint that calls `bin/frontend`
+# Your entrypoint just wraps the release binary
 COPY entrypoint.sh .
-
 RUN chmod +x entrypoint.sh
-EXPOSE 4000
 
+EXPOSE 4000
 ENTRYPOINT ["./entrypoint.sh"]
