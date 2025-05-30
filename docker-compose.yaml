@@ -96,11 +96,11 @@ services:
       - .env
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      PHX_HOST: localhost
     ports:
       - "4000:4000"
     networks:
       - app-network
-    # use the release binary directly
     command: ["/app/bin/frontend", "start"]
 
 volumes:

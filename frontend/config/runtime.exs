@@ -1,6 +1,5 @@
 import Config
 
-# Enable the server for releases / Docker if PHX_SERVER=true
 if System.get_env("PHX_SERVER") do
   config :frontend, FrontendWeb.Endpoint, server: true
 end
@@ -20,31 +19,40 @@ config :frontend, :cloudfront_domain, System.fetch_env!("CLOUDFRONT_DOMAIN")
 maybe_ipv6 =
   if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 
-# Detect Render-hosted Postgres (requires SSL)
+# Detect Render-hosted Postgres
 render_db? = String.contains?(database_url, ".render.com")
 
-# ── SSL options ──
-# On Render: disable peer/hostname verification (to avoid bad_cert),
-# but supply the CA bundle so Phoenix stops warning.
-ssl_opts =
+# ▼ pull the hostname so we can feed it to the TLS layer
+db_host =
+  case URI.parse(database_url).host do
+    nil -> nil
+    host -> String.to_charlist(host)
+  end
+
+# ▼ TLS settings collected in ONE place
+ssl_kw =
   if render_db? do
     [
-      verify: :verify_none,
-      cacertfile: "/etc/ssl/certs/ca-certificates.crt"
+      verify: :verify_peer,
+      cacertfile: "/etc/ssl/certs/ca-certificates.crt",
+      server_name_indication: db_host,
+      hostname: db_host          # important for OTP’s hostname verifier
     ]
   else
     []
   end
 
+# append ?sslmode=require exactly once
+repo_url =
+  if render_db? and not String.contains?(database_url, "sslmode") do
+    database_url <> "?sslmode=require"
+  else
+    database_url
+  end
+
 config :frontend, Frontend.Repo,
-  url:
-    (if render_db? and not String.contains?(database_url, "sslmode") do
-       database_url <> "?sslmode=require"
-     else
-       database_url
-     end),
-  ssl: render_db?,
-  ssl_opts: ssl_opts,
+  url: repo_url,
+  ssl: ssl_kw,                   # ▼ THE change: all TLS opts live here
   pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
   socket_options: maybe_ipv6
 
@@ -68,16 +76,4 @@ if config_env() == :prod do
     url: [host: host, port: 443, scheme: "https"],
     http: [ip: {0, 0, 0, 0, 0, 0, 0, 0}, port: port],
     secret_key_base: secret_key_base
-
-  # If you later need full HTTPS termination inside the container,
-  # uncomment and adjust the block below:
-  #
-  # config :frontend, FrontendWeb.Endpoint,
-  #   https: [
-  #     port: 443,
-  #     cipher_suite: :strong,
-  #     keyfile: System.get_env("SOME_APP_SSL_KEY_PATH"),
-  #     certfile: System.get_env("SOME_APP_SSL_CERT_PATH")
-  #   ],
-  #   force_ssl: [hsts: true]
 end

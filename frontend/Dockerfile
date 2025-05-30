@@ -5,16 +5,13 @@ FROM node:18-slim AS node_build
 
 WORKDIR /app/assets
 
-# Copy only what we need for npm
 COPY assets/package.json assets/package-lock.json ./
 COPY assets/js     ./js
 COPY assets/css    ./css
 COPY assets/postcss.config.js ./postcss.config.js
 
-# Ensure output dir exists for esbuild
 RUN mkdir -p ../priv/static/assets
 
-# Install deps & bundle
 RUN npm ci
 RUN npm run deploy
 
@@ -28,26 +25,21 @@ ENV MIX_ENV=prod \
 
 WORKDIR /app
 
-# Install build tools
 RUN apk add --no-cache build-base git
 
-# 2a) Get Elixir deps
 COPY mix.exs mix.lock ./
 RUN mix local.hex --force \
   && mix local.rebar --force \
   && mix deps.get --only prod \
   && mix deps.compile
 
-# 2b) Bring in compiled assets
 COPY --from=node_build /app/priv/static/assets ./priv/static/assets
 
-# 2c) Copy over code & compile
 COPY lib       ./lib
 COPY config    ./config
 COPY priv/repo ./priv/repo
 RUN mix compile
 
-# 2d) Build the release
 RUN mix release --overwrite
 
 # -----------------------
@@ -55,7 +47,6 @@ RUN mix release --overwrite
 # -----------------------
 FROM alpine:3.19.1 AS app
 
-# minimal set the VM needs at runtime
 RUN apk add --no-cache \
       openssl \
       ca-certificates \
@@ -63,10 +54,13 @@ RUN apk add --no-cache \
       libgcc \
       ncurses
 
+# Enable the Endpoint’s HTTP server at runtime
+ENV PHX_SERVER=true
+ENV PORT=4000
+
 WORKDIR /app
 COPY --from=build /app/_build/prod/rel/frontend ./
 
 EXPOSE 4000
 
-# Default to running the release
 CMD ["/app/bin/frontend", "start"]
