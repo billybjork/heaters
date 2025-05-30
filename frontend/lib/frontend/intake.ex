@@ -2,18 +2,18 @@ defmodule Frontend.Intake do
   @moduledoc """
   Pure-Elixir helper that
 
-    1. Inserts a **new** row into `source_videos`.
-    2. Triggers your Prefect deployment (`intake_task`).
+    1. Inserts a **new** row into source_videos.
+    2. Triggers your Prefect deployment (intake_task).
 
   Expects:
 
-    * `PREFECT_API_URL`         – defaults to http://localhost:4200/api
-    * `INTAKE_DEPLOYMENT_ID`    – deployment id/slug for *intake_task*
+    * PREFECT_API_URL         – defaults to http://localhost:4200/api
+    * INTAKE_DEPLOYMENT_ID    – deployment id (UUID) of *intake_task*
+    * INTAKE_DEPLOYMENT_SLUG  – optional stable slug like `project-name/deployment-name`
   """
 
   alias Frontend.Repo
 
-  # now used in insert_source_video/1
   @source_videos "source_videos"
 
   @spec submit(String.t()) :: :ok | {:error, String.t()}
@@ -24,16 +24,11 @@ defmodule Frontend.Intake do
     end
   end
 
-  # -- step 1: insert into source_videos -------------------------------
-
   defp insert_source_video(url) do
     is_http? = String.starts_with?(url, ["http://", "https://"])
 
-    # For URLs give a tiny placeholder that satisfies NOT-NULL
-    # For local files keep the derived filename
     title =
       if is_http? do
-        # will be overwritten by intake_task
         "?"
       else
         url
@@ -58,17 +53,23 @@ defmodule Frontend.Intake do
     e -> {:error, "DB error: #{Exception.message(e)}"}
   end
 
-  # -- step 2: call Prefect API ----------------------------------------
-
   defp create_prefect_run(id, url) do
     api = System.get_env("PREFECT_API_URL") || "http://localhost:4200/api"
 
     deployment =
       System.get_env("INTAKE_DEPLOYMENT_ID") ||
+        System.get_env("INTAKE_DEPLOYMENT_SLUG") ||
         raise """
-        Missing INTAKE_DEPLOYMENT_ID. \
-        Please export the ID of your Intake Source Video deployment.
+        Missing INTAKE_DEPLOYMENT_ID or INTAKE_DEPLOYMENT_SLUG.
+        Please set one in the environment.
         """
+
+    {prefix, ref} =
+      if String.contains?(deployment, "/") do
+        {"/deployments/name/", deployment}
+      else
+        {"/deployments/", deployment}
+      end
 
     body = %{
       parameters: %{
@@ -80,10 +81,7 @@ defmodule Frontend.Intake do
       idempotency_key: "frontend_submit_#{id}"
     }
 
-    case Req.post(
-           url: "#{api}/deployments/#{deployment}/create_flow_run",
-           json: body
-         ) do
+    case Req.post(url: "#{api}#{prefix}#{ref}/create_flow_run", json: body) do
       {:ok, %{status: 201}} ->
         :ok
 
