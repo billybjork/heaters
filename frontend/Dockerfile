@@ -1,3 +1,5 @@
+# frontend/Dockerfile
+
 # -----------------------
 # 1) Node stage: build JS assets
 # -----------------------
@@ -47,12 +49,14 @@ RUN mix release --overwrite
 # -----------------------
 FROM alpine:3.19.1 AS app
 
+# install SSL + CA bundle, then update it
 RUN apk add --no-cache \
       openssl \
       ca-certificates \
       libstdc++ \
       libgcc \
-      ncurses
+      ncurses \
+    && update-ca-certificates
 
 # Enable the Endpoint’s HTTP server at runtime
 ENV PHX_SERVER=true

@@ -42,6 +42,3 @@ services:
       - key: SECRET_KEY_BASE
         generateValue: true
       - fromGroup: app-secrets
-      - key: SECRET_KEY_BASE
-        generateValue: true
-      - fromGroup: app-secrets
