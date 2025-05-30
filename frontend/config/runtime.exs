@@ -4,15 +4,10 @@ if System.get_env("PHX_SERVER") do
   config :frontend, FrontendWeb.Endpoint, server: true
 end
 
-# ───────────────────────────────────────────
-#  Common runtime config
-# ───────────────────────────────────────────
+# ───────── common ─────────
 database_url =
   System.get_env("DATABASE_URL") ||
-    raise """
-    environment variable DATABASE_URL is missing.
-    For example: ecto://USER:PASS@HOST/DATABASE
-    """
+    raise "environment variable DATABASE_URL is missing"
 
 config :frontend, :cloudfront_domain, System.fetch_env!("CLOUDFRONT_DOMAIN")
 
@@ -25,13 +20,13 @@ ssl_opts =
   if render_db? do
     [
       verify: :verify_peer,
-      # **charlist path – this fixes cacerts:undefined**
+      # ***charlist path – MUST be single-quoted***
       cacertfile: '/etc/ssl/certs/ca-certificates.crt',
       server_name_indication: db_host,
       hostname: db_host
     ]
   else
-    []
+    false
   end
 
 repo_url =
@@ -43,14 +38,11 @@ repo_url =
 
 config :frontend, Frontend.Repo,
   url: repo_url,
-  ssl: true,                # keep boolean flag
-  ssl_opts: ssl_opts,       # <- pass the list here
+  ssl: ssl_opts,                     # <- pass the list directly (or `false`)
   pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
   socket_options: maybe_ipv6
 
-# ───────────────────────────────────────────
-#  Production-only
-# ───────────────────────────────────────────
+# ───────── production only ─────────
 if config_env() == :prod do
   secret_key_base =
     System.get_env("SECRET_KEY_BASE") ||
@@ -65,4 +57,4 @@ if config_env() == :prod do
     url:  [host: host, port: 443, scheme: "https"],
     http: [ip: {0, 0, 0, 0, 0, 0, 0, 0}, port: port],
     secret_key_base: secret_key_base
-  end
+end
