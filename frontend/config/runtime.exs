@@ -30,7 +30,7 @@ ssl_kw =
   if render_db? do
     [
       verify: :verify_peer,
-      cacertfile: '/etc/ssl/certs/ca-certificates.crt',
+      cacertfile: '/etc/ssl/cert.pem',
       server_name_indication: db_host,
       hostname: db_host
     ]
