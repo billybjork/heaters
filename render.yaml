@@ -9,7 +9,8 @@ databases:
   - name: app-db
     plan: basic-1gb
     postgresMajorVersion: 16
-    ipAllowList: []
+    ipAllowList:
+      - "50.1.246.139/32"
 
 # ───────────── Services ─────────────
 services:
