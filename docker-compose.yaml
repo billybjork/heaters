@@ -65,9 +65,8 @@ services:
       prefect-server:
         condition: service_healthy
     environment:
-      # Your Render database URL with SSL mode enforced
       DATABASE_URL:         ${DATABASE_URL}
-      PREFECT_WORKER_CONCURRENCY_LIMIT: "3"    # tweak as needed
+      PREFECT_WORKER_CONCURRENCY_LIMIT: "3"
       PREFECT_API_URL:      ${PREFECT_API_URL}
       S3_BUCKET_NAME:       ${S3_BUCKET_NAME}
       AWS_REGION:           ${AWS_REGION}
@@ -86,7 +85,7 @@ services:
     networks:
       - app-network
 
-  # 4) Frontend (Phoenix LiveView)
+  # 4) Frontend (Phoenix Release)
   frontend:
     build:
       context: ./frontend
@@ -96,16 +95,13 @@ services:
     env_file:
       - .env
     environment:
-      MIX_ENV:               dev
-      DISABLE_ASSET_WATCHERS: "true"
-      DATABASE_URL:          ${DATABASE_URL}
+      DATABASE_URL: ${DATABASE_URL}
     ports:
       - "4000:4000"
-    volumes:
-      - ./frontend:/app
     networks:
       - app-network
-    command: mix phx.server
+    # use the release binary directly
+    command: ["/app/bin/frontend", "start"]
 
 volumes:
   prefect_pgdata:

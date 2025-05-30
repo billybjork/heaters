@@ -66,9 +66,7 @@ RUN apk add --no-cache \
 WORKDIR /app
 COPY --from=build /app/_build/prod/rel/frontend ./
 
-# Your entrypoint just wraps the release binary
-COPY entrypoint.sh .
-RUN chmod +x entrypoint.sh
-
 EXPOSE 4000
-ENTRYPOINT ["./entrypoint.sh"]
+
+# Default to running the release
+CMD ["/app/bin/frontend", "start"]
