@@ -16,33 +16,28 @@ database_url =
 
 config :frontend, :cloudfront_domain, System.fetch_env!("CLOUDFRONT_DOMAIN")
 
-maybe_ipv6 =
-  if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
+maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 
-# Detect Render-hosted Postgres
 render_db? = String.contains?(database_url, ".render.com")
 
-# ▼ pull the hostname so we can feed it to the TLS layer
 db_host =
   case URI.parse(database_url).host do
-    nil -> nil
+    nil  -> nil
     host -> String.to_charlist(host)
   end
 
-# ▼ TLS settings collected in ONE place
 ssl_kw =
   if render_db? do
     [
       verify: :verify_peer,
-      cacertfile: "/etc/ssl/certs/ca-certificates.crt",
+      cacertfile: '/etc/ssl/certs/ca-certificates.crt',
       server_name_indication: db_host,
-      hostname: db_host          # important for OTP’s hostname verifier
+      hostname: db_host
     ]
   else
     []
   end
 
-# append ?sslmode=require exactly once
 repo_url =
   if render_db? and not String.contains?(database_url, "sslmode") do
     database_url <> "?sslmode=require"
@@ -52,7 +47,7 @@ repo_url =
 
 config :frontend, Frontend.Repo,
   url: repo_url,
-  ssl: ssl_kw,                   # ▼ THE change: all TLS opts live here
+  ssl: ssl_kw,
   pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
   socket_options: maybe_ipv6
 
