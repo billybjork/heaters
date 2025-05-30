@@ -4,6 +4,9 @@ if System.get_env("PHX_SERVER") do
   config :frontend, FrontendWeb.Endpoint, server: true
 end
 
+# ───────────────────────────────────────────
+#  Common runtime config (all envs)
+# ───────────────────────────────────────────
 database_url =
   System.get_env("DATABASE_URL") ||
     raise """
@@ -16,14 +19,15 @@ config :frontend, :cloudfront_domain, System.fetch_env!("CLOUDFRONT_DOMAIN")
 maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 
 render_db? = String.contains?(database_url, ".render.com")
-db_host   = URI.parse(database_url).host |> to_charlist()
 
-# when on Render, point at Alpine’s CA bundle
+db_host = URI.parse(database_url).host |> to_charlist()
+
+# **All SSL options as a charlist-friendly keyword list**
 ssl_opts =
   if render_db? do
     [
       verify: :verify_peer,
-      cacertfile: "/etc/ssl/certs/ca-certificates.crt",
+      cacertfile: '/etc/ssl/certs/ca-certificates.crt',   # ← SINGLE quotes = charlist
       server_name_indication: db_host,
       hostname: db_host
     ]
@@ -40,10 +44,14 @@ repo_url =
 
 config :frontend, Frontend.Repo,
   url: repo_url,
-  ssl: ssl_opts,
+  ssl: true,            # keep SSL on
+  ssl_opts: ssl_opts,   # ⇦ let Postgrex hand the list to :ssl.connect/4
   pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
   socket_options: maybe_ipv6
 
+# ───────────────────────────────────────────
+#  Production-only settings
+# ───────────────────────────────────────────
 if config_env() == :prod do
   secret_key_base =
     System.get_env("SECRET_KEY_BASE") ||
