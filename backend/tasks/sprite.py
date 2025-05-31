@@ -380,24 +380,25 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False):
                  if sprite_s3_key and sprite_metadata:
                      logger.info(f"Inserting/updating sprite artifact record for clip {clip_id}")
                      artifact_insert_sql = sql.SQL("""
-                         INSERT INTO clip_artifacts (
-                             clip_id, artifact_type, strategy, tag, s3_key, metadata, created_at, updated_at
-                         ) VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
-                         ON CONFLICT (clip_id, artifact_type, strategy, tag) DO UPDATE SET
-                             s3_key = EXCLUDED.s3_key,
-                             metadata = EXCLUDED.metadata,
-                             updated_at = NOW()
-                         RETURNING id; -- Return the ID of the inserted/updated row
-                     """)
+                        INSERT INTO clip_artifacts (
+                            clip_id, artifact_type, strategy, tag, s3_key, metadata
+                            -- inserted_at and updated_at will use DB defaults
+                        ) VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (clip_id, artifact_type, strategy, tag) DO UPDATE SET
+                            s3_key = EXCLUDED.s3_key,
+                            metadata = EXCLUDED.metadata,
+                            updated_at = NOW() -- Only updated_at is set on conflict
+                        RETURNING id;
+                    """)
                      # Strategy and tag are null for sprite sheets currently
                      artifact_strategy = None
                      artifact_tag = None
                      # Use extras.Json to wrap the metadata dict for psycopg2
                      cur.execute(
-                         artifact_insert_sql,
-                         (clip_id, ARTIFACT_TYPE_SPRITE_SHEET, artifact_strategy, artifact_tag,
-                          sprite_s3_key, extras.Json(sprite_metadata)) # Use extras.Json
-                     )
+                        artifact_insert_sql,
+                        (clip_id, ARTIFACT_TYPE_SPRITE_SHEET, artifact_strategy, artifact_tag,
+                        sprite_s3_key, extras.Json(sprite_metadata))
+                    )
                      inserted_artifact = cur.fetchone() # Fetch the result (which is a DictRow)
                      if inserted_artifact:
                           sprite_artifact_id = inserted_artifact['id'] # Access by key

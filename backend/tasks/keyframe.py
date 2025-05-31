@@ -408,24 +408,17 @@ def extract_keyframes_task(
                      logger.info(f"Deletion completed (affected {cur.rowcount} rows).")
 
                  insert_query = sql.SQL("""
-                     INSERT INTO clip_artifacts (
-                         clip_id, artifact_type, strategy, tag, s3_key, metadata, created_at, updated_at
-                     ) VALUES %s
-                     ON CONFLICT (clip_id, artifact_type, strategy, tag) DO UPDATE SET
-                         s3_key = EXCLUDED.s3_key,
-                         metadata = EXCLUDED.metadata,
-                         updated_at = NOW();
-                 """)
+                    INSERT INTO clip_artifacts (
+                        clip_id, artifact_type, strategy, tag, s3_key, metadata
+                        -- inserted_at and updated_at will use DB defaults
+                    ) VALUES %s
+                    ON CONFLICT (clip_id, artifact_type, strategy, tag) DO UPDATE SET
+                        s3_key = EXCLUDED.s3_key,
+                        metadata = EXCLUDED.metadata,
+                        updated_at = NOW(); -- Only updated_at is set on conflict
+                """)
 
-                 now_ts = datetime.now() # Use single timestamp for the batch
-                 values_to_insert = [
-                     (
-                         *data_tuple, # Original tuple: clip_id -> metadata
-                         now_ts,      # Value for created_at
-                         now_ts       # Value for updated_at
-                     )
-                     for data_tuple in processed_artifact_data_for_db
-                 ]
+                 values_to_insert = processed_artifact_data_for_db
 
                  execute_values(cur, insert_query, values_to_insert)
                  logger.info(f"Inserted/updated {len(values_to_insert)} artifact records.")

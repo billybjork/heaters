@@ -316,10 +316,11 @@ def split_clip_task(clip_id: int):
                     cur.execute(
                         """
                         INSERT INTO clips (
-                          source_video_id, clip_filepath, clip_identifier,
-                          start_frame, end_frame, start_time_seconds, end_time_seconds,
-                          ingest_state, created_at, updated_at
-                        ) VALUES (%s,%s,%s,%s,%s,%s,%s,'pending_sprite_generation',NOW(),NOW())
+                        source_video_id, clip_filepath, clip_identifier,
+                        start_frame, end_frame, start_time_seconds, end_time_seconds,
+                        ingest_state
+                        -- inserted_at and updated_at will use DB defaults
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending_sprite_generation')
                         RETURNING id;
                         """,
                         (source_video_id, s3_key, identifier, sf, ef, st, et)
