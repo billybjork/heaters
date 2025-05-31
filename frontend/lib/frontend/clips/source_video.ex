@@ -14,9 +14,8 @@ defmodule Frontend.Clips.SourceVideo do
           last_error: String.t() | nil,
           retry_count: integer(),
           original_url: String.t() | nil,
-          # Ecto timestamps
-          created_at: NaiveDateTime.t(),
-          updated_at: NaiveDateTime.t()
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
         }
 
   schema "source_videos" do
@@ -31,6 +30,6 @@ defmodule Frontend.Clips.SourceVideo do
     field :last_error, :string
     field :retry_count, :integer, default: 0
     field :original_url, :string
-    timestamps(inserted_at: :created_at, updated_at: :updated_at)
+    timestamps(type: :utc_datetime)
   end
 end

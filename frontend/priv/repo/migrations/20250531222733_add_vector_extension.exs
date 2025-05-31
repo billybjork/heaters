@@ -6,6 +6,6 @@ defmodule Frontend.Repo.Migrations.AddVectorExtension do
   end
 
   def down do
-    execute "DROP EXTENSION vector;"
+    execute "DROP EXTENSION IF EXISTS vector;"
   end
 end

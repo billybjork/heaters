@@ -19,15 +19,21 @@ defmodule Frontend.Clips.Embedding do
   alias Frontend.Clips.Clip
   alias Pgvector.Ecto.Vector
 
-  @primary_key {:id, :id, autogenerate: true}
-  @timestamps_opts [type: :utc_datetime_usec]
+  @type t() :: %__MODULE__{
+          id: integer(),
+          clip_id: integer(),
+          embedding: [float()] | nil,
+          model_name: String.t(),
+          model_version: String.t() | nil,
+          generation_strategy: String.t(),
+          embedding_dim: integer() | nil,
+          generated_at: DateTime.t(),
+          clip: Frontend.Clips.Clip.t() | Ecto.Association.NotLoaded.t()
+        }
 
   schema "embeddings" do
-    # Associate embedding back to its clip
-    belongs_to :clip, Clip, type: :integer
+    belongs_to :clip, Clip
 
-    # Store embeddings as a Postgres vector
-    # uses Pgvector.Ecto.Vector :contentReference[oaicite:0]{index=0}
     field :embedding, Vector
 
     field :model_name, :string
@@ -35,12 +41,11 @@ defmodule Frontend.Clips.Embedding do
     field :generation_strategy, :string
     field :embedding_dim, :integer
 
-    # Use generated_at column for inserted_at; no updated_at
-    timestamps(inserted_at: :generated_at, updated_at: false)
+    timestamps(type: :utc_datetime, inserted_at: :generated_at, updated_at: false)
   end
 
   @required_fields ~w(clip_id model_name generation_strategy embedding)a
-  @optional_fields ~w(model_version embedding_dim generated_at)a
+  @optional_fields ~w(model_version embedding_dim)a
 
   @doc false
   def changeset(embedding_struct, attrs) do
@@ -48,5 +53,7 @@ defmodule Frontend.Clips.Embedding do
     |> cast(attrs, @required_fields ++ @optional_fields)
     |> validate_required(@required_fields)
     |> foreign_key_constraint(:clip_id)
+    # Potentially include a cast_embed/validate_embed here
+    # e.g., |> Pgvector.Ecto.cast_embed(:embedding)
   end
 end

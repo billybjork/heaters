@@ -10,8 +10,8 @@ defmodule Frontend.Clips.ClipArtifact do
           metadata: map() | nil,
           clip: Frontend.Clips.Clip.t() | Ecto.Association.NotLoaded.t(),
           clip_id: integer() | nil,
-          created_at: NaiveDateTime.t(),
-          updated_at: NaiveDateTime.t()
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
         }
 
   schema "clip_artifacts" do
@@ -22,6 +22,6 @@ defmodule Frontend.Clips.ClipArtifact do
     field :metadata, :map
 
     belongs_to :clip, Frontend.Clips.Clip
-    timestamps(inserted_at: :created_at, updated_at: :updated_at)
+    timestamps(type: :utc_datetime)
   end
 end

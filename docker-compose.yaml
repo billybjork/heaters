@@ -1,5 +1,6 @@
 volumes:
   prefect_pgdata:
+  app_db_dev_data: # Volume for the new dev database
 
 networks:
   app-network:
@@ -19,7 +20,7 @@ services:
     volumes:
       - prefect_pgdata:/var/lib/postgresql/data
     ports:
-      - "${PREFECT_POSTGRES_PORT:-5432}:5432"
+      - "${PREFECT_POSTGRES_PORT:-5432}:5432" # Default 5432
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${PREFECT_POSTGRES_USER:-prefect} -d ${PREFECT_POSTGRES_DB:-prefect}"]
       interval: 5s
@@ -63,7 +64,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     env_file:
-      - .env
+      - .env # This will still use DATABASE_URL for the Render DB for the backend
     container_name: backend-worker
     restart: unless-stopped
     depends_on:
@@ -72,9 +73,9 @@ services:
       prefect-server:
         condition: service_healthy
     environment:
-      DATABASE_URL:         ${DATABASE_URL}
+      # DATABASE_URL is picked from .env
       PREFECT_WORKER_CONCURRENCY_LIMIT: "3"
-      PREFECT_API_URL:      ${PREFECT_API_URL}
+      PREFECT_API_URL:      ${PREFECT_API_URL:-http://prefect-server:4200/api} # Default if not in .env
       S3_BUCKET_NAME:       ${S3_BUCKET_NAME}
       AWS_REGION:           ${AWS_REGION}
       AWS_ACCESS_KEY_ID:    ${AWS_ACCESS_KEY_ID}
@@ -82,31 +83,89 @@ services:
       CLOUDFRONT_DOMAIN:    ${CLOUDFRONT_DOMAIN}
     mem_limit: 8g
     volumes:
-      - ./backend:/app
+      - ./backend:/app # Mount local backend code for development (if you want hot-reloading for Python, this helps, though Python's reload mechanisms differ)
     command: >
       sh -c "
         echo '⏳ Waiting for Prefect…' &&
-        until curl -fsS ${PREFECT_API_URL}/health; do sleep 5; done &&
+        until curl -fsS $${PREFECT_API_URL:-http://prefect-server:4200/api}/health; do sleep 5; done &&
         echo '🚀 Starting Prefect worker…' &&
         exec prefect worker start --pool default-agent-pool
       "
     networks:
       - app-network
 
-  # 4) Frontend (Phoenix Release)
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: frontend
+  # Development Database for Frontend
+  app-db-dev:
+    image: pgvector/pgvector:pg16
+    container_name: app-db-dev
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      POSTGRES_USER: dev_user      # Choose your dev user
+      POSTGRES_PASSWORD: dev_password  # Choose your dev password
+      POSTGRES_DB: frontend_dev_db # Name of the dev database
+    volumes:
+      - app_db_dev_data:/var/lib/postgresql/data # Persist data locally using named volume
+    ports:
+      - "5433:5432" # Map to host port 5433 to avoid conflict with prefect-postgres if it's on 5432
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev_user -d frontend_dev_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s # Give it some time to initialize
+
+  # 4) Frontend (Phoenix Development Server)
+  frontend:
+    image: hexpm/elixir:1.16.2-erlang-26.2.4-alpine-3.19.1
+    container_name: frontend-dev
+    # env_file:
+    #   - .env # We will NOT use .env for DATABASE_URL for frontend in dev
+    # Instead, dev.exs will configure the DB connection to app-db-dev
+    # If you have other env vars needed by Phoenix in dev from .env, you can keep env_file
+    # and ensure DATABASE_URL is NOT set in .env or is overridden by dev.exs
+    environment:
+      MIX_ENV: dev
       PHX_HOST: localhost
+      # For .env variables needed by dev.exs or runtime.exs (other than DATABASE_URL)
+      # Example: if you decide to use a dev S3 bucket
+      # S3_BUCKET_NAME: ${S3_DEV_BUCKET_NAME:-my-app-assets-dev}
+      # CLOUDFRONT_DOMAIN: ${CLOUDFRONT_DEV_DOMAIN:-localhost:4000} # Or your dev equivalent
+      # Ensure these are in your .env or provide defaults here
+      PORT: "4000" # Port inside the container, matches Phoenix default
+      ERL_AFLAGS: "-kernel shell_history enabled"
+    volumes:
+      - ./frontend:/app
+    working_dir: /app
+    command: >
+      sh -c "
+        apk add --no-cache bash nodejs npm git openssh-client postgresql16-client inotify-tools file && \
+        echo 'Installed build tools.' && \
+        mix local.hex --force && \
+        mix local.rebar --force && \
+        echo 'Set up Mix tools.' && \
+        mix deps.get && \
+        echo 'Fetched Elixir dependencies.' && \
+        echo 'Cleaning and installing Node.js dependencies...' && \
+        rm -rf /app/assets/node_modules && \
+        mkdir -p /app/assets/node_modules && \
+        (cd /app/assets && npm install --loglevel error) && \
+        echo 'Finished Node.js dependency installation.' && \
+        echo '⏳ Waiting for dev database...' && \
+        until pg_isready -h app-db-dev -p 5432 -U dev_user -d frontend_dev_db; do echo 'Waiting for DB...' ; sleep 2; done && \
+        echo '🚀 Dev database is ready.' && \
+        mix ecto.create && \
+        mix ecto.migrate && \
+        echo '🚀 Starting Phoenix dev server with watchers...' && \
+        mix phx.server
+      "
     ports:
       - "4000:4000"
     networks:
       - app-network
-    command: ["/app/bin/frontend", "start"]
+    depends_on:
+      app-db-dev:
+        condition: service_healthy
+    tty: true
+    stdin_open: true
