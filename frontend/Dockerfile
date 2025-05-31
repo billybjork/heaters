@@ -49,7 +49,7 @@ RUN mix compile \
 # -----------------------
 FROM alpine:3.19.1 AS app
 
-# install SSL & CA bundle and update it
+# Install runtime dependencies
 RUN apk add --no-cache \
       openssl \
       ca-certificates \
@@ -58,13 +58,15 @@ RUN apk add --no-cache \
       ncurses \
     && update-ca-certificates
 
-# enable HTTP server
 ENV PHX_SERVER=true
 ENV PORT=4000
+ENV MIX_ENV=prod
 
 WORKDIR /app
 COPY --from=build /app/_build/prod/rel/frontend ./
 
 EXPOSE 4000
 
-CMD ["/app/bin/frontend", "start"]
+# Ensure this path is correct for your release executable and app name
+# The command runs migrations, then starts the server.
+CMD ["sh", "-c", "/app/bin/frontend eval 'Frontend.Release.migrate()' && /app/bin/frontend start"]
