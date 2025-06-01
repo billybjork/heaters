@@ -1,5 +1,3 @@
-# frontend/Dockerfile
-
 # -----------------------
 # 1) Node stage: build JS assets
 # -----------------------
@@ -7,7 +5,7 @@ FROM node:18-slim AS node_build
 
 WORKDIR /app/assets
 
-# copy package manifests explicitly (no brace-expansion)
+# Copy package manifests explicitly (no brace-expansion)
 COPY ["assets/package.json", "assets/package-lock.json", "./"]
 COPY assets/js           ./js
 COPY assets/css          ./css
@@ -35,7 +33,7 @@ RUN mix local.hex --force \
   && mix deps.get --only prod \
   && mix deps.compile
 
-# bring in compiled assets from the node stage
+# Bring in compiled assets from the node stage
 COPY --from=node_build /app/priv/static/assets ./priv/static/assets
 
 COPY lib       ./lib
@@ -67,6 +65,5 @@ COPY --from=build /app/_build/prod/rel/frontend ./
 
 EXPOSE 4000
 
-# Ensure this path is correct for your release executable and app name
-# The command runs migrations, then starts the server.
+# Run migrations, then start the server
 CMD ["sh", "-c", "/app/bin/frontend eval 'Frontend.Release.migrate()' && /app/bin/frontend start"]
