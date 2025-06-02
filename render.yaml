@@ -6,8 +6,6 @@ databases:
   - name: app-db # Main application database for Phoenix
     plan: basic-1gb
     postgresMajorVersion: 16
-    extensions:
-      - name: pgvector
     ipAllowList:
       - source: "50.1.246.139/32"
         description: "El Segundo House"
