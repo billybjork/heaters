@@ -33,36 +33,18 @@ KEYFRAMES_S3_PREFIX = os.getenv("KEYFRAMES_S3_PREFIX", "clip_artifacts/keyframes
 ARTIFACT_TYPE_KEYFRAME = "keyframe" # Constant for artifact type
 
 # --- Environment Configuration ---
-APP_ENV = os.getenv("APP_ENV", "development")
+# APP_ENV = os.getenv("APP_ENV", "development") # Removed, task uses 'environment' param
 
 # --- S3 Configuration ---
-AWS_REGION = os.getenv("AWS_REGION", "us-west-1")
+# AWS_REGION = os.getenv("AWS_REGION", "us-west-1") # Removed
 
-if APP_ENV == "development":
-    S3_BUCKET_NAME = os.getenv("S3_DEV_BUCKET_NAME")
-    env_log_msg_suffix = f"DEVELOPMENT environment using S3 Bucket: '{S3_BUCKET_NAME}'"
-else:
-    S3_BUCKET_NAME = os.getenv("S3_PROD_BUCKET_NAME")
-    env_log_msg_suffix = f"PRODUCTION environment using S3 Bucket: '{S3_BUCKET_NAME}'"
+# S3_BUCKET_NAME selection logic removed, get_s3_resources handles this
+# env_log_msg_suffix logic removed
 
 # --- Initialize S3 Client ---
-s3_client = None
-if S3_BUCKET_NAME: # Proceed only if a bucket name was resolved
-    try:
-        s3_client = boto3.client('s3', region_name=AWS_REGION)
-        print(f"Keyframe.py: Initialized S3 client for region: {AWS_REGION}. {env_log_msg_suffix}")
-    except NoCredentialsError:
-         print("Keyframe.py: ERROR initializing S3 client - AWS credentials not found.")
-         s3_client = None
-    except Exception as e:
-        print(f"Keyframe.py: ERROR initializing S3 client: {e}")
-        s3_client = None
-else:
-     print(
-        f"Keyframe.py: WARNING - S3_BUCKET_NAME could not be determined for APP_ENV='{APP_ENV}'. "
-        f"S3 operations will fail. Ensure S3_DEV_BUCKET_NAME or S3_PROD_BUCKET_NAME is set."
-     )
-
+# s3_client = None # Removed global client initialization
+# Logic for initializing s3_client based on APP_ENV removed.
+# The task will use get_s3_resources(environment, logger)
 
 # --- Core Frame Extraction Logic ---
 def _extract_and_save_frames_internal(
