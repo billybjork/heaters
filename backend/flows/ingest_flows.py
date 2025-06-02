@@ -45,7 +45,7 @@ from db.sync_db import (
 
 _flow_bootstrap_logger = logging.getLogger(__name__) # For logging import errors
 try:
-    from db.async_db import get_db_connection as get_async_db_connection, get_db_pool, close_db_pool
+    from db.async_db import get_db_connection as get_async_db_connection, get_db_pool, close_all_db_pools
     ASYNC_DB_CONFIGURED = True
 except ImportError as e:
     _flow_bootstrap_logger.error(
@@ -54,7 +54,7 @@ except ImportError as e:
         exc_info=True
     )
     ASYNC_DB_CONFIGURED = False
-    get_async_db_connection, get_db_pool, close_db_pool = None, None, None
+    get_async_db_connection, get_db_pool, close_all_db_pools = None, None, None
 
 try:
     from botocore.exceptions import ClientError
