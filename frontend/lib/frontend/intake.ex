@@ -139,8 +139,11 @@ defmodule Frontend.Intake do
       raise RuntimeError, "INTAKE_DEPLOYMENT_ID or INTAKE_DEPLOYMENT_SLUG environment variable must be set."
     end
 
+    # Get the environment from APP_ENV, defaulting to "development"
+    environment = System.get_env("APP_ENV", "development")
+
     Logger.info(
-      "Creating Prefect flow run for source_id: #{source_id}, deployment_ref: #{deployment_ref}"
+      "Creating Prefect flow run for source_id: #{source_id}, deployment_ref: #{deployment_ref}, environment: #{environment}"
     )
 
     with {:ok, deployment_id} <- resolve_deployment_id(api_url, deployment_ref),
@@ -153,7 +156,8 @@ defmodule Frontend.Intake do
                  "source_video_id" => source_id,
                  "input_source" => url,
                  "re_encode_for_qt" => true,
-                 "overwrite_existing" => false
+                 "overwrite_existing" => false,
+                 "environment" => environment
                },
                state: %{type: "SCHEDULED", message: "Flow run submitted from Elixir frontend."},
                idempotency_key: idempotency_key_string

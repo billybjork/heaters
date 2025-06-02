@@ -18,6 +18,7 @@ import yt_dlp
 # --- Local Imports ---
 try:
     from db.sync_db import get_db_connection, release_db_connection
+    from config import get_s3_resources # Import the new utility function
 except ImportError:
     # Standard fallback logic
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -25,12 +26,15 @@ except ImportError:
         sys.path.insert(0, project_root)
     try:
         from db.sync_db import get_db_connection, release_db_connection
+        from config import get_s3_resources # Import again in fallback
     except ImportError as e:
-        print(f"ERROR importing db_utils in intake.py: {e}")
+        print(f"ERROR importing db_utils or config in intake.py: {e}")
         def get_db_connection():
             raise NotImplementedError("Dummy get_db_connection")
         def release_db_connection(conn):
             raise NotImplementedError("Dummy release_db_connection")
+        def get_s3_resources(env, logger=None):
+            raise NotImplementedError("Dummy get_s3_resources")
 
 
 # --- Task Configuration ---
@@ -45,40 +49,12 @@ FFMPEG_ARGS = [
     "-movflags", "+faststart",
 ]
 
-# --- Environment Configuration ---
-APP_ENV = os.getenv("APP_ENV", "development")
+# Module-level APP_ENV can be used for general worker context if needed outside tasks
+# APP_ENV = os.getenv("APP_ENV", "development")
 
-# --- S3 Configuration ---
-AWS_REGION = os.getenv("AWS_REGION", "us-west-1")
-
-if APP_ENV == "development":
-    S3_BUCKET_NAME = os.getenv("S3_DEV_BUCKET_NAME")
-    env_log_msg_suffix = f"DEVELOPMENT environment using S3 Bucket: '{S3_BUCKET_NAME}'"
-else:
-    S3_BUCKET_NAME = os.getenv("S3_PROD_BUCKET_NAME")
-    env_log_msg_suffix = f"PRODUCTION environment using S3 Bucket: '{S3_BUCKET_NAME}'"
-
-# Validate required S3 bucket name
-if not S3_BUCKET_NAME:
-    # Stop the module from loading if the bucket isn't configured
-    raise ValueError(
-        f"S3_BUCKET_NAME is not configured for APP_ENV='{APP_ENV}'. "
-        f"Ensure S3_DEV_BUCKET_NAME (if dev) or S3_PROD_BUCKET_NAME (if prod) is set."
-    )
-
-# --- Initialize S3 Client ---
-s3_client = None
-try:
-    s3_client = boto3.client("s3", region_name=AWS_REGION)
-    # Initial log message using print, as logger might not be ready
-    print(f"Intake.py: Initialized S3 client for region: {AWS_REGION}. {env_log_msg_suffix}")
-except NoCredentialsError:
-    print("Intake.py: AWS credentials not found. S3 operations will fail.")
-    # Error will be caught later in the task if s3_client is None
-except Exception as e:
-    print(f"Intake.py: Failed to initialize S3 client: {e}. S3 operations will fail.")
-    # Error will be caught later in the task if s3_client is None
-
+# AWS_REGION is still needed by the S3TransferProgress if used by other tasks directly,
+# but get_s3_resources will handle region for the client itself.
+# AWS_REGION = os.getenv("AWS_REGION", "us-west-1")
 
 # --- Helper Function for External Commands ---
 def run_external_command(cmd_list, step_name="Command", cwd=None):
@@ -177,13 +153,26 @@ class S3TransferProgress:
 def intake_task(source_video_id: int,
                 input_source: str,
                 re_encode_for_qt: bool = True,
-                overwrite_existing: bool = False
+                overwrite_existing: bool = False,
+                environment: str = "development"
                 ):
     """
     Intakes a source video: downloads/copies, re-encodes, uploads to S3, updates DB.
+    
+    Args:
+        source_video_id: The ID of the source video in the database
+        input_source: URL or local file path to the video
+        re_encode_for_qt: Whether to re-encode for QuickTime compatibility
+        overwrite_existing: Whether to overwrite existing files
+        environment: The environment to use ("development" or "production")
     """
     logger = get_run_logger()
-    logger.info(f"TASK [Intake]: Starting for source_video_id: {source_video_id}, Input: '{input_source}'")
+    logger.info(f"TASK [Intake]: Starting for source_video_id: {source_video_id}, Input: '{input_source}', Environment: {environment}")
+
+    # --- Get S3 Resources using the utility function ---
+    s3_client_for_task, s3_bucket_name_for_task = get_s3_resources(environment, logger=logger)
+    # Error handling for missing S3 resources is now within get_s3_resources
+
     conn = None
     initial_temp_filepath = None
     s3_object_key = None
@@ -194,11 +183,12 @@ def intake_task(source_video_id: int,
     error_message = None # Store error message for DB update if needed
 
     # --- Dependency Check ---
-    if not s3_client:
-        logger.error("S3 client is not available (failed during initialization). Cannot proceed.")
-        error_message = "S3 client failed to initialize. Check credentials/config."
-        # Raise the error here to fail the task immediately
-        raise RuntimeError(error_message)
+    # S3 client is now initialized above, this check is less direct but implicit by s3_client_for_task
+    # if not s3_client_for_task: # This was s3_client before
+    #     logger.error("S3 client is not available (failed during initialization). Cannot proceed.")
+    #     error_message = "S3 client failed to initialize. Check credentials/config."
+    #     # Raise the error here to fail the task immediately
+    #     raise RuntimeError(error_message)
 
     is_url = input_source.lower().startswith(('http://', 'https://'))
     if re_encode_for_qt or not is_url: # Check ffmpeg only if needed
@@ -394,7 +384,7 @@ def intake_task(source_video_id: int,
         perform_re_encode = re_encode_for_qt
         final_filename_for_db = final_filename_with_suffix if perform_re_encode else final_filename_no_suffix
         s3_object_key = f"source_videos/{final_filename_for_db}"
-        logger.info(f"Target S3 object key: s3://{S3_BUCKET_NAME}/{s3_object_key}")
+        logger.info(f"Target S3 object key: s3://{s3_bucket_name_for_task}/{s3_object_key}")
 
         # --- Re-encode into consistent format ---
         file_to_upload = initial_temp_filepath
@@ -427,11 +417,16 @@ def intake_task(source_video_id: int,
             logger.info(f"File size: {file_size / (1024*1024):.2f} MiB")
             # Adjust throttle based on size
             throttle = 10 if file_size < 100 * 1024 * 1024 else 5
+            # Pass AWS_REGION to S3TransferProgress if it initializes its own client, 
+            # or modify S3TransferProgress to accept an s3_client instance.
+            # For now, assuming S3TransferProgress might be used by other tasks that don't have this new pattern yet.
+            # Ideally, S3TransferProgress would also use the passed s3_client_for_task if possible.
+            aws_region_for_progress = os.getenv("AWS_REGION", "us-west-1") # Keep this for S3TransferProgress if it needs it
             progress_callback = S3TransferProgress(file_size, file_to_upload.name, logger, throttle_percentage=throttle)
 
-            logger.info(f"Starting S3 upload to s3://{S3_BUCKET_NAME}/{s3_object_key}...")
+            logger.info(f"Starting S3 upload to s3://{s3_bucket_name_for_task}/{s3_object_key}...")
             with open(file_to_upload, "rb") as f:
-                s3_client.upload_fileobj(f, S3_BUCKET_NAME, s3_object_key, Callback=progress_callback)
+                s3_client_for_task.upload_fileobj(f, s3_bucket_name_for_task, s3_object_key, Callback=progress_callback)
             logger.info(f"✅ S3 Upload completed successfully for '{file_to_upload.name}'.") # Added confirmation
 
         except ClientError as s3_err:
@@ -514,11 +509,10 @@ def intake_task(source_video_id: int,
         finally:
              if conn_final:
                  release_db_connection(conn_final)
-                 logger.debug("Released final DB connection.")
 
         # === Successful Completion ===
         logger.info(f"TASK [Intake]: Successfully processed source_video_id: {source_video_id}. Final S3 key: {s3_object_key}")
-        final_return_value = {"status": task_outcome, "s3_key": s3_object_key, "metadata": metadata}
+        final_return_value = {"status": task_outcome, "s3_key": s3_object_key, "metadata": metadata, "s3_bucket_used": s3_bucket_name_for_task}
         logger.info(f"--- Returning value for ID {source_video_id}: {final_return_value} ---") # Log before return
         return final_return_value
 

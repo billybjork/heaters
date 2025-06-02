@@ -47,5 +47,6 @@ deployments:
     work_pool:
       name: default-agent-pool
       work_queue_name: default
-    parameters: {}
+    parameters:
+      environment: "development"  # Default environment, can be overridden by flow run parameters
     tags: ["ingest", "on‐demand"]

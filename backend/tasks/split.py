@@ -6,97 +6,68 @@ import shutil
 import time
 import re
 import sys
-import json  # Needed for metadata parsing
+import json
 
 from prefect import task, get_run_logger
 import psycopg2
 from psycopg2 import sql, extras
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, NoCredentialsError # Keep for S3 error handling
 
+# --- Project Root Setup & Utility Imports ---
 try:
-    from db.sync_db import get_db_connection, release_db_connection
-except ImportError:
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
-    try:
-        from db.sync_db import get_db_connection, release_db_connection
-    except ImportError as e:
-        print(f"ERROR importing db_utils in split.py: {e}")
-        def get_db_connection(cursor_factory=None): raise NotImplementedError("Dummy DB connection")
-        def release_db_connection(conn): pass
+    from db.sync_db import get_db_connection, release_db_connection
+    from config import get_s3_resources # Import the new S3 utility function
+except ImportError as e:
+    print(f"ERROR importing db_utils or config in split.py: {e}")
+    def get_db_connection(cursor_factory=None): raise NotImplementedError("Dummy DB connection")
+    def release_db_connection(conn): pass
+    def get_s3_resources(environment: str, logger=None): raise NotImplementedError("Dummy S3 resource getter")
 
-# --- Import Shared Components ---
-s3_client = None
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+# Module-level constants that are not S3 client/bucket specific
 FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
 CLIP_S3_PREFIX = os.getenv("CLIP_S3_PREFIX", "clips/")
-MIN_CLIP_DURATION_SECONDS = 1.0  # Default fallback
+MIN_CLIP_DURATION_SECONDS = float(os.getenv("MIN_CLIP_DURATION_SECONDS_SPLIT", 1.0)) # Specific or fallback
 
-try:
-    from .splice import (
-        s3_client as splice_s3_client,
-        run_ffmpeg_command,
-        sanitize_filename,
-        MIN_CLIP_DURATION_SECONDS as imported_min_duration,
-    )
-    if splice_s3_client:
-        s3_client = splice_s3_client
-    if imported_min_duration:
-        MIN_CLIP_DURATION_SECONDS = imported_min_duration
-    print("Imported shared components from tasks.splice")
-except ImportError as e:
-    print(f"INFO: Could not import components from .splice, using defaults/direct init. Error: {e}")
-
-    def run_ffmpeg_command(cmd_list, step_name="ffmpeg command", cwd=None):
-        logger = get_run_logger()
-        logger.info(f"Executing Fallback FFMPEG Step: {step_name}")
-        logger.debug(f"Command: {' '.join(cmd_list)}")
-        try:
-            result = subprocess.run(
-                cmd_list,
-                capture_output=True,
-                text=True,
-                check=True,
-                cwd=cwd,
-                encoding='utf-8',
-                errors='replace'
-            )
-            logger.debug(f"FFMPEG Output:\n{result.stdout[:500]}...")
-            return result
-        except FileNotFoundError:
-            logger.error(f"ERROR: {cmd_list[0]} command not found at path '{FFMPEG_PATH}'.")
-            raise
-        except subprocess.CalledProcessError as e:
-            logger.error(f"ERROR: {step_name} failed. Exit code: {e.returncode}")
-            logger.error(f"Stderr:\n{e.stderr}")
-            raise
-
-    def sanitize_filename(name):
-        name = re.sub(r'[^\w\.\-]+', '_', str(name))
-        name = re.sub(r'_+', '_', name).strip('_')
-        return name if name else "default_filename"
-    # MIN_CLIP_DURATION_SECONDS already set to fallback
-
-# Initialize S3 client if not imported
-if not s3_client and S3_BUCKET_NAME:
+# --- Helper functions (defined locally as the import from .splice is removed) ---
+def run_ffmpeg_command(cmd_list, step_name="ffmpeg command", cwd=None):
+    logger = get_run_logger() # Assumes this is called within a task context
+    logger.info(f"Executing FFMPEG Step: {step_name} in split.py")
+    logger.debug(f"Command: {' '.join(cmd_list)}")
     try:
-        import boto3
-        s3_client = boto3.client('s3', region_name=os.getenv("AWS_REGION"))
-        print("Initialized default Boto3 S3 client in split.")
-    except ImportError:
-        print("ERROR: Boto3 required.")
-        s3_client = None
-    except Exception as boto_err:
-        print(f"ERROR: Failed fallback Boto3 init: {boto_err}")
-        s3_client = None
+        result = subprocess.run(
+            cmd_list, capture_output=True, text=True, check=True, cwd=cwd,
+            encoding='utf-8', errors='replace'
+        )
+        stdout_snippet = result.stdout[:1000] + ("..." if len(result.stdout) > 1000 else "")
+        logger.debug(f"FFMPEG Output (snippet):\n{stdout_snippet}")
+        if result.stderr:
+            stderr_snippet = result.stderr[:1000] + ("..." if len(result.stderr) > 1000 else "")
+            logger.warning(f"FFMPEG Stderr for {step_name} (snippet):\n{stderr_snippet}")
+        return result
+    except FileNotFoundError:
+        logger.error(f"ERROR in split.py: {cmd_list[0]} command not found at path '{FFMPEG_PATH}'.")
+        raise
+    except subprocess.CalledProcessError as exc:
+        stderr_to_log = exc.stderr if len(exc.stderr) < 2000 else exc.stderr[:2000] + "... (truncated)"
+        logger.error(f"ERROR in split.py: {step_name} failed. Exit code: {exc.returncode}. Stderr:\n{stderr_to_log}")
+        raise
 
-# Constants
+def sanitize_filename(name):
+    name = str(name)
+    name = re.sub(r'[^\w\.\-]+', '_', name)
+    name = re.sub(r'_+', '_', name).strip('_')
+    return name[:150] if name else "default_filename_fallback"
+
+# Constants for artifact types (if needed for deletion)
 ARTIFACT_TYPE_SPRITE_SHEET = "sprite_sheet"
-
+ARTIFACT_TYPE_KEYFRAME = "keyframe"
+# Add other artifact types if they need to be cleaned up during a split operation
 
 @task(name="Split Clip at Frame", retries=1, retry_delay_seconds=45)
-def split_clip_task(clip_id: int):
+def split_clip_task(clip_id: int, environment: str = "development"):
     """
     Splits a single clip into two based on a FRAME NUMBER specified in its metadata.
     Downloads the original source video, uses ffmpeg to extract two new clips,
@@ -119,8 +90,11 @@ def split_clip_task(clip_id: int):
     final_original_state = "split_failed"
     task_exception = None
 
+    # --- Get S3 Resources ---
+    s3_client_for_task, s3_bucket_name_for_task = get_s3_resources(environment, logger=get_run_logger())
+
     # --- Pre-checks ---
-    if not all([s3_client, S3_BUCKET_NAME]):
+    if not all([s3_client_for_task, s3_bucket_name_for_task]):
         raise RuntimeError("S3 client or bucket name not configured.")
     if not FFMPEG_PATH or not shutil.which(FFMPEG_PATH):
         raise FileNotFoundError(f"ffmpeg not found at '{FFMPEG_PATH}'.")
@@ -204,10 +178,10 @@ def split_clip_task(clip_id: int):
 
             if ffprobe_path and original_clip_s3_path:
                 try:
-                    probe_dir = tempfile.TemporaryDirectory(prefix=f"heaters_split_probe_{clip_id}_")
-                    local_probe_path = Path(probe_dir.name) / Path(original_clip_s3_path).name
-                    logger.info(f"Downloading clip for FPS probe: {original_clip_s3_path}")
-                    s3_client.download_file(S3_BUCKET_NAME, original_clip_s3_path, str(local_probe_path))
+                    probe_dir_obj = tempfile.TemporaryDirectory(prefix=f"heaters_split_probe_{clip_id}_")
+                    local_probe_path = Path(probe_dir_obj.name) / Path(original_clip_s3_path).name
+                    logger.info(f"Downloading clip for FPS probe: s3://{s3_bucket_name_for_task}/{original_clip_s3_path} to {local_probe_path}")
+                    s3_client_for_task.download_file(s3_bucket_name_for_task, original_clip_s3_path, str(local_probe_path))
                     result = subprocess.run(
                         [ffprobe_path, "-v", "error", "-select_streams", "v:0",
                          "-show_entries", "stream=r_frame_rate",
@@ -216,11 +190,16 @@ def split_clip_task(clip_id: int):
                     )
                     num, den = map(int, result.stdout.strip().split('/'))
                     clip_fps = num / den if den > 0 else 0.0
-                    probe_dir.cleanup()
+                    if local_probe_path and probe_dir_obj.name: # Check if probe_dir_obj was created
+                        try:
+                            probe_dir_obj.cleanup()
+                            logger.debug("Cleaned up FPS probe temp directory.")
+                        except Exception as e_probe_cleanup:
+                            logger.warning(f"Error cleaning up FPS probe temp directory: {e_probe_cleanup}")
                 except Exception as probe_err:
                     logger.warning(f"FPS probe failed: {probe_err}. Falling back.")
-                    if local_probe_path and probe_dir.name:
-                        probe_dir.cleanup()
+                    if local_probe_path and probe_dir_obj.name:
+                        probe_dir_obj.cleanup()
 
             if clip_fps <= 0:
                 clip_fps = original_clip_data.get('source_video_fps', 0)
@@ -239,8 +218,8 @@ def split_clip_task(clip_id: int):
             # Download source video
             source_s3_key = original_clip_data['source_video_filepath']
             local_source_path = temp_dir / Path(source_s3_key).name
-            logger.info(f"Downloading source video: {source_s3_key}")
-            s3_client.download_file(S3_BUCKET_NAME, source_s3_key, str(local_source_path))
+            logger.info(f"Downloading source video s3://{s3_bucket_name_for_task}/{source_s3_key} to {local_source_path}")
+            s3_client_for_task.download_file(s3_bucket_name_for_task, source_s3_key, str(local_source_path))
 
             # Prepare ffmpeg options
             clips_to_create = []
@@ -312,7 +291,7 @@ def split_clip_task(clip_id: int):
                 for identifier, local_path, s3_key, st, et, sf, ef in clips_to_create:
                     if not local_path.is_file() or local_path.stat().st_size == 0:
                         raise RuntimeError(f"Missing file: {local_path}")
-                    s3_client.upload_fileobj(open(local_path, "rb"), S3_BUCKET_NAME, s3_key)
+                    s3_client_for_task.upload_fileobj(open(local_path, "rb"), s3_bucket_name_for_task, s3_key)
                     cur.execute(
                         """
                         INSERT INTO clips (
@@ -351,7 +330,7 @@ def split_clip_task(clip_id: int):
             conn.commit()
             logger.info(f"Split task finished for clip {clip_id}")
             try:
-                s3_client.delete_object(Bucket=S3_BUCKET_NAME, Key=original_clip_data.get('clip_filepath'))
+                s3_client_for_task.delete_object(Bucket=s3_bucket_name_for_task, Key=original_clip_data.get('clip_filepath'))
                 logger.info("Deleted original S3 object")
             except ClientError as del_err:
                 logger.warning(f"Could not delete original S3 object: {del_err}")

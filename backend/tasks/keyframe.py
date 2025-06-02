@@ -20,11 +20,13 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 try:
     from db.sync_db import get_db_connection, release_db_connection, initialize_db_pool
+    from config import get_s3_resources # Import the new S3 utility function
 except ImportError as e:
-    print(f"Error importing DB utils in keyframe.py: {e}")
+    print(f"Error importing DB utils or config in keyframe.py: {e}")
     def get_db_connection(): raise NotImplementedError("DB Utils not loaded")
     def release_db_connection(conn): pass
-    def initialize_db_pool(): pass # Add dummy if needed
+    def initialize_db_pool(): pass
+    def get_s3_resources(environment: str, logger=None): raise NotImplementedError("S3 resource getter not loaded")
 
 # --- Configuration ---
 KEYFRAMES_S3_PREFIX = os.getenv("KEYFRAMES_S3_PREFIX", "clip_artifacts/keyframes/")
@@ -217,18 +219,25 @@ def _extract_and_save_frames_internal(
 def extract_keyframes_task(
     clip_id: int,
     strategy: str = 'midpoint',
-    overwrite: bool = False
+    overwrite: bool = False,
+    environment: str = "development" # Added environment parameter
     ):
     """
     Extracts keyframes, uploads them to S3, and records them in the database.
     Updates clip state and `keyframed_at` timestamp.
+
+    Args:
+        clip_id (int): The ID of the clip.
+        strategy (str): The keyframe extraction strategy ('midpoint', 'multi').
+        overwrite (bool): Whether to overwrite existing keyframes.
+        environment (str): The execution environment ("development" or "production").
     """
     logger = get_run_logger()
-    logger.info(f"TASK [Keyframe]: Starting for clip_id: {clip_id}, Strategy: '{strategy}', Overwrite: {overwrite}")
+    logger.info(f"TASK [Keyframe]: Starting for clip_id: {clip_id}, Strategy: '{strategy}', Overwrite: {overwrite}, Env: {environment}")
 
-    if not s3_client:
-        logger.error("S3 client is not available.")
-        raise RuntimeError("S3 client is not initialized or configured.")
+    # --- Get S3 Resources using the utility function ---
+    s3_client_for_task, s3_bucket_name_for_task = get_s3_resources(environment, logger=logger)
+    # Error handling for missing S3 resources is now within get_s3_resources
 
     conn = None
     temp_dir_obj = None
@@ -252,290 +261,264 @@ def extract_keyframes_task(
 
     try:
         # === Phase 1: Initial DB Check and State Update ===
-        conn = get_db_connection()
-        conn.autocommit = False
+        conn = get_db_connection(cursor_factory=psycopg2.extras.DictCursor) # Use DictCursor for easy column access
+        if not conn: raise ConnectionError("Failed to get DB connection from pool.")
+        conn.autocommit = False # Start transaction
 
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT pg_advisory_xact_lock(2, %s)", (clip_id,))
-                logger.info(f"Acquired DB lock for clip_id: {clip_id} (Phase 1 Check)")
-
-                cur.execute(
-                    """
-                    SELECT c.clip_filepath, c.clip_identifier, c.ingest_state, sv.title
-                    FROM clips c JOIN source_videos sv ON c.source_video_id = sv.id
-                    WHERE c.id = %s;
-                    """, (clip_id,)
-                )
-                result = cur.fetchone()
-                if not result: raise ValueError(f"Clip ID {clip_id} not found.")
-                clip_s3_key, clip_identifier, current_state, source_title = result
-                logger.info(f"Found clip: ID={clip_id}, Identifier='{clip_identifier}', State='{current_state}', Source Title='{source_title}', Clip S3 Key='{clip_s3_key}'")
-
-                if not clip_s3_key: raise ValueError(f"Clip ID {clip_id} has NULL clip_filepath.")
-                # Sanitize title here for consistency
-                if not source_title:
-                    title = f"source_{clip_identifier.split('_')[0]}"
-                    logger.warning(f"Source title NULL/empty, using fallback: '{title}'")
-                else:
-                    title = re.sub(r'[^\w\-\.]+', '_', source_title).strip('_')
-                    title = re.sub(r'_+', '_', title)
-                    if not title: title = "untitled_clip"
-
-                artifacts_exist = False
-                if not overwrite:
-                    cur.execute(
-                        "SELECT EXISTS (SELECT 1 FROM clip_artifacts WHERE clip_id = %s AND artifact_type = %s AND strategy = %s);",
-                        (clip_id, ARTIFACT_TYPE_KEYFRAME, strategy)
-                    )
-                    artifacts_exist = cur.fetchone()[0]
-                    logger.debug(f"Checked for existing artifacts (type='{ARTIFACT_TYPE_KEYFRAME}', strategy='{strategy}'): {artifacts_exist}")
-
-                allow_processing_state = current_state in ['review_approved', 'keyframing_failed', 'processing_post_review'] # Allow start from intermediate state too
-
-                if artifacts_exist and not overwrite:
-                     logger.info(f"Skipping clip {clip_id}: Artifacts exist and overwrite=False.")
-                     final_status = "skipped_exists"
-                     needs_processing = False
-                elif not allow_processing_state and not overwrite:
-                     logger.warning(f"Skipping clip {clip_id}: State '{current_state}' not eligible and overwrite=False.")
-                     final_status = "skipped_state"
-                     needs_processing = False
-                elif overwrite and current_state not in ['keyframing']:
-                     needs_processing = True
-                     logger.info(f"Proceeding (Overwrite=True). Current state: {current_state}")
-                elif allow_processing_state:
-                     needs_processing = True
-                     logger.info(f"Proceeding. Current state: {current_state}")
-                else:
-                    logger.warning(f"Skipping clip {clip_id}. Logic state: exists={artifacts_exist}, overwrite={overwrite}, state='{current_state}'.")
-                    final_status = "skipped_logic"
-                    needs_processing = False
-
-                if needs_processing:
-                    cur.execute(
-                        """UPDATE clips SET ingest_state = 'keyframing', updated_at = NOW(), last_error = NULL WHERE id = %s;""", (clip_id,)
-                    )
-                    if cur.rowcount == 0: raise RuntimeError(f"Concurrency Error: Failed to set clip {clip_id} state to 'keyframing'.")
-                    logger.info(f"Set clip {clip_id} state to 'keyframing'")
-
-            conn.commit()
-            logger.debug("Phase 1 DB transaction committed.")
-
-        except (ValueError, psycopg2.DatabaseError, RuntimeError) as db_err:
-             logger.error(f"DB Error during Phase 1 for clip {clip_id}: {db_err}", exc_info=True)
-             if conn: conn.rollback()
-             error_message_for_db = f"DB Phase 1 Error: {str(db_err)[:500]}"
-             task_exception = db_err
-             final_status = "failed_db_phase1"
-             raise # Re-raise to main handler
-
-        # === Exit Early if Skipped ===
-        if not needs_processing:
-            logger.info(f"No processing required for clip {clip_id}. Final status: {final_status}")
-            return {"status": final_status, "clip_id": clip_id, "strategy": strategy, "generated_artifacts_count": 0, "artifact_s3_keys": []}
-
-        # === Phase 2: Processing/Upload ===
-        if not s3_client: raise RuntimeError("S3 client unavailable.")
-
-        try:
-            temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"heaters_keyframe_{clip_id}_")
-            temp_dir = Path(temp_dir_obj.name)
-            logger.info(f"Using temporary directory: {temp_dir}")
-
-            local_temp_clip_path = temp_dir / Path(clip_s3_key).name
-            logger.info(f"Downloading s3://{S3_BUCKET_NAME}/{clip_s3_key} to {local_temp_clip_path}...")
-            s3_client.download_file(S3_BUCKET_NAME, clip_s3_key, str(local_temp_clip_path))
-            logger.info(f"Successfully downloaded clip video for {clip_id}.")
-
-            extracted_frames_metadata = _extract_and_save_frames_internal(
-                str(local_temp_clip_path), clip_identifier, title, str(temp_dir), strategy
+        with conn.cursor() as cur:
+            # Check for existing keyframes and state
+            cur.execute(
+                """SELECT c.ingest_state, c.clip_filepath, c.clip_identifier, sv.title, c.keyframed_at
+                   FROM clips c JOIN source_videos sv ON c.source_video_id = sv.id
+                   WHERE c.id = %s FOR UPDATE""", (clip_id,)
             )
-            if not extracted_frames_metadata: raise RuntimeError(f"Frame extraction yielded no results for clip {clip_id}.")
-            logger.info(f"Extracted {len(extracted_frames_metadata)} frame(s) locally for clip {clip_id}.")
+            clip_record = cur.fetchone()
+            if not clip_record: raise ValueError(f"Clip {clip_id} not found.")
 
-            processed_artifact_data_for_db = []
-            generated_artifact_s3_keys = []
-            representative_tag = '50pct' if strategy == 'multi' else 'mid'
-            upload_datetime = datetime.now() # Use a consistent timestamp for batch DB insert
+            current_state = clip_record['ingest_state']
+            clip_s3_key = clip_record['clip_filepath'] # S3 key of the video clip
+            clip_identifier = clip_record['clip_identifier']
+            title = clip_record['title'] # Source video title, or clip specific if available
+            keyframed_at_db = clip_record['keyframed_at']
 
-            for frame_data in extracted_frames_metadata:
-                temp_local_path = Path(frame_data['local_path'])
-                frame_tag = frame_data['tag']
-                s3_prefix = f"{KEYFRAMES_S3_PREFIX.strip('/')}/{title}/{strategy}/".replace("//", "/")
-                frame_s3_key = f"{s3_prefix}{temp_local_path.name}"
+            logger.info(f"Clip {clip_id}: Current state '{current_state}', Keyframed at: {keyframed_at_db}")
 
-                try:
-                    logger.debug(f"Uploading {temp_local_path.name} to s3://{S3_BUCKET_NAME}/{frame_s3_key}")
-                    with open(temp_local_path, "rb") as f:
-                        s3_client.upload_fileobj(f, S3_BUCKET_NAME, frame_s3_key)
+            if not clip_s3_key:
+                raise ValueError(f"Clip {clip_id} is missing clip_filepath (S3 key for video).")
 
-                    is_representative = (frame_tag == representative_tag)
-                    db_metadata = {
-                        "frame_number": frame_data['frame_index'],
-                        "timestamp_sec": frame_data['timestamp_sec'],
-                        "width": frame_data['width'],
-                        "height": frame_data['height'],
-                        "is_representative": is_representative
-                    }
+            # Determine if processing is needed
+            expected_processing_state = 'processing_keyframe' # Or a similar state
+            allow_processing = (current_state in ['review_approved', 'processing_post_review'] or 
+                                current_state == 'keyframe_extraction_failed' or 
+                                current_state == expected_processing_state) # Allow re-run on specific failure
 
-                    # Prepare tuple for DB insertion - includes placeholder for created_at/updated_at
-                    processed_artifact_data_for_db.append((
-                        clip_id, ARTIFACT_TYPE_KEYFRAME, strategy, frame_tag,
-                        frame_s3_key, Json(db_metadata)
-                    ))
-                    generated_artifact_s3_keys.append(frame_s3_key)
+            if keyframed_at_db and not overwrite:
+                logger.info(f"Clip {clip_id} already keyframed at {keyframed_at_db} and overwrite is False. Skipping.")
+                final_status = "skipped_exists"
+                needs_processing = False
+            elif not allow_processing:
+                logger.warning(f"Clip {clip_id} state '{current_state}' is not runnable for keyframing. Skipping.")
+                final_status = "skipped_state"
+                needs_processing = False
+            else:
+                # Update state to 'processing_keyframe' before starting long operations
+                cur.execute("UPDATE clips SET ingest_state = %s, updated_at = NOW(), last_error = NULL WHERE id = %s",
+                            (expected_processing_state, clip_id))
+                conn.commit() # Commit state change before proceeding
+                needs_processing = True
+                final_status = "processing_started" # Tentative status
 
-                except ClientError as s3_upload_err:
-                    raise RuntimeError(f"S3 upload failed for {frame_s3_key}") from s3_upload_err
-                except Exception as upload_err:
-                    logger.error(f"Unexpected error uploading {temp_local_path.name}: {upload_err}", exc_info=True)
-                    raise
+        if not needs_processing:
+            if conn: conn.rollback() # Rollback if we only did checks and no processing needed
+            return {"status": final_status, "clip_id": clip_id, "s3_keys": [], "s3_bucket_used": s3_bucket_name_for_task}
 
-            if len(generated_artifact_s3_keys) != len(extracted_frames_metadata):
-                 raise RuntimeError("Not all extracted frames were successfully uploaded.")
-            if not processed_artifact_data_for_db:
-                raise RuntimeError(f"Failed to prepare any keyframe artifact data for DB.")
+        # === Main Processing (if needs_processing is True) ===
+        temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"keyframes_{clip_id}_")
+        temp_dir = Path(temp_dir_obj.name)
+        logger.info(f"Using temporary directory: {temp_dir}")
 
-            logger.info(f"Successfully uploaded {len(generated_artifact_s3_keys)} keyframe artifact(s) to S3.")
-
-        except (IOError, cv2.error, RuntimeError, ClientError, ValueError) as phase2_err:
-             logger.error(f"Error during Phase 2 for clip {clip_id}: {phase2_err}", exc_info=True)
-             error_message_for_db = f"Proc/Upload Error: {str(phase2_err)[:500]}"
-             task_exception = phase2_err
-             final_status = "failed_processing"
-             raise # Re-raise to main handler
-
-        # === Phase 3: Final DB Update ===
+        # Download the video clip from S3
+        local_temp_video_path = temp_dir / Path(clip_s3_key).name
+        logger.info(f"Downloading s3://{s3_bucket_name_for_task}/{clip_s3_key} to {local_temp_video_path}")
         try:
+            s3_client_for_task.download_file(s3_bucket_name_for_task, clip_s3_key, str(local_temp_video_path))
+        except ClientError as e:
+            task_exception = e
+            error_message_for_db = f"S3 Download failed: {e.response.get('Error',{}).get('Code','UnknownError')}"
+            final_status = "failed_s3_download"
+            logger.error(f"{error_message_for_db} for clip {clip_s3_key}", exc_info=True)
+            # Jump to finally block for cleanup and DB update
+            raise # This will be caught by the outer try-except
+
+        # Extract frames locally
+        extracted_frames = _extract_and_save_frames_internal(
+            str(local_temp_video_path), clip_identifier, title, str(temp_dir), strategy
+        )
+
+        if not extracted_frames:
+            logger.warning(f"No frames extracted for clip {clip_id}. This might be due to video issues or strategy outcome.")
+            # Decide if this is an error or an acceptable outcome (e.g., very short clip)
+            # For now, treat as an error if it was expected to produce frames.
+            if strategy != 'none': # Assuming 'none' is a valid strategy that extracts no frames
+                task_exception = ValueError("Frame extraction returned no frames.")
+                error_message_for_db = "Frame extraction failed or yielded no frames."
+                final_status = "failed_extraction"
+                logger.error(error_message_for_db)
+                raise task_exception # Outer try-except will handle DB update
+            else:
+                logger.info("Strategy is 'none', so no frames extracted as expected.")
+                final_status = "success_no_frames_strategy_none" # Special success state
+
+        # If overwrite is True, delete existing keyframe artifacts from DB and S3
+        if overwrite and extracted_frames: # Only delete if we have new frames to upload
             with conn.cursor() as cur:
-                 cur.execute("SELECT pg_advisory_xact_lock(2, %s)", (clip_id,))
-                 logger.info(f"Acquired DB lock for clip_id: {clip_id} (Phase 3 Update)")
+                cur.execute("SELECT id, s3_key FROM clip_artifacts WHERE clip_id = %s AND artifact_type = %s",
+                            (clip_id, ARTIFACT_TYPE_KEYFRAME))
+                existing_artifacts = cur.fetchall()
+                if existing_artifacts:
+                    logger.info(f"Overwrite True: Found {len(existing_artifacts)} existing keyframe artifacts for clip {clip_id} to delete.")
+                    s3_keys_to_delete = [{'Key': art['s3_key']} for art in existing_artifacts if art['s3_key']]
+                    db_ids_to_delete = [art['id'] for art in existing_artifacts]
 
-                 if overwrite:
-                     logger.info(f"Overwrite=True: Deleting existing artifacts...")
-                     delete_sql = sql.SQL("DELETE FROM clip_artifacts WHERE clip_id = %s AND artifact_type = %s AND strategy = %s;")
-                     cur.execute(delete_sql, (clip_id, ARTIFACT_TYPE_KEYFRAME, strategy))
-                     logger.info(f"Deletion completed (affected {cur.rowcount} rows).")
+                    if s3_keys_to_delete:
+                        logger.info(f"Deleting {len(s3_keys_to_delete)} objects from S3 bucket {s3_bucket_name_for_task}...")
+                        try:
+                            delete_response = s3_client_for_task.delete_objects(
+                                Bucket=s3_bucket_name_for_task,
+                                Delete={'Objects': s3_keys_to_delete, 'Quiet': True}
+                            )
+                            if delete_response.get('Errors'):
+                                logger.warning(f"Errors during S3 delete_objects: {delete_response['Errors']}")
+                            else:
+                                logger.info("S3 delete_objects successful for existing keyframes.")
+                        except ClientError as s3_del_err:
+                            logger.warning(f"ClientError during S3 delete_objects for existing keyframes: {s3_del_err}. Proceeding with DB delete.")
 
-                 insert_query = sql.SQL("""
-                    INSERT INTO clip_artifacts (
-                        clip_id, artifact_type, strategy, tag, s3_key, metadata
-                        -- inserted_at and updated_at will use DB defaults
-                    ) VALUES %s
-                    ON CONFLICT (clip_id, artifact_type, strategy, tag) DO UPDATE SET
-                        s3_key = EXCLUDED.s3_key,
-                        metadata = EXCLUDED.metadata,
-                        updated_at = NOW(); -- Only updated_at is set on conflict
-                """)
+                    if db_ids_to_delete:
+                        cur.execute("DELETE FROM clip_artifacts WHERE id = ANY(%s::int[])", (db_ids_to_delete,))
+                        logger.info(f"Deleted {cur.rowcount} existing keyframe artifact records from DB.")
+                    conn.commit() # Commit deletions
 
-                 values_to_insert = processed_artifact_data_for_db
-
-                 execute_values(cur, insert_query, values_to_insert)
-                 logger.info(f"Inserted/updated {len(values_to_insert)} artifact records.")
-
-                 update_clip_sql = sql.SQL("""
-                     UPDATE clips SET
-                         ingest_state = 'keyframed', keyframed_at = NOW(),
-                         last_error = NULL, updated_at = NOW()
-                     WHERE id = %s AND ingest_state = 'keyframing';
-                 """)
-                 cur.execute(update_clip_sql, (clip_id,))
-
-                 if cur.rowcount == 1:
-                      logger.info(f"Successfully updated clip {clip_id} state to 'keyframed'.")
-                      final_status = "success"
-                 else:
-                      logger.error(f"Failed to update clip {clip_id} final state to 'keyframed'. Rowcount: {cur.rowcount}.")
-                      conn.rollback()
-                      final_status = "failed_state_update"
-                      error_message_for_db = "Failed final state update to 'keyframed'"
-                      raise RuntimeError(f"Failed to update clip {clip_id} state to 'keyframed' in final DB step.")
-
-            conn.commit()
-            logger.info("Phase 3 DB updates committed successfully.")
-
-        except (psycopg2.DatabaseError, RuntimeError) as db_err:
-             logger.error(f"DB Error during Phase 3 for clip {clip_id}: {db_err}", exc_info=True)
-             if conn: conn.rollback()
-             error_message_for_db = f"DB Phase 3 Error: {str(db_err)[:500]}"
-             task_exception = db_err
-             final_status = "failed_db_update"
-             raise # Re-raise to main handler
-
-    except (ValueError, IOError, FileNotFoundError, RuntimeError, ClientError, psycopg2.DatabaseError) as e:
-        # --- Main Error Handling ---
-        logger.error(f"TASK FAILED [Keyframe]: clip_id {clip_id} - Error: {e}", exc_info=True)
-        # Keep specific failure status if already set
-        final_status = final_status if final_status not in ["failed_init", "failed"] else "failed_processing"
-        error_message_for_db = error_message_for_db or f"{type(e).__name__}: {str(e)[:500]}"
-        task_exception = e
-
-        if conn and needs_processing: # Check if conn exists and we intended to process
+        # Upload new frames to S3 and prepare for DB insert
+        for frame_data in extracted_frames:
+            frame_filename = Path(frame_data['local_path']).name
+            s3_key = f"{KEYFRAMES_S3_PREFIX}{frame_filename}"
             try:
-                logger.warning(f"Attempting rollback and state update to 'keyframing_failed' for clip {clip_id}.")
-                conn.rollback()
-                conn.autocommit = True # Use autocommit for fail state update
-                with conn.cursor() as err_cur:
-                    fail_update_sql = sql.SQL("""
-                        UPDATE clips SET
-                            ingest_state = 'keyframing_failed', last_error = %s,
-                            retry_count = COALESCE(retry_count, 0) + 1, updated_at = NOW()
-                        WHERE id = %s AND (ingest_state = 'keyframing' OR ingest_state = 'processing_post_review');
-                        """) # Allow update from intermediate state too
-                    err_cur.execute(fail_update_sql, (error_message_for_db, clip_id))
-                logger.info(f"Attempted state update to 'keyframing_failed' for clip {clip_id}.")
-            except Exception as db_fail_err:
-                logger.error(f"CRITICAL: Failed to update error state in DB for clip {clip_id}: {db_fail_err}")
-        elif not conn:
-             logger.error("DB connection unavailable for error state update.")
+                logger.debug(f"Uploading keyframe {frame_filename} to s3://{s3_bucket_name_for_task}/{s3_key}")
+                s3_client_for_task.upload_file(frame_data['local_path'], s3_bucket_name_for_task, s3_key)
+                generated_artifact_s3_keys.append(s3_key)
+                processed_artifact_data_for_db.append((
+                    clip_id, ARTIFACT_TYPE_KEYFRAME, s3_key,
+                    frame_data['tag'], frame_data['width'], frame_data['height'],
+                    frame_data['frame_index'], frame_data['timestamp_sec'],
+                    datetime.now(tz=psycopg2.tz.FixedOffsetTimezone(offset=0, name=None)), # created_at (UTC)
+                    datetime.now(tz=psycopg2.tz.FixedOffsetTimezone(offset=0, name=None))  # updated_at (UTC)
+                ))
+            except ClientError as e:
+                task_exception = e
+                error_message_for_db = f"S3 Upload failed for {frame_filename}: {e.response.get('Error',{}).get('Code','UnknownError')}"
+                final_status = "failed_s3_upload"
+                logger.error(error_message_for_db, exc_info=True)
+                raise # Outer try-except will handle DB update
+            except Exception as e_upload:
+                task_exception = e_upload
+                error_message_for_db = f"Unexpected error uploading {frame_filename}: {str(e_upload)[:200]}"
+                final_status = "failed_s3_upload_unexpected"
+                logger.error(error_message_for_db, exc_info=True)
+                raise
 
+        # Batch insert new artifact records
+        if processed_artifact_data_for_db:
+            with conn.cursor() as cur:
+                insert_query = """
+                INSERT INTO clip_artifacts
+                (clip_id, artifact_type, s3_key, tag, width, height, frame_index, timestamp_seconds, created_at, updated_at)
+                VALUES %s RETURNING id;
+                """
+                execute_values(cur, insert_query, processed_artifact_data_for_db, page_size=100)
+                # artifact_ids = [row[0] for row in cur.fetchall()] # If you need the new IDs
+                logger.info(f"Successfully inserted {len(processed_artifact_data_for_db)} keyframe artifact records into DB.")
+                # Update clip state to success
+                cur.execute("UPDATE clips SET ingest_state = %s, keyframed_at = NOW(), updated_at = NOW(), last_error = NULL WHERE id = %s",
+                            ("keyframed", clip_id))
+                conn.commit()
+                final_status = "success"
+                logger.info(f"Clip {clip_id} successfully keyframed. State set to 'keyframed'.")
+        elif final_status == "processing_started": # No new artifacts but processing started
+            # This case implies no frames were extracted or an issue occurred before artifact creation
+            # If final_status is already failed_extraction or success_no_frames_strategy_none, it will be handled by that logic.
+            logger.warning(f"No new keyframe artifacts were processed for DB insert for clip {clip_id}, but processing was initiated.")
+            # If no error was explicitly raised before, but no artifacts, mark as failed extraction implicitly.
+            if not task_exception:
+                error_message_for_db = "No frames processed into artifacts despite starting."
+                final_status = "failed_extraction_no_artifacts"
+                task_exception = ValueError(error_message_for_db) # Create an exception to signify failure
+                # No raise here, will be handled by finally block if task_exception is set
+            conn.rollback() # Rollback if no DB changes were made for artifacts
+        elif final_status == "success_no_frames_strategy_none":
+            with conn.cursor() as cur: # Still need to update the clip state
+                cur.execute("UPDATE clips SET ingest_state = %s, keyframed_at = NOW(), updated_at = NOW(), last_error = NULL WHERE id = %s",
+                            ("keyframed", clip_id))
+                conn.commit()
+            logger.info(f"Clip {clip_id} keyframing skipped by strategy, state set to 'keyframed'.")
+        else: # No artifacts and not an explicit success_no_frames case
+            conn.rollback() # Rollback if no DB changes were made
+            logger.info("No new keyframe artifacts to insert. No DB changes made for artifacts.")
+
+
+    except (psycopg2.Error, ConnectionError) as db_err:
+        task_exception = db_err
+        error_message_for_db = f"Database error: {str(db_err)[:200]}"
+        final_status = "failed_db_operation"
+        logger.error(f"Database error during keyframe task for clip {clip_id}: {db_err}", exc_info=True)
+        if conn and not conn.closed: conn.rollback()
+    except ValueError as val_err: # Catch specific ValueErrors we raise (e.g. clip not found)
+        task_exception = val_err
+        error_message_for_db = f"ValueError: {str(val_err)[:200]}"
+        final_status = "failed_validation"
+        logger.error(f"Validation error for clip {clip_id}: {val_err}", exc_info=True)
+        if conn and not conn.closed: conn.rollback()
+    except IOError as io_err: # Catch IOErrors from _extract_and_save_frames_internal
+        task_exception = io_err
+        error_message_for_db = f"IOError during frame extraction: {str(io_err)[:200]}"
+        final_status = "failed_io_extraction"
+        logger.error(f"IOError for clip {clip_id}: {io_err}", exc_info=True)
+        if conn and not conn.closed: conn.rollback()
+    except RuntimeError as run_err: # Catch other RuntimeErrors (OpenCV, S3 etc)
+        task_exception = run_err
+        # error_message_for_db might have been set by a more specific catch block before re-raising
+        if not error_message_for_db:
+            error_message_for_db = f"Runtime error: {str(run_err)[:200]}"
+        if final_status not in ["failed_s3_download", "failed_s3_upload", "failed_s3_upload_unexpected", "failed_extraction"]:
+             final_status = "failed_runtime_unknown"
+        logger.error(f"Runtime error for clip {clip_id}: {run_err}", exc_info=True)
+        if conn and not conn.closed: conn.rollback()
     except Exception as e:
-         # Catch any truly unexpected errors
-         logger.error(f"UNEXPECTED TASK FAILED [Keyframe]: clip_id {clip_id} - Error: {e}", exc_info=True)
-         final_status = "failed_unexpected"
-         error_message_for_db = f"Unexpected:{type(e).__name__}: {str(e)[:480]}"
-         task_exception = e
-         if conn and needs_processing:
-             try:
-                conn.rollback(); conn.autocommit = True
-                with conn.cursor() as err_cur:
-                    err_cur.execute(sql.SQL("""UPDATE clips SET ingest_state = 'keyframing_failed', last_error = %s, retry_count = COALESCE(retry_count, 0) + 1, updated_at = NOW() WHERE id = %s AND (ingest_state = 'keyframing' OR ingest_state = 'processing_post_review');"""), (error_message_for_db, clip_id))
-                logger.info(f"Attempted state update to 'keyframing_failed' after unexpected error for clip {clip_id}.")
-             except Exception as db_fail_err:
-                logger.error(f"CRITICAL: Failed to update error state in DB for clip {clip_id}: {db_fail_err}")
+        task_exception = e
+        error_message_for_db = f"Unexpected error: {str(e)[:200]}"
+        final_status = "failed_unexpected"
+        logger.error(f"Unexpected error for clip {clip_id}: {e}", exc_info=True)
+        if conn and not conn.closed: conn.rollback()
 
     finally:
-        # --- Cleanup ---
-        if conn:
-            conn.autocommit = True
-            release_db_connection(conn)
-            logger.debug(f"DB connection released for clip_id: {clip_id}")
+        # Update DB if an error occurred and status hasn't been successfully set
+        if task_exception and final_status not in ["success", "skipped_exists", "skipped_state", "success_no_frames_strategy_none"]:
+            logger.warning(f"An error occurred ({final_status}). Updating clip {clip_id} state and error message in DB.")
+            error_conn = None
+            try:
+                error_conn = get_db_connection()
+                if not error_conn: raise ConnectionError("Failed to get DB connection for error update.")
+                error_conn.autocommit = True # Simple update
+                with error_conn.cursor() as err_cur:
+                    # Determine the state to set on failure, typically 'keyframe_extraction_failed'
+                    # Ensure we don't overwrite a state that implies later successful processing.
+                    failure_db_state = 'keyframe_extraction_failed'
+                    err_cur.execute(
+                        """UPDATE clips SET ingest_state = %s, last_error = %s, updated_at = NOW(),
+                           retry_count = COALESCE(retry_count, 0) + 1
+                           WHERE id = %s AND ingest_state NOT IN (%s, %s)""",
+                        (failure_db_state, error_message_for_db, clip_id, 'keyframed', 'embedding') # Don't overwrite 'keyframed' or 'embedding'
+                    )
+                    logger.info(f"Updated clip {clip_id} to '{failure_db_state}' with error: {error_message_for_db}")
+            except Exception as db_upd_err:
+                logger.error(f"CRITICAL: Failed to update DB state on error for clip {clip_id}: {db_upd_err}", exc_info=True)
+            finally:
+                if error_conn: release_db_connection(error_conn)
+
         if temp_dir_obj:
             try:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                logger.info(f"Cleaned up temporary directory: {temp_dir}")
+                logger.debug(f"Cleaning up temporary directory: {temp_dir}")
+                temp_dir_obj.cleanup()
             except Exception as cleanup_err:
-                 logger.warning(f"Error cleaning up temp dir {temp_dir}: {cleanup_err}")
+                logger.warning(f"Error cleaning up temp directory {temp_dir}: {cleanup_err}")
+        if conn and not conn.closed:
+            release_db_connection(conn)
 
-    # === Return Result or Raise Exception ===
-    result_payload = {
+    logger.info(f"TASK [Keyframe] for clip_id {clip_id} finished. Status: {final_status}, S3 Keys: {len(generated_artifact_s3_keys)}, Bucket: {s3_bucket_name_for_task}")
+    return {
         "status": final_status,
         "clip_id": clip_id,
-        "strategy": strategy,
-        "generated_artifacts_count": len(generated_artifact_s3_keys),
-        "artifact_s3_keys": generated_artifact_s3_keys,
+        "s3_keys": generated_artifact_s3_keys,
+        "strategy_used": strategy,
+        "s3_bucket_used": s3_bucket_name_for_task
     }
-
-    if final_status == "success":
-        logger.info(f"TASK [Keyframe] finished successfully for clip_id {clip_id}.")
-        return result_payload
-    elif final_status.startswith("skipped"):
-         logger.info(f"TASK [Keyframe] skipped for clip_id {clip_id}. Status: {final_status}")
-         return result_payload
-    else:
-        logger.error(f"TASK [Keyframe] failed for clip_id {clip_id}. Status: {final_status}. Error: {error_message_for_db}.")
-        if task_exception:
-            raise task_exception
-        else:
-            raise RuntimeError(f"Keyframe task failed for clip {clip_id} with status {final_status}. Reason: {error_message_for_db or 'Unknown error'}")

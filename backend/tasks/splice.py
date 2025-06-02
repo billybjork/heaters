@@ -15,6 +15,7 @@ from psycopg2 import sql
 
 try:
     from db.sync_db import get_db_connection
+    from config import get_s3_resources # Import the new utility function
 except ImportError:
     import sys
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -22,54 +23,31 @@ except ImportError:
         sys.path.insert(0, project_root)
     try:
         from db.sync_db import get_db_connection
+        from config import get_s3_resources # Import again in fallback
     except ImportError as e:
-        print(f"Failed to import db_utils even after path adjustment: {e}")
+        print(f"Failed to import db_utils or config in splice.py: {e}")
         def get_db_connection(): raise NotImplementedError("Dummy get_db_connection")
+        def get_s3_resources(env, logger=None): raise NotImplementedError("Dummy get_s3_resources")
 
-# --- Environment Configuration ---
-APP_ENV = os.getenv("APP_ENV", "production")
+# Module-level APP_ENV can be used for general worker context if needed outside tasks
+# APP_ENV = os.getenv("APP_ENV", "production")
 
-# --- S3 Configuration ---
-AWS_REGION = os.getenv("AWS_REGION", "us-west-1")
-
-if APP_ENV == "development":
-    S3_BUCKET_NAME = os.getenv("S3_DEV_BUCKET_NAME")
-    env_log_msg_suffix = f"DEVELOPMENT environment using S3 Bucket: '{S3_BUCKET_NAME}'"
-else:
-    S3_BUCKET_NAME = os.getenv("S3_PROD_BUCKET_NAME")
-    env_log_msg_suffix = f"PRODUCTION environment using S3 Bucket: '{S3_BUCKET_NAME}'"
-
-if not S3_BUCKET_NAME:
-    raise ValueError(
-        f"splice.py: S3_BUCKET_NAME is not configured for APP_ENV='{APP_ENV}'. "
-        f"Ensure S3_DEV_BUCKET_NAME or S3_PROD_BUCKET_NAME is set."
-    )
-
-s3_client = None
-try:
-    s3_client = boto3.client('s3', region_name=AWS_REGION)
-    print(f"Splice.py: Initialized S3 client for region: {AWS_REGION}. {env_log_msg_suffix}")
-except NoCredentialsError:
-     print("Splice.py: ERROR initializing S3 client - AWS credentials not found.")
-     s3_client = None
-except Exception as e:
-    print(f"Splice.py: ERROR initializing S3 client: {e}")
-    s3_client = None
+# AWS_REGION for S3 client will be handled by get_s3_resources
+# S3_BUCKET_NAME will be handled by get_s3_resources
 
 # --- Task Configuration ---
 CLIP_S3_PREFIX = "clips/"
 # Scene Detection Config
-SCENE_DETECT_THRESHOLD = float(os.getenv("SCENE_DETECT_THRESHOLD", 0.6)) # TODO: Add variable to master pipeline configuration settings
-# Map method string from env or default to OpenCV constant
+SCENE_DETECT_THRESHOLD = float(os.getenv("SCENE_DETECT_THRESHOLD", 0.6))
 _hist_methods_map = { "CORREL": cv2.HISTCMP_CORREL, "CHISQR": cv2.HISTCMP_CHISQR, "INTERSECT": cv2.HISTCMP_INTERSECT, "BHATTACHARYYA": cv2.HISTCMP_BHATTACHARYYA }
 _hist_method_str = os.getenv("SCENE_DETECT_METHOD", "CORREL").upper()
 SCENE_DETECT_METHOD = _hist_methods_map.get(_hist_method_str, cv2.HISTCMP_CORREL)
 if _hist_method_str not in _hist_methods_map:
+    # Use a print here if logger might not be configured, or get a basic logger
     print(f"Warning: Invalid SCENE_DETECT_METHOD '{_hist_method_str}'. Defaulting to CORREL.")
 
-MIN_CLIP_DURATION_SECONDS = float(os.getenv("MIN_CLIP_DURATION_SECONDS", 1.0)) # Minimum duration to keep a clip
+MIN_CLIP_DURATION_SECONDS = float(os.getenv("MIN_CLIP_DURATION_SECONDS", 1.0))
 FFMPEG_PATH = "ffmpeg"
-# FFmpeg default encoding options (can be overridden if needed)
 FFMPEG_CRF = os.getenv("FFMPEG_CRF", "23")
 FFMPEG_PRESET = os.getenv("FFMPEG_PRESET", "medium")
 FFMPEG_AUDIO_BITRATE = os.getenv("FFMPEG_AUDIO_BITRATE", "128k")
@@ -231,13 +209,22 @@ def detect_scenes(video_path: str, threshold: float, hist_method: int):
 # --- Main Splice Task ---
 
 @task(name="Splice Source Video into Clips", retries=1, retry_delay_seconds=60)
-def splice_video_task(source_video_id: int):
+def splice_video_task(source_video_id: int, environment: str = "development"):
     """
     Downloads source video, detects scenes using OpenCV, splices using ffmpeg,
     uploads clips to S3, and creates 'clips' table records.
+
+    Args:
+        source_video_id (int): The ID of the source video in the database.
+        environment (str): The execution environment ("development" or "production").
     """
     logger = get_run_logger()
-    logger.info(f"TASK [Splice]: Starting for source_video_id: {source_video_id}")
+    logger.info(f"TASK [Splice]: Starting for source_video_id: {source_video_id}, Environment: {environment}")
+
+    # --- Get S3 Resources using the utility function ---
+    s3_client_for_task, s3_bucket_name_for_task = get_s3_resources(environment, logger=logger)
+    # Error handling for missing S3 resources is now within get_s3_resources
+
     conn = None
     temp_dir_obj = None
     source_s3_key = None
@@ -251,7 +238,7 @@ def splice_video_task(source_video_id: int):
     total_frames = 0
 
     # --- Dependency and Configuration Checks ---
-    if not s3_client:
+    if not s3_client_for_task:
         logger.error("S3 client not initialized. Cannot proceed.")
         raise RuntimeError("S3 client failed to initialize.")
     if not shutil.which(FFMPEG_PATH):
@@ -340,13 +327,13 @@ def splice_video_task(source_video_id: int):
 
         # 3. Download Source Video from S3
         local_source_path = temp_dir / Path(source_s3_key).name
-        logger.info(f"Downloading s3://{S3_BUCKET_NAME}/{source_s3_key} to {local_source_path}...")
+        logger.info(f"Source is S3 key. Downloading s3://{s3_bucket_name_for_task}/{source_s3_key} to {local_source_path}")
         try:
-            s3_client.download_file(S3_BUCKET_NAME, source_s3_key, str(local_source_path))
-            logger.info(f"Source video download complete: {local_source_path}")
-        except ClientError as s3_err:
-            logger.error(f"Failed to download source video from S3: {s3_err}")
-            raise RuntimeError("S3 download failed") from s3_err
+            s3_client_for_task.download_file(s3_bucket_name_for_task, source_s3_key, str(local_source_path))
+            logger.info("S3 Download successful.")
+        except ClientError as e:
+            logger.error(f"Failed to download source video from S3 ({s3_bucket_name_for_task}/{source_s3_key}): {e}", exc_info=True)
+            raise RuntimeError(f"S3 download failed for {source_s3_key}") from e
 
         # 4. Detect Scenes using OpenCV
         logger.info("Starting scene detection...")
@@ -421,9 +408,9 @@ def splice_video_task(source_video_id: int):
                     run_ffmpeg_command(ffmpeg_extract_cmd, f"ffmpeg Extract Clip {idx}")
 
                     # Upload clip to S3
-                    logger.debug(f"Uploading {local_clip_path.name} to s3://{S3_BUCKET_NAME}/{clip_s3_key}")
+                    logger.debug(f"Uploading {local_clip_path.name} to s3://{s3_bucket_name_for_task}/{clip_s3_key}")
                     with open(local_clip_path, "rb") as f:
-                        s3_client.upload_fileobj(f, S3_BUCKET_NAME, clip_s3_key)
+                        s3_client_for_task.upload_fileobj(f, s3_bucket_name_for_task, clip_s3_key)
                     logger.debug(f"S3 upload successful for {clip_s3_key}")
 
                     # Insert clip record into DB
@@ -503,13 +490,34 @@ def splice_video_task(source_video_id: int):
             conn.commit()
             logger.info(f"TASK [Splice]: Finished for source {source_video_id}. Final State: {final_source_state}. Processed: {processed_clip_count}, Failed: {failed_clip_count}, Detected Scenes: {len(scenes)}")
 
+        # === Final Summary Logging ===
+        total_clips = len(created_clip_ids) + failed_clip_count
+        logger.info(f"TASK [Splice] for source_video_id {source_video_id} summary:")
+        logger.info(f"  Total scenes detected: {len(scenes) if scenes else 'N/A'}")
+        logger.info(f"  Source video FPS: {fps:.2f} (if processed)")
+        logger.info(f"  Clips to process (after duration filter): {processed_clip_count}")
+        logger.info(f"  Successfully created and uploaded clips: {len(created_clip_ids)}")
+        logger.info(f"  Failed clip attempts: {failed_clip_count}")
+        # Log the s3_bucket_name_for_task used in this run
+        logger.info(f"  S3 Bucket Used: {s3_bucket_name_for_task}")
+
+        if failed_clip_count > 0 or not created_clip_ids:
+            final_status = "partial_success" if created_clip_ids else "failed_no_clips"
+            error_message = final_error_message
+            logger.warning(f"TASK [Splice] for source_video_id {source_video_id} finished with outcome: '{final_status}'. Check logs for details.")
+
+        # Return a summary dictionary
         return {
-            "status": "success" if final_source_state == 'spliced' else final_source_state,
-            "processed_clips": processed_clip_count,
+            "status": final_status,
+            "source_video_id": source_video_id,
+            "scenes_detected": len(scenes) if scenes else 0,
+            "clips_processed": processed_clip_count,
+            "clips_created_in_db": len(created_clip_ids),
+            "clip_ids": created_clip_ids,
             "failed_clips": failed_clip_count,
-            "detected_scenes": len(scenes),
-            "created_clip_ids": created_clip_ids
-            }
+            "s3_bucket_used": s3_bucket_name_for_task, # Include bucket used
+            "error_message": error_message
+        }
 
     except Exception as e:
         task_name = "Splice"

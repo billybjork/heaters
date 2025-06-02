@@ -15,136 +15,67 @@ from psycopg2 import sql, extras
 
 from botocore.exceptions import ClientError, NoCredentialsError
 
-# --- Project Root Setup ---
+# --- Project Root Setup & Utility Imports ---
 try:
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
     from db.sync_db import get_db_connection, release_db_connection
-except ImportError:
-    # This block is a fallback if the above fails, perhaps due to path issues not resolved
-    # by just adding project_root. It's less likely to be hit if the first try works.
-    try:
-        from db.sync_db import get_db_connection, release_db_connection
-    except ImportError as e:
-        print(f"ERROR: Cannot find db_utils in sprite.py. {e}", file=sys.stderr)
-        def get_db_connection(cursor_factory=None): raise NotImplementedError("Dummy DB getter")
-        def release_db_connection(conn): pass
-
-# --- Import Shared Components & S3 Configuration ---
-s3_client = None
-S3_BUCKET_NAME = None # Initialize to None, will be set by import or fallback
-AWS_REGION = os.getenv("AWS_REGION", "us-west-1")
-
-FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
-# SPRITE_SHEET_S3_PREFIX is specific to this file, defined later
-
-# Attempt to import from .splice
-try:
-    from .splice import (
-        s3_client as imported_s3_client,
-        S3_BUCKET_NAME as imported_s3_bucket_name,
-        run_ffmpeg_command as imported_run_ffmpeg,
-        sanitize_filename as imported_sanitize_filename,
-    )
-    if imported_s3_client and imported_s3_bucket_name:
-        s3_client = imported_s3_client
-        S3_BUCKET_NAME = imported_s3_bucket_name
-        print(f"{__name__}: Using S3 configuration imported from .splice. Bucket: {S3_BUCKET_NAME}")
-    else:
-        print(f"{__name__}: .splice imported but S3 config incomplete, will init locally.")
-        s3_client = None # Ensure it triggers local init
-
-    run_ffmpeg_command = imported_run_ffmpeg
-    sanitize_filename = imported_sanitize_filename
-
+    from config import get_s3_resources # Import the new S3 utility function
 except ImportError as e:
-    print(f"{__name__}: INFO: Could not import from .splice, using defaults/direct init. Error: {e}")
-    s3_client = None # Ensure it triggers local init
+    # Fallback for db_utils and config - critical for task operation
+    print(f"ERROR: Cannot import db_utils or config in sprite.py. {e}", file=sys.stderr)
+    def get_db_connection(cursor_factory=None): raise NotImplementedError("Dummy DB getter")
+    def release_db_connection(conn): pass
+    def get_s3_resources(environment: str, logger=None): raise NotImplementedError("Dummy S3 resource getter")
 
-    def run_ffmpeg_command(cmd_list, step_name="ffmpeg command", cwd=None):
-        logger = get_run_logger()
-        logger.info(f"Executing Fallback FFMPEG Step: {step_name} in {__name__}")
-        logger.debug(f"Command: {' '.join(cmd_list)}")
-        try:
-            result = subprocess.run(
-                cmd_list, capture_output=True, text=True, check=True, cwd=cwd,
-                encoding='utf-8', errors='replace'
-            )
-            logger.debug(f"FFMPEG Output:\n{result.stdout[:500]}...")
-            if result.stderr: logger.warning(f"FFMPEG Stderr for {step_name}:\n{result.stderr[:500]}...")
-            return result
-        except FileNotFoundError:
-            logger.error(f"ERROR in {__name__}: {cmd_list[0]} command not found at path '{FFMPEG_PATH}'.")
-            raise
-        except subprocess.CalledProcessError as exc:
-            logger.error(f"ERROR in {__name__}: {step_name} failed. Exit code: {exc.returncode}")
-            logger.error(f"Stderr:\n{exc.stderr}")
-            raise
+# FFMPEG_PATH can remain a module-level constant if it's universally applicable
+FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
 
-    def sanitize_filename(name):
-        name = re.sub(r'[^\w\.\-]+', '_', str(name))
-        name = re.sub(r'_+', '_', name).strip('_')
-        return name if name else "default_filename_fallback"
-
-# Fallback or direct initialization if not successfully imported AND S3_BUCKET_NAME is not yet set
-if not s3_client or not S3_BUCKET_NAME:
-    APP_ENV = os.getenv("APP_ENV", "development")
-    _current_module_name = __name__.split('.')[-1]
-    env_log_msg_prefix = ""
-
-    if APP_ENV == "development":
-        _temp_bucket_name = os.getenv("S3_DEV_BUCKET_NAME")
-        env_log_msg_prefix = f"DEVELOPMENT using S3 Bucket '{_temp_bucket_name}'"
-    else:
-        _temp_bucket_name = os.getenv("S3_PROD_BUCKET_NAME")
-        env_log_msg_prefix = f"PRODUCTION using S3 Bucket '{_temp_bucket_name}'"
-
-    if not _temp_bucket_name:
-        raise ValueError(
-            f"{_current_module_name}.py: S3_BUCKET_NAME is not set for APP_ENV='{APP_ENV}'. "
-            f"Ensure S3_DEV_BUCKET_NAME or S3_PROD_BUCKET_NAME is configured."
+# --- Helper functions (defined locally as the import from .splice is removed) ---
+def run_ffmpeg_command(cmd_list, step_name="ffmpeg command", cwd=None):
+    logger = get_run_logger() # Assumes this is called within a task context
+    logger.info(f"Executing FFMPEG Step: {step_name} in sprite.py")
+    logger.debug(f"Command: {' '.join(cmd_list)}")
+    try:
+        result = subprocess.run(
+            cmd_list, capture_output=True, text=True, check=True, cwd=cwd,
+            encoding='utf-8', errors='replace'
         )
-    S3_BUCKET_NAME = _temp_bucket_name # Assign to the module-level variable
+        # Limit logging of stdout to avoid overwhelming logs for large outputs
+        stdout_snippet = result.stdout[:1000] + ("..." if len(result.stdout) > 1000 else "")
+        logger.debug(f"FFMPEG Output (snippet):\n{stdout_snippet}")
+        if result.stderr:
+            stderr_snippet = result.stderr[:1000] + ("..." if len(result.stderr) > 1000 else "")
+            logger.warning(f"FFMPEG Stderr for {step_name} (snippet):\n{stderr_snippet}")
+        return result
+    except FileNotFoundError:
+        logger.error(f"ERROR in sprite.py: {cmd_list[0]} command not found at path '{FFMPEG_PATH}'.")
+        raise
+    except subprocess.CalledProcessError as exc:
+        logger.error(f"ERROR in sprite.py: {step_name} failed. Exit code: {exc.returncode}")
+        # Log full stderr on error if it's not excessively long, otherwise a snippet
+        stderr_to_log = exc.stderr if len(exc.stderr) < 2000 else exc.stderr[:2000] + "... (truncated)"
+        logger.error(f"Stderr:\n{stderr_to_log}")
+        raise
 
-    # Initialize s3_client only if it's still None (i.e., not imported successfully)
-    if not s3_client:
-        try:
-            import boto3 # Import boto3 here, as it's only needed for fallback
-            # NoCredentialsError already imported at top level
-            s3_client = boto3.client("s3", region_name=AWS_REGION)
-            print(f"{_current_module_name}.py: Fallback S3 Init: Initialized S3 client for region: {AWS_REGION}. Env: {env_log_msg_prefix}")
-        except ImportError:
-            print(f"ERROR in {_current_module_name}.py: Boto3 required for fallback S3 client but not installed.")
-            s3_client = None # Keep it None to indicate failure
-        except NoCredentialsError:
-            print(f"ERROR in {_current_module_name}.py: AWS credentials not found for fallback S3 client.")
-            s3_client = None
-        except Exception as e_boto:
-            print(f"ERROR in {_current_module_name}.py: Failed fallback Boto3 init: {e_boto}")
-            s3_client = None
-    else:
-        # This case means s3_client was imported, but S3_BUCKET_NAME was not (or was None).
-        # S3_BUCKET_NAME is now set, and we assume the imported s3_client is valid.
-        print(f"{_current_module_name}.py: Using imported s3_client with locally determined S3 bucket: {S3_BUCKET_NAME} ({env_log_msg_prefix})")
-
-# Final check for S3 bucket name (redundant if ValueError above is hit, but for safety)
-if not S3_BUCKET_NAME:
-    # This print will likely not be hit if the ValueError above is raised.
-    print(f"WARNING from {_current_module_name}.py: S3_BUCKET_NAME environment variable could not be resolved. S3 operations will fail.")
-
+def sanitize_filename(name):
+    name = str(name) # Ensure it's a string
+    name = re.sub(r'[^\w\.\-]+', '_', name) # Replace non-alphanumeric (excluding ., -) with _
+    name = re.sub(r'_+', '_', name).strip('_') # Collapse multiple underscores and strip leading/trailing
+    return name[:150] if name else "default_filename_fallback" # Limit length and provide fallback
 
 # --- Constants ---
 SPRITE_SHEET_S3_PREFIX = os.getenv("SPRITE_SHEET_S3_PREFIX", "clip_artifacts/sprite_sheets/")
 SPRITE_TILE_WIDTH = int(os.getenv("SPRITE_TILE_WIDTH", 480))
-SPRITE_TILE_HEIGHT = int(os.getenv("SPRITE_TILE_HEIGHT", -1)) # -1 maintains aspect ratio
+SPRITE_TILE_HEIGHT = int(os.getenv("SPRITE_TILE_HEIGHT", -1))
 SPRITE_FPS = int(os.getenv("SPRITE_FPS", 24))
 SPRITE_COLS = int(os.getenv("SPRITE_COLS", 5))
-ARTIFACT_TYPE_SPRITE_SHEET = "sprite_sheet" # Constant for artifact type
+ARTIFACT_TYPE_SPRITE_SHEET = "sprite_sheet"
 
 
 @task(name="Generate Sprite Sheet", retries=1, retry_delay_seconds=45)
-def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False):
+def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False, environment: str = "development"):
     """
     Generates a sprite sheet for a given clip, uploads it to S3,
     and records it as an artifact in the clip_artifacts table.
@@ -165,15 +96,15 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False):
     sprite_s3_key = None
     sprite_artifact_id = None
 
-    # --- Dependency Checks ---
-    if not s3_client:
-        logger.error("S3 client is not available. Cannot proceed.")
-        raise RuntimeError("S3 client not initialized for sprite.py.")
-    if not S3_BUCKET_NAME: # Add explicit check for bucket name here as well
-        logger.error("S3_BUCKET_NAME is not configured. Cannot proceed.")
-        raise RuntimeError("S3_BUCKET_NAME not configured for sprite.py.")
+    # --- Get S3 Resources using the utility function ---
+    s3_client_for_task, s3_bucket_name_for_task = get_s3_resources(environment, logger=logger)
+    # Error handling for missing S3 resources is now within get_s3_resources
+
+    # --- Dependency Checks (FFMPEG only, S3 client handled by get_s3_resources) ---
     if not shutil.which(FFMPEG_PATH):
         logger.error(f"ffmpeg command ('{FFMPEG_PATH}') not found in PATH.")
+        # Update state to failed before raising
+        _update_clip_state_on_error(clip_id, "ffmpeg_not_found", "FFMPEG executable not found.", logger)
         raise FileNotFoundError(f"ffmpeg command not found at '{FFMPEG_PATH}'.")
     if not shutil.which("ffprobe"):
          logger.warning("ffprobe command not found in PATH. Metadata extraction may fail or be inaccurate.")
@@ -257,9 +188,9 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False):
         temp_dir = Path(temp_dir_obj.name)
         local_clip_path = temp_dir / Path(clip_s3_key_from_db).name
 
-        logger.info(f"Downloading clip s3://{S3_BUCKET_NAME}/{clip_s3_key_from_db} to {local_clip_path}...")
+        logger.info(f"Downloading clip s3://{s3_bucket_name_for_task}/{clip_s3_key_from_db} to {local_clip_path}...")
         try:
-             s3_client.download_file(S3_BUCKET_NAME, clip_s3_key_from_db, str(local_clip_path))
+             s3_client_for_task.download_file(s3_bucket_name_for_task, clip_s3_key_from_db, str(local_clip_path))
         except ClientError as s3_err:
              logger.error(f"Failed to download clip {clip_s3_key_from_db} from S3: {s3_err}")
              raise RuntimeError(f"S3 download failed for {clip_s3_key_from_db}") from s3_err
@@ -362,10 +293,10 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False):
             if not local_sprite_path.is_file() or local_sprite_path.stat().st_size == 0:
                  raise RuntimeError(f"FFmpeg completed but output sprite file is missing or empty: {local_sprite_path}")
 
-            logger.info(f"Uploading sprite sheet to s3://{S3_BUCKET_NAME}/{sprite_s3_key}")
+            logger.info(f"Uploading sprite sheet to s3://{s3_bucket_name_for_task}/{sprite_s3_key}")
             try:
                 with open(local_sprite_path, "rb") as f:
-                    s3_client.upload_fileobj(f, S3_BUCKET_NAME, sprite_s3_key)
+                    s3_client_for_task.upload_fileobj(f, s3_bucket_name_for_task, sprite_s3_key)
             except ClientError as s3_upload_err:
                  logger.error(f"Failed to upload sprite sheet {sprite_s3_key}: {s3_upload_err}")
                  raise RuntimeError(f"S3 upload failed for sprite sheet {sprite_s3_key}") from s3_upload_err
@@ -562,7 +493,49 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False):
         "status": task_outcome,
         "clip_id": clip_id,
         "sprite_sheet_key": sprite_s3_key,
-        "artifact_id": sprite_artifact_id,
+        "sprite_artifact_id": sprite_artifact_id,
         "final_db_state": final_db_state_expected,
-        "error": error_message
+        "error": error_message,
+        "s3_bucket_used": s3_bucket_name_for_task if 's3_bucket_name_for_task' in locals() else None # Include bucket used
     }
+
+# Helper function to update clip state on error, encapsulated to reduce repetition
+def _update_clip_state_on_error(clip_id, new_state, error_msg_for_db, logger, artifact_id_to_clear=None):
+    conn = None
+    try:
+        conn = get_db_connection() # Uses default cursor
+        if conn is None: 
+            logger.error(f"[StateUpdateHelper] Failed to get DB connection for clip {clip_id} to set state '{new_state}'.")
+            return
+        
+        conn.autocommit = True # Simple update, use autocommit
+        with conn.cursor() as cur:
+            # If an artifact ID was created but the process failed later (e.g., S3 upload fails after DB insert for artifact)
+            # we might want to clear it or mark the artifact as failed.
+            # For now, just updating clip state and error.
+            if artifact_id_to_clear:
+                 logger.warning(f"[StateUpdateHelper] An artifact ID {artifact_id_to_clear} was generated for clip {clip_id} but an error occurred. Consider cleanup for this artifact.")
+                # Optionally, you could delete the clip_artifacts record here if appropriate:
+                # cur.execute("DELETE FROM clip_artifacts WHERE id = %s", (artifact_id_to_clear,))
+                # logger.info(f"[StateUpdateHelper] Deleted placeholder artifact record {artifact_id_to_clear} due to error.")
+
+            query = sql.SQL("""
+                UPDATE clips
+                SET ingest_state = %s,
+                    last_error = %s,
+                    updated_at = NOW(),
+                    retry_count = COALESCE(retry_count, 0) + CASE WHEN %s = 'sprite_generation_failed' THEN 1 ELSE 0 END
+                WHERE id = %s AND ingest_state != %s; -- Avoid overwriting a final success state like 'pending_review'
+            """)
+            # Avoid incrementing retry if it's just a skip or already processed
+            is_failure_state = new_state == 'sprite_generation_failed' # Check specific failure state for retry increment
+            cur.execute(query, (new_state, error_msg_for_db, is_failure_state, clip_id, 'pending_review'))
+            if cur.rowcount > 0:
+                logger.info(f"[StateUpdateHelper] Updated clip {clip_id} state to '{new_state}' due to error: {error_msg_for_db}")
+            else:
+                logger.warning(f"[StateUpdateHelper] Failed to update clip {clip_id} state to '{new_state}' (or already in a final state). Current state might be unchanged or was 'pending_review'.")
+    except Exception as e_db_update:
+        logger.error(f"[StateUpdateHelper] CRITICAL: DB error while updating clip {clip_id} to error state '{new_state}': {e_db_update}", exc_info=True)
+    finally:
+        if conn:
+            release_db_connection(conn)

@@ -22,12 +22,14 @@ from prefect.deployments import run_deployment
 
 # --- Local Module Imports (relative to /app) ---
 from tasks.intake import intake_task
-from tasks.splice import splice_video_task, s3_client, S3_BUCKET_NAME
+from tasks.splice import splice_video_task
 from tasks.sprite import generate_sprite_sheet_task
 from tasks.keyframe import extract_keyframes_task
 from tasks.embed import generate_embeddings_task
 from tasks.merge import merge_clips_task
 from tasks.split import split_clip_task
+
+from config import get_s3_resources
 
 from db.sync_db import (
     get_all_pending_work,
@@ -83,8 +85,8 @@ ARTIFACT_TYPE_SPRITE_SHEET = "sprite_sheet"
 # =============================================================================
 def _commit_pending_review_actions(grace_period_seconds: int):
     """
-    Find the newest ‘selected_*’ event for every clip that is still in
-    ‘pending_review’, has survived the grace period and was *not* undone,
+    Find the newest 'selected_*' event for every clip that is still in
+    'pending_review', has survived the grace period and was *not* undone,
     then atomically:
 
       • (for grouping) populate grouped_with_clip_id
@@ -95,7 +97,7 @@ def _commit_pending_review_actions(grace_period_seconds: int):
     logger = get_run_logger()
 
     if grace_period_seconds <= 0:
-        logger.debug("Commit grace period ≤ 0 – skipping.")
+        logger.debug("Commit grace period ≤ 0 – skipping.")
         return 0
 
     committed_count = 0
@@ -206,6 +208,7 @@ def _commit_pending_review_actions(grace_period_seconds: int):
                                     logger.warning(f"[Clip {clip_id}] Invalid group_with_clip_id '{event_data.get('group_with_clip_id')}' in event_data for grouping.")
                                     group_target_id = None # Ensure it's None if conversion fails
 
+
                             if not group_target_id: # Fallback for very old events
                                 cur.execute(
                                     """
@@ -297,17 +300,18 @@ def _commit_pending_review_actions(grace_period_seconds: int):
 def process_clip_post_review(
     clip_id: int,
     keyframe_strategy: str = DEFAULT_KEYFRAME_STRATEGY,
-    model_name: str = DEFAULT_EMBEDDING_MODEL
+    model_name: str = DEFAULT_EMBEDDING_MODEL,
+    environment: str = "development"
     ):
     """Processes an approved clip: keyframing and embedding."""
     logger = get_run_logger()
-    logger.info(f"FLOW: Starting post-review processing for approved clip_id: {clip_id}")
+    logger.info(f"FLOW: Starting post-review processing for approved clip_id: {clip_id}, Env: {environment}")
     keyframe_task_succeeded_or_skipped = False
 
     try:
         # --- 1. Keyframing ---
-        logger.info(f"Submitting keyframe task for clip_id: {clip_id} with strategy: {keyframe_strategy}")
-        keyframe_job = extract_keyframes_task.submit(clip_id=clip_id, strategy=keyframe_strategy, overwrite=False)
+        logger.info(f"Submitting keyframe task for clip_id: {clip_id} with strategy: {keyframe_strategy}, Env: {environment}")
+        keyframe_job = extract_keyframes_task.submit(clip_id=clip_id, strategy=keyframe_strategy, overwrite=False, environment=environment)
         logger.info(f"Waiting for keyframe task result for clip {clip_id} (timeout: {KEYFRAME_TIMEOUT}s)")
         keyframe_result = keyframe_job.result(timeout=KEYFRAME_TIMEOUT) # Wait for result
 
@@ -333,8 +337,8 @@ def process_clip_post_review(
         # --- 2. Embedding ---
         if keyframe_task_succeeded_or_skipped:
             embedding_strategy_label = f"keyframe_{keyframe_strategy}_avg" if keyframe_strategy == "multi" else f"keyframe_{keyframe_strategy}"
-            logger.info(f"Submitting embedding task for clip_id: {clip_id}, model: {model_name}, strategy: {embedding_strategy_label}")
-            embedding_job = generate_embeddings_task.submit(clip_id=clip_id, model_name=model_name, generation_strategy=embedding_strategy_label, overwrite=False)
+            logger.info(f"Submitting embedding task for clip_id: {clip_id}, model: {model_name}, strategy: {embedding_strategy_label}, Env: {environment}")
+            embedding_job = generate_embeddings_task.submit(clip_id=clip_id, model_name=model_name, generation_strategy=embedding_strategy_label, overwrite=False, environment=environment)
             logger.info(f"Waiting for embedding task result for clip {clip_id} (timeout: {EMBEDDING_TIMEOUT}s)")
             embed_result = embedding_job.result(timeout=EMBEDDING_TIMEOUT) # Wait for result
 
@@ -387,6 +391,10 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
     processed_counts = defaultdict(int) # How many items found per stage
     submitted_counts = defaultdict(int) # How many tasks/runs actually submitted per stage
 
+    # Determine the environment for this worker run
+    worker_app_env = os.getenv("APP_ENV", "development")
+    logger.info(f"Initiator running in environment context: {worker_app_env}")
+
     # --- First, commit pending review actions ---
     try:
         logger.info(f"Running commit step with grace period: {ACTION_COMMIT_GRACE_PERIOD_SECONDS} seconds...")
@@ -429,7 +437,8 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
                 if update_source_video_state_sync(sid, 'downloading'):
                     source_input = get_source_input_from_db(sid)
                     if source_input:
-                        intake_task.submit(source_video_id=sid, input_source=source_input)
+                        # Pass worker_app_env to intake_task
+                        intake_task.submit(source_video_id=sid, input_source=source_input, environment=worker_app_env)
                         submitted_counts[stage_name] += 1
                         newly_submitted_in_this_cycle += 1
                         time.sleep(TASK_SUBMIT_DELAY)
@@ -452,7 +461,8 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
                 break
             try:
                 if update_source_video_state_sync(sid, 'splicing'):
-                    splice_video_task.submit(source_video_id=sid)
+                    # Pass worker_app_env to splice_video_task
+                    splice_video_task.submit(source_video_id=sid, environment=worker_app_env)
                     submitted_counts[stage_name] += 1
                     newly_submitted_in_this_cycle += 1
                     time.sleep(TASK_SUBMIT_DELAY)
@@ -473,7 +483,8 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
                 break
             try:
                 if update_clip_state_sync(cid, 'generating_sprite'):
-                    generate_sprite_sheet_task.submit(clip_id=cid)
+                    # Pass worker_app_env to generate_sprite_sheet_task
+                    generate_sprite_sheet_task.submit(clip_id=cid, environment=worker_app_env)
                     submitted_counts[stage_name] += 1
                     newly_submitted_in_this_cycle += 1
                     time.sleep(TASK_SUBMIT_DELAY)
@@ -497,7 +508,11 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
                 if update_clip_state_sync(cid, 'processing_post_review'):
                     run_deployment(
                         name=deployment_name,
-                        parameters={"clip_id": cid, "keyframe_strategy": DEFAULT_KEYFRAME_STRATEGY, "model_name": DEFAULT_EMBEDDING_MODEL},
+                        parameters={"clip_id": cid, 
+                                    "keyframe_strategy": DEFAULT_KEYFRAME_STRATEGY, 
+                                    "model_name": DEFAULT_EMBEDDING_MODEL,
+                                    "environment": worker_app_env # Pass environment to sub-flow
+                                    },
                         timeout=0 # Submit and move on, don't wait for completion
                     )
                     submitted_counts[stage_name] += 1
@@ -525,7 +540,8 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
                           break
                       if target_id not in submitted_merges_in_loop and source_id not in submitted_merges_in_loop:
                           try:
-                              merge_clips_task.submit(clip_id_target=target_id, clip_id_source=source_id)
+                              # Pass worker_app_env to merge_clips_task
+                              merge_clips_task.submit(clip_id_target=target_id, clip_id_source=source_id, environment=worker_app_env)
                               submitted_merges_in_loop.add(target_id); submitted_merges_in_loop.add(source_id)
                               submitted_counts[stage_name] += 1 # Count as one submission for the pair
                               newly_submitted_in_this_cycle += 1
@@ -557,7 +573,9 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
                         break
                     if cid not in submitted_splits_in_loop:
                         try:
-                            split_clip_task.submit(clip_id=cid) # Assuming split_frame is handled by task or fetched again
+                            # Pass worker_app_env to split_clip_task
+                            # Assuming split_frame is handled by task or fetched again from metadata based on clip_id
+                            split_clip_task.submit(clip_id=cid, environment=worker_app_env)
                             submitted_splits_in_loop.add(cid)
                             submitted_counts[stage_name] += 1
                             newly_submitted_in_this_cycle += 1
@@ -593,6 +611,7 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
 @flow(name="Scheduled Clip Cleanup", log_prints=True)
 async def cleanup_reviewed_clips_flow(
     cleanup_delay_minutes: int = CLIP_CLEANUP_DELAY_MINUTES,
+    environment: str = "development"
 ):
     """
     Cleans up reviewed clips by deleting associated S3 artifacts (sprite sheets)
@@ -600,12 +619,16 @@ async def cleanup_reviewed_clips_flow(
     """
     logger = get_run_logger()
     logger.info(
-        f"FLOW: Running Scheduled Clip Cleanup (Delay: {cleanup_delay_minutes} mins)..."
+        f"FLOW: Running Scheduled Clip Cleanup (Delay: {cleanup_delay_minutes} mins, Env: {environment})..."
     )
 
-    if not S3_CONFIGURED or not s3_client:
-        logger.error("S3 Client/Config not available. Exiting cleanup flow.")
-        return
+    # Get S3 resources for this flow run
+    s3_client_for_flow, s3_bucket_name_for_flow = get_s3_resources(environment, logger=logger)
+
+    # Check if S3 client was successfully obtained (get_s3_resources raises error on failure, but defensive check)
+    if not s3_client_for_flow or not s3_bucket_name_for_flow:
+        logger.error("S3 Client/Bucket Name not available from get_s3_resources. Exiting cleanup flow.")
+        return # S3_CONFIGURED check is implicitly handled by get_s3_resources
 
     if not ASYNC_DB_CONFIGURED or not get_async_db_connection:
         logger.error("Async DB not configured or get_async_db_connection function unavailable. Exiting cleanup flow.")
@@ -672,15 +695,19 @@ async def cleanup_reviewed_clips_flow(
 
                     # 2. Delete from S3 if key exists
                     if sprite_artifact_s3_key:
-                        if not S3_BUCKET_NAME:
-                            logger.error(f"{log_prefix} S3_BUCKET_NAME is not configured. Cannot delete artifact.")
+                        # Use s3_bucket_name_for_flow obtained from get_s3_resources
+                        if not s3_bucket_name_for_flow:
+                            logger.error(f"{log_prefix} S3_BUCKET_NAME_FOR_FLOW is not configured (should not happen if get_s3_resources worked). Cannot delete artifact.")
                             error_count += 1
-                            s3_deletion_successful = False # Explicitly mark as failed
+                            s3_deletion_successful = False
                         else:
                             try:
-                                logger.info(f"{log_prefix} Deleting S3 object: s3://{S3_BUCKET_NAME}/{sprite_artifact_s3_key}")
-                                s3_client.delete_object(
-                                    Bucket=S3_BUCKET_NAME,
+                                logger.info(f"{log_prefix} Deleting S3 object: s3://{s3_bucket_name_for_flow}/{sprite_artifact_s3_key}")
+                                # Use s3_client_for_flow obtained from get_s3_resources
+                                # Note: s3_client.delete_object is synchronous. For a fully async flow with many S3 ops,
+                                # an async S3 client (e.g. aioboto3) would be better, but for a few deletions this is okay.
+                                s3_client_for_flow.delete_object(
+                                    Bucket=s3_bucket_name_for_flow,
                                     Key=sprite_artifact_s3_key,
                                 )
                                 logger.info(f"{log_prefix} Successfully deleted S3 object.")
@@ -689,10 +716,10 @@ async def cleanup_reviewed_clips_flow(
                             except ClientError as e:
                                 error_code = e.response.get("Error", {}).get("Code", "Unknown")
                                 if error_code == "NoSuchKey":
-                                    logger.warning(f"{log_prefix} S3 object s3://{S3_BUCKET_NAME}/{sprite_artifact_s3_key} not found (NoSuchKey). Assuming already deleted.")
+                                    logger.warning(f"{log_prefix} S3 object s3://{s3_bucket_name_for_flow}/{sprite_artifact_s3_key} not found (NoSuchKey). Assuming already deleted.")
                                     s3_deletion_successful = True # Treat as success for workflow progression
                                 else:
-                                    logger.error(f"{log_prefix} Failed to delete S3 object s3://{S3_BUCKET_NAME}/{sprite_artifact_s3_key}. Code: {error_code}, Error: {e}")
+                                    logger.error(f"{log_prefix} Failed to delete S3 object s3://{s3_bucket_name_for_flow}/{sprite_artifact_s3_key}. Code: {error_code}, Error: {e}")
                                     s3_deletion_successful = False
                                     error_count += 1
                             except Exception as e_s3: # Catch other unexpected S3 errors
@@ -777,7 +804,7 @@ async def cleanup_reviewed_clips_flow(
         f"FLOW: Scheduled Clip Cleanup complete. "
         f"Clips Found: {processed_count}, S3 Objects Deleted: {s3_deleted_count}, "
         f"DB Artifacts Deleted: {db_artifact_deleted_count}, DB Clips Updated: {db_clip_updated_count}, "
-        f"Errors: {error_count}"
+        f"Env: {environment}, Bucket Used: {s3_bucket_name_for_flow if s3_client_for_flow else 'N/A'}, Errors: {error_count}"
     )
 
 @flow(name="Intake Source Video")
@@ -786,6 +813,7 @@ def intake_source_flow(
     input_source: str,
     re_encode_for_qt: bool = True,
     overwrite_existing: bool = False,
+    environment: str = "development"
 ):
     # simply invoke the existing task
     return intake_task(
@@ -793,4 +821,5 @@ def intake_source_flow(
       input_source=input_source,
       re_encode_for_qt=re_encode_for_qt,
       overwrite_existing=overwrite_existing,
-)
+      environment=environment
+    )

@@ -13,120 +13,55 @@ import psycopg2
 from psycopg2 import sql, extras
 from botocore.exceptions import ClientError, NoCredentialsError
 
-# --- Project Root Setup ---
+# --- Project Root Setup & Utility Imports ---
 try:
-    from db.sync_db import get_db_connection, release_db_connection
-except ImportError:
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if project_root not in sys.path: sys.path.insert(0, project_root)
-    try:
-        from db.sync_db import get_db_connection, release_db_connection
-    except ImportError as e:
-        print(f"ERROR importing db_utils in merge.py: {e}")
-        def get_db_connection(cursor_factory=None): raise NotImplementedError("Dummy DB connection")
-        def release_db_connection(conn): pass
-
-# --- Import Shared Components & S3 Configuration ---
-s3_client = None
-S3_BUCKET_NAME = None # Initialize to None, will be set by import or fallback
-AWS_REGION = os.getenv("AWS_REGION", "us-west-1")
-
-FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
-CLIP_S3_PREFIX = os.getenv("CLIP_S3_PREFIX", "clips/")
-
-try:
-    from .splice import (
-        s3_client as imported_s3_client,
-        S3_BUCKET_NAME as imported_s3_bucket_name,
-        run_ffmpeg_command as imported_run_ffmpeg,
-        sanitize_filename as imported_sanitize_filename,
-    )
-    if imported_s3_client and imported_s3_bucket_name:
-        s3_client = imported_s3_client
-        S3_BUCKET_NAME = imported_s3_bucket_name
-        print(f"{__name__}: Using S3 configuration imported from .splice. Bucket: {S3_BUCKET_NAME}")
-    else:
-        # Fall through to local initialization if splice.py didn't provide them
-        print(f"{__name__}: .splice imported but S3 config incomplete, will init locally.")
-        s3_client = None # Ensure it triggers local init
-
-    run_ffmpeg_command = imported_run_ffmpeg
-    sanitize_filename = imported_sanitize_filename
-
+    from db.sync_db import get_db_connection, release_db_connection
+    from config import get_s3_resources # Import the new S3 utility function
 except ImportError as e:
-     print(f"{__name__}: INFO: Could not import from .splice, using defaults/direct init. Error: {e}")
-     s3_client = None # Ensure it triggers local init
+    print(f"ERROR importing db_utils or config in merge.py: {e}")
+    def get_db_connection(cursor_factory=None): raise NotImplementedError("Dummy DB connection")
+    def release_db_connection(conn): pass
+    def get_s3_resources(environment: str, logger=None): raise NotImplementedError("Dummy S3 resource getter")
 
-     def run_ffmpeg_command(cmd_list, step_name="ffmpeg command", cwd=None):
-         logger = get_run_logger()
-         logger.info(f"Executing Fallback FFMPEG Step: {step_name} in {__name__}")
-         logger.debug(f"Command: {' '.join(cmd_list)}")
-         try:
-             result = subprocess.run(
-                 cmd_list, capture_output=True, text=True, check=True, cwd=cwd,
-                 encoding='utf-8', errors='replace'
-             )
-             logger.debug(f"FFMPEG Output:\n{result.stdout[:500]}...")
-             if result.stderr: logger.warning(f"FFMPEG Stderr for {step_name}:\n{result.stderr[:500]}...")
-             return result
-         except FileNotFoundError:
-              logger.error(f"ERROR in {__name__}: {cmd_list[0]} command not found at path '{FFMPEG_PATH}'.")
-              raise
-         except subprocess.CalledProcessError as exc:
-              logger.error(f"ERROR in {__name__}: {step_name} failed. Exit code: {exc.returncode}")
-              logger.error(f"Stderr:\n{exc.stderr}")
-              raise
+# Module-level constants that are not S3 client/bucket specific
+FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
+CLIP_S3_PREFIX = os.getenv("CLIP_S3_PREFIX", "clips/") # Used for constructing new S3 keys
 
-     def sanitize_filename(name):
-         name = re.sub(r'[^\w\.\-]+', '_', str(name))
-         name = re.sub(r'_+', '_', name).strip('_')
-         return name if name else "default_filename_fallback"
-
-# Fallback or direct initialization if not successfully imported AND S3_BUCKET_NAME is not yet set
-if not s3_client or not S3_BUCKET_NAME:
-    APP_ENV = os.getenv("APP_ENV", "development")
-    _current_module_name = __name__.split('.')[-1]
-    env_log_msg_prefix = ""
-
-    if APP_ENV == "development":
-        _temp_bucket_name = os.getenv("S3_DEV_BUCKET_NAME")
-        env_log_msg_prefix = f"DEVELOPMENT using S3 Bucket '{_temp_bucket_name}'"
-    else:
-        _temp_bucket_name = os.getenv("S3_PROD_BUCKET_NAME")
-        env_log_msg_prefix = f"PRODUCTION using S3 Bucket '{_temp_bucket_name}'"
-
-    if not _temp_bucket_name:
-        raise ValueError(
-            f"{_current_module_name}.py: S3_BUCKET_NAME is not set for APP_ENV='{APP_ENV}'. "
-            f"Ensure S3_DEV_BUCKET_NAME or S3_PROD_BUCKET_NAME is configured."
+# --- Helper functions (defined locally as the import from .splice is removed) ---
+def run_ffmpeg_command(cmd_list, step_name="ffmpeg command", cwd=None):
+    logger = get_run_logger() # Assumes this is called within a task context
+    logger.info(f"Executing FFMPEG Step: {step_name} in merge.py")
+    logger.debug(f"Command: {' '.join(cmd_list)}")
+    try:
+        result = subprocess.run(
+            cmd_list, capture_output=True, text=True, check=True, cwd=cwd,
+            encoding='utf-8', errors='replace'
         )
-    S3_BUCKET_NAME = _temp_bucket_name # Assign to the module-level variable
+        stdout_snippet = result.stdout[:1000] + ("..." if len(result.stdout) > 1000 else "")
+        logger.debug(f"FFMPEG Output (snippet):\n{stdout_snippet}")
+        if result.stderr:
+            stderr_snippet = result.stderr[:1000] + ("..." if len(result.stderr) > 1000 else "")
+            logger.warning(f"FFMPEG Stderr for {step_name} (snippet):\n{stderr_snippet}")
+        return result
+    except FileNotFoundError:
+        logger.error(f"ERROR in merge.py: {cmd_list[0]} command not found at path '{FFMPEG_PATH}'.")
+        raise
+    except subprocess.CalledProcessError as exc:
+        stderr_to_log = exc.stderr if len(exc.stderr) < 2000 else exc.stderr[:2000] + "... (truncated)"
+        logger.error(f"ERROR in merge.py: {step_name} failed. Exit code: {exc.returncode}. Stderr:\n{stderr_to_log}")
+        raise
 
-    # Initialize s3_client only if it's still None (i.e., not imported successfully)
-    if not s3_client:
-        try:
-            import boto3 # Import boto3 here, as it's only needed for fallback
-            # NoCredentialsError already imported at top level
-            s3_client = boto3.client("s3", region_name=AWS_REGION)
-            print(f"{_current_module_name}.py: Fallback S3 Init: Initialized S3 client for region: {AWS_REGION}. Env: {env_log_msg_prefix}")
-        except ImportError:
-            print(f"ERROR in {_current_module_name}.py: Boto3 required for fallback S3 client but not installed.")
-            s3_client = None # Keep it None to indicate failure
-        except NoCredentialsError:
-            print(f"ERROR in {_current_module_name}.py: AWS credentials not found for fallback S3 client.")
-            s3_client = None
-        except Exception as e_boto:
-            print(f"ERROR in {_current_module_name}.py: Failed fallback Boto3 init: {e_boto}")
-            s3_client = None
-    else:
-        # This case means s3_client was imported, but S3_BUCKET_NAME was not (or was None).
-        # S3_BUCKET_NAME is now set, and we assume the imported s3_client is valid.
-        print(f"{_current_module_name}.py: Using imported s3_client with locally determined S3 bucket: {S3_BUCKET_NAME} ({env_log_msg_prefix})")
-
+def sanitize_filename(name):
+    name = str(name)
+    name = re.sub(r'[^\w\.\-]+', '_', name)
+    name = re.sub(r'_+', '_', name).strip('_')
+    return name[:150] if name else "default_filename_fallback"
 
 # --- Task Definition ---
 @task(name="Merge Clips Backward", retries=1, retry_delay_seconds=30)
-def merge_clips_task(clip_id_target: int, clip_id_source: int):
+def merge_clips_task(clip_id_target: int, clip_id_source: int, environment: str = "development"):
     """
     Merges the source clip (N) into the target clip (N-1) using ffmpeg concat.
     The target clip (N-1) is updated with the combined content, its artifacts
@@ -147,10 +82,13 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int):
     expected_source_state = 'marked_for_merge_into_previous'
     task_outcome = "failed" # Default task outcome
 
+    # --- Get S3 Resources ---
+    s3_client_for_task, s3_bucket_name_for_task = get_s3_resources(environment, logger=get_run_logger())
+
     # --- Pre-checks ---
     if clip_id_target == clip_id_source: raise ValueError("Cannot merge a clip with itself.")
-    if not all([s3_client, S3_BUCKET_NAME]):
-        logger.error(f"S3 client or bucket name not configured. Client: {s3_client}, Bucket: {S3_BUCKET_NAME}")
+    if not s3_client_for_task or not s3_bucket_name_for_task:
+        logger.error(f"S3 client or bucket name not configured. Client: {s3_client_for_task}, Bucket: {s3_bucket_name_for_task}")
         raise RuntimeError("S3 client or bucket name is not configured for merge.py.")
     if not FFMPEG_PATH or not shutil.which(FFMPEG_PATH):
         raise FileNotFoundError(f"ffmpeg command not found at '{FFMPEG_PATH}'.")
@@ -230,10 +168,10 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int):
 
         logger.info(f"Downloading clips to {temp_dir}...")
         try:
-            logger.debug(f"Downloading target: s3://{S3_BUCKET_NAME}/{clip_target_data['clip_filepath']} to {local_clip_target_path}")
-            s3_client.download_file(S3_BUCKET_NAME, clip_target_data['clip_filepath'], str(local_clip_target_path))
-            logger.debug(f"Downloading source: s3://{S3_BUCKET_NAME}/{clip_source_data['clip_filepath']} to {local_clip_source_path}")
-            s3_client.download_file(S3_BUCKET_NAME, clip_source_data['clip_filepath'], str(local_clip_source_path))
+            logger.debug(f"Downloading target: s3://{s3_bucket_name_for_task}/{clip_target_data['clip_filepath']} to {local_clip_target_path}")
+            s3_client_for_task.download_file(s3_bucket_name_for_task, clip_target_data['clip_filepath'], str(local_clip_target_path))
+            logger.debug(f"Downloading source: s3://{s3_bucket_name_for_task}/{clip_source_data['clip_filepath']} to {local_clip_source_path}")
+            s3_client_for_task.download_file(s3_bucket_name_for_task, clip_source_data['clip_filepath'], str(local_clip_source_path))
         except ClientError as s3_err:
             logger.error(f"Failed to download clips from S3: {s3_err}", exc_info=True)
             # No open transaction to rollback here if initial commit was done
@@ -279,10 +217,10 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int):
              task_outcome = "failed_ffmpeg_output"
              raise RuntimeError(f"Merged output file missing or empty: {updated_local_clip_path}")
 
-        logger.info(f"Uploading merged clip to s3://{S3_BUCKET_NAME}/{updated_clip_s3_key}")
+        logger.info(f"Uploading merged clip to s3://{s3_bucket_name_for_task}/{updated_clip_s3_key}")
         try:
             with open(updated_local_clip_path, "rb") as f_up:
-                s3_client.upload_fileobj(f_up, S3_BUCKET_NAME, updated_clip_s3_key)
+                s3_client_for_task.upload_fileobj(f_up, s3_bucket_name_for_task, updated_clip_s3_key)
         except ClientError as s3_err:
             logger.error(f"Failed to upload merged clip to S3: {s3_err}", exc_info=True)
             task_outcome = "failed_s3_upload"
@@ -343,7 +281,7 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int):
                 else:
                     logger.info(f"Archived source clip {clip_id_source} with state 'merged'.")
 
-                logger.info(f"S3 Cleanup eventually needed for ORIGINAL clips: s3://{S3_BUCKET_NAME}/{clip_target_data['clip_filepath']} and s3://{S3_BUCKET_NAME}/{clip_source_data['clip_filepath']}")
+                logger.info(f"S3 Cleanup eventually needed for ORIGINAL clips: s3://{s3_bucket_name_for_task}/{clip_target_data['clip_filepath']} and s3://{s3_bucket_name_for_task}/{clip_source_data['clip_filepath']}")
 
             conn.commit()
             logger.info(f"Merge DB changes committed. Target clip {clip_id_target} updated, source clip {clip_id_source} (attempted) archived.")

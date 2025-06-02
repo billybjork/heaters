@@ -30,11 +30,13 @@ if project_root not in sys.path:
 try:
     # Import both connection getter/releaser and initializer
     from db.sync_db import get_db_connection, release_db_connection, initialize_db_pool
+    from config import get_s3_resources # Import the new S3 utility function
 except ImportError as e:
-    print(f"Error importing DB utils in embed.py: {e}")
+    print(f"Error importing DB utils or config in embed.py: {e}")
     def get_db_connection(): raise NotImplementedError("DB Utils not loaded")
     def release_db_connection(conn): pass
     def initialize_db_pool(): pass
+    def get_s3_resources(environment: str, logger=None): raise NotImplementedError("S3 resource getter not loaded")
 
 # --- Environment Configuration ---
 APP_ENV = os.getenv("APP_ENV", "development")
@@ -142,17 +144,25 @@ def generate_embeddings_task(
     clip_id: int,
     model_name: str,
     generation_strategy: str,
-    overwrite: bool = False
+    overwrite: bool = False,
+    environment: str = "development" # Added environment parameter
     ):
     """
     Generates embeddings for a clip based on specified keyframe artifacts.
+
+    Args:
+        clip_id (int): The ID of the clip.
+        model_name (str): The name of the embedding model to use.
+        generation_strategy (str): The strategy for selecting/aggregating keyframes.
+        overwrite (bool): Whether to overwrite existing embeddings.
+        environment (str): The execution environment ("development" or "production").
     """
     logger = get_run_logger()
-    logger.info(f"TASK [Embedding]: Starting for clip_id: {clip_id}, Model: '{model_name}', Strategy: '{generation_strategy}', Overwrite: {overwrite}")
+    logger.info(f"TASK [Embedding]: Starting for clip_id: {clip_id}, Model: '{model_name}', Strategy: '{generation_strategy}', Overwrite: {overwrite}, Env: {environment}")
 
-    if not s3_client:
-        logger.error("S3 client is not available.")
-        raise RuntimeError("S3 client is not initialized or configured.")
+    # --- Get S3 Resources using the utility function ---
+    s3_client_for_task, s3_bucket_name_for_task = get_s3_resources(environment, logger=logger)
+    # Error handling for missing S3 resources is now within get_s3_resources
 
     conn = None
     temp_dir_obj = None
@@ -276,7 +286,7 @@ def generate_embeddings_task(
             logger.info(f"Found {len(s3_keys_to_download)} keyframe artifact(s) in DB.")
 
             # 6. Setup Temp Dir & Download
-            if not s3_client: raise RuntimeError("S3 client unavailable.")
+            if not s3_client_for_task: raise RuntimeError("S3 client unavailable.")
             temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"heaters_embed_{clip_id}_")
             temp_dir = Path(temp_dir_obj.name)
             logger.info(f"Using temporary directory: {temp_dir}")
@@ -287,8 +297,8 @@ def generate_embeddings_task(
                 local_filename = Path(s3_key).name
                 local_temp_path = temp_dir / local_filename
                 try:
-                    logger.debug(f"Downloading s3://{S3_BUCKET_NAME}/{s3_key} to {local_temp_path}")
-                    s3_client.download_file(S3_BUCKET_NAME, s3_key, str(local_temp_path))
+                    logger.debug(f"Downloading s3://{s3_bucket_name_for_task}/{s3_key} to {local_temp_path}")
+                    s3_client_for_task.download_file(s3_bucket_name_for_task, s3_key, str(local_temp_path))
                     downloaded_local_paths[s3_key] = str(local_temp_path)
                 except ClientError as s3_err:
                     raise FileNotFoundError(f"Failed download required keyframe {s3_key}") from s3_err
@@ -446,6 +456,7 @@ def generate_embeddings_task(
         "model_name": model_name,
         "strategy": generation_strategy,
         "embedding_dim": embedding_dim,
+        "s3_bucket_used": s3_bucket_name_for_task
     }
 
     if final_status == "success":
