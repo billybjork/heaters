@@ -26,21 +26,35 @@ except ImportError:
         print(f"Failed to import db_utils even after path adjustment: {e}")
         def get_db_connection(): raise NotImplementedError("Dummy get_db_connection")
 
+# --- Environment Configuration ---
+APP_ENV = os.getenv("APP_ENV", "production")
+
 # --- S3 Configuration ---
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
-AWS_REGION = os.getenv("AWS_REGION")
+AWS_REGION = os.getenv("AWS_REGION", "us-west-1")
+
+if APP_ENV == "development":
+    S3_BUCKET_NAME = os.getenv("S3_DEV_BUCKET_NAME")
+    env_log_msg_suffix = f"DEVELOPMENT environment using S3 Bucket: '{S3_BUCKET_NAME}'"
+else:
+    S3_BUCKET_NAME = os.getenv("S3_PROD_BUCKET_NAME")
+    env_log_msg_suffix = f"PRODUCTION environment using S3 Bucket: '{S3_BUCKET_NAME}'"
 
 if not S3_BUCKET_NAME:
-    raise ValueError("S3_BUCKET_NAME environment variable not set.")
+    raise ValueError(
+        f"splice.py: S3_BUCKET_NAME is not configured for APP_ENV='{APP_ENV}'. "
+        f"Ensure S3_DEV_BUCKET_NAME or S3_PROD_BUCKET_NAME is set."
+    )
 
 s3_client = None
 try:
     s3_client = boto3.client('s3', region_name=AWS_REGION)
-    print(f"Splice Task: Successfully initialized S3 client for bucket: {S3_BUCKET_NAME}")
+    print(f"Splice.py: Initialized S3 client for region: {AWS_REGION}. {env_log_msg_suffix}")
 except NoCredentialsError:
-     print("Splice Task: ERROR initializing S3 client - AWS credentials not found.")
+     print("Splice.py: ERROR initializing S3 client - AWS credentials not found.")
+     s3_client = None
 except Exception as e:
-    print(f"Splice Task: ERROR initializing S3 client: {e}")
+    print(f"Splice.py: ERROR initializing S3 client: {e}")
+    s3_client = None
 
 # --- Task Configuration ---
 CLIP_S3_PREFIX = "clips/"

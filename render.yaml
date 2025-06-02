@@ -1,22 +1,19 @@
 envVarGroups:
   - name: app-secrets
-    envVars:
-      - key: AWS_REGION
-        value: "us-west-1"
+    envVars: []
 
-# ───────────── Databases ─────────────
 databases:
-  - name: app-db
+  - name: app-db # Main application database for Phoenix
     plan: basic-1gb
     postgresMajorVersion: 16
+    extensions:
+      - name: pgvector
     ipAllowList:
       - source: "50.1.246.139/32"
         description: "El Segundo House"
 
-# ───────────── Services ─────────────
 services:
-
-# --- Phoenix LiveView Web -------------------------------------------
+  # --- Phoenix LiveView Web Service ---
   - name: phoenix-web
     type: web
     env: docker
@@ -25,22 +22,53 @@ services:
     dockerfilePath: Dockerfile
     healthCheckPath: /
     envVars:
-      - key: PREFECT_API_URL
-        value: http://heaters:4200/api
-      - key: INTAKE_DEPLOYMENT_ID
-        value: 28e9a4bc-0d70-4873-96f4-6bab7877073d
-      - key: INTAKE_DEPLOYMENT_SLUG
-        value: heaters-ingest/intake-default
-      - key: DATABASE_URL
-        fromDatabase:
-          name: app-db
-          property: connectionString
+      # --- Application Environment ---
+      - key: APP_ENV
+        value: "production"
+
+      # --- Phoenix Specific ---
+      - key: MIX_ENV
+        value: "prod"
       - key: PHX_SERVER
         value: "true"
       - key: PHX_HOST
         value: phoenix-web-yupe.onrender.com
       - key: PORT
         value: "4000"
+
+      # --- Database Connection (for Phoenix/Ecto) ---
+      - key: DATABASE_URL
+        fromDatabase:
+          name: app-db
+          property: connectionString
+      - key: PROD_DATABASE_URL # runtime.exs might prioritize this
+        fromDatabase:
+          name: app-db
+          property: connectionString
+
+      # --- Secrets & AWS Configuration ---
       - key: SECRET_KEY_BASE
-        generateValue: true
+        generateValue: true   # Render will generate a secure value
       - fromGroup: app-secrets
+
+      # --- S3 & CloudFront (Generic Fallbacks - app-secrets group provides _PROD_ versions) ---
+      # runtime.exs will use S3_PROD_BUCKET_NAME and CLOUDFRONT_PROD_DOMAIN from app-secrets.
+      # These are fallbacks if those specific vars weren't found.
+      - key: S3_BUCKET_NAME
+        value: "heaters-prod"
+      - key: CLOUDFRONT_DOMAIN
+        value: "d25r6bb79rag3x.cloudfront.net"
+
+      # --- Prefect API Interaction (for Phoenix) ---
+      # Since your Prefect backend is currently local (via docker-compose),
+      # this URL would need to point to an externally accessible Prefect API if Phoenix on Render
+      # needs to communicate with it.
+      # If you deploy Prefect to Render in the future, this would be an internal service URL.
+      # For now, this might be a placeholder or point to a ngrok tunnel for local testing if needed.
+      - key: PREFECT_API_URL
+        value: "YOUR_EXTERNALLY_ACCESSIBLE_PREFECT_API_URL" # e.g., ngrok URL for local Prefect, or future Render Prefect service URL
+      - key: INTAKE_DEPLOYMENT_SLUG
+        value: "Intake Source Video/intake-default"
+
+    autoDeploy: true
+    branch: main

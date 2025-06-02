@@ -42,7 +42,7 @@ services:
         condition: service_healthy
     environment:
       PREFECT_SERVER_API_HOST: 0.0.0.0
-      PREFECT_UI_API_URL: http://localhost:4200/api
+      PREFECT_UI_API_URL: http://localhost:4200/api # For UI to connect to API within Docker might be prefect-server
       PREFECT_API_DATABASE_CONNECTION_URL: "postgresql+asyncpg://${PREFECT_POSTGRES_USER}:${PREFECT_POSTGRES_PASSWORD}@prefect-postgres:${PREFECT_POSTGRES_PORT}/${PREFECT_POSTGRES_DB}"
       PREFECT_API_DATABASE_TIMEOUT: ${PREFECT_API_DATABASE_TIMEOUT:-600}
     command: >
@@ -58,46 +58,7 @@ services:
     networks:
       - app-network
 
-  # 3) Backend (Prefect Deployer & Worker + Python code)
-  backend:
-    build:
-      context: ./backend # Assumes prefect.yaml is in ./backend
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    container_name: backend-deploy-and-worker
-    restart: unless-stopped
-    depends_on:
-      prefect-postgres:
-        condition: service_healthy
-      prefect-server:
-        condition: service_healthy
-    environment:
-      PREFECT_API_URL:      ${PREFECT_API_URL:-http://prefect-server:4200/api}
-      PREFECT_WORKER_CONCURRENCY_LIMIT: "3"
-      S3_BUCKET_NAME:       ${S3_BUCKET_NAME}
-      AWS_REGION:           ${AWS_REGION}
-      AWS_ACCESS_KEY_ID:    ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      CLOUDFRONT_DOMAIN:    ${CLOUDFRONT_DOMAIN}
-    mem_limit: 8g
-    volumes:
-      - ./backend:/app
-    command: >
-      sh -c "
-        echo 'Backend service: Waiting for Prefect Server API at $${PREFECT_API_URL}...' &&
-        until curl -fsS $${PREFECT_API_URL}/health; do echo 'Prefect server not ready yet, sleeping...'; sleep 5; done &&
-        echo 'Backend service: Prefect Server is ready.' &&
-        echo 'Backend service: Deploying Prefect flows from /app/prefect.yaml...' &&
-        prefect deploy --all &&
-        echo 'Backend service: Prefect flows deployment attempt complete.' &&
-        echo 'Backend service: Starting Prefect worker...' &&
-        exec prefect worker start --pool default-agent-pool --name local-dev-worker
-      "
-    networks:
-      - app-network
-
-  # Development Database for Frontend
+  # Development Database for Frontend AND Backend (local worker)
   app-db-dev:
     image: pgvector/pgvector:pg16
     container_name: app-db-dev
@@ -119,22 +80,88 @@ services:
       retries: 10
       start_period: 30s
 
+  # 3) Backend (Prefect Deployer & Worker + Python code)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    container_name: backend-deploy-and-worker
+    restart: unless-stopped
+    depends_on:
+      prefect-postgres:
+        condition: service_healthy
+      prefect-server:
+        condition: service_healthy
+      app-db-dev:
+        condition: service_healthy
+    environment:
+      # --- Application DB for Local Worker ---
+      DATABASE_URL: "postgresql://dev_user:dev_password@app-db-dev:5432/frontend_dev_db"
+
+      # --- Environment Indicator ---
+      APP_ENV: ${APP_ENV:-development}
+
+      # --- Prefect Config ---
+      PREFECT_API_URL: ${PREFECT_API_URL:-http://prefect-server:4200/api}
+      PREFECT_WORKER_CONCURRENCY_LIMIT: "3"
+
+      # --- S3/CloudFront for Local Worker (uses DEV resources) ---
+      S3_BUCKET_NAME: ${S3_DEV_BUCKET_NAME}
+      CLOUDFRONT_DOMAIN: ${CLOUDFRONT_DEV_DOMAIN}
+      # S3_PROD_BUCKET_NAME and CLOUDFRONT_PROD_DOMAIN are also available from .env if Python needs to choose
+
+      # --- AWS Credentials (already in .env, but explicit pass-through is fine) ---
+      AWS_REGION: ${AWS_REGION}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+    mem_limit: 8g
+    volumes:
+      - ./backend:/app
+    command: >
+      sh -c "
+        echo 'Backend service: Waiting for Prefect Server API at $${PREFECT_API_URL}...' &&
+        until curl -fsS $${PREFECT_API_URL}/health; do echo 'Prefect server not ready yet, sleeping...'; sleep 5; done &&
+        echo 'Backend service: Prefect Server is ready.' &&
+        echo 'Backend service: Waiting for App Dev DB (app-db-dev)...' &&
+        until pg_isready -h app-db-dev -p 5432 -U dev_user -d frontend_dev_db; do echo 'Backend waiting for app-db-dev...'; sleep 2; done &&
+        echo 'Backend service: App Dev DB (app-db-dev) is ready.' &&
+        echo 'Backend service: Deploying Prefect flows from /app/prefect.yaml...' &&
+        prefect deploy --all &&
+        echo 'Backend service: Prefect flows deployment attempt complete.' &&
+        echo 'Backend service: Starting Prefect worker...' &&
+        exec prefect worker start --pool default-agent-pool --name local-dev-worker
+      "
+    networks:
+      - app-network
+
   # 4) Frontend (Phoenix Development Server)
   frontend:
     image: hexpm/elixir:1.16.2-erlang-26.2.4-alpine-3.19.1
     container_name: frontend-dev
+    env_file:
+      - .env
     environment:
       MIX_ENV: dev
+      APP_ENV: ${APP_ENV:-development}
       PHX_HOST: localhost
       PORT: "4000"
       ERL_AFLAGS: "-kernel shell_history enabled"
-      # Set these if your Phoenix app needs them for dev (read from System.get_env/1)
-      # CLOUDFRONT_DOMAIN: ${CLOUDFRONT_DOMAIN_DEV:-http://localhost:4000} # Example
+
+      # --- S3/CloudFront for Local Phoenix (runtime.exs will use these via APP_ENV) ---
+      # These are sourced from .env via `env_file` and explicitly listed here for clarity
+      # or if you prefer not to use env_file for frontend.
+      # If using env_file, these explicit settings here would override .env if uncommented.
+      # runtime.exs will pick up S3_DEV_BUCKET_NAME, CLOUDFRONT_DEV_DOMAIN, etc. from environment.
+      # S3_DEV_BUCKET_NAME: ${S3_DEV_BUCKET_NAME}
+      # CLOUDFRONT_DEV_DOMAIN: ${CLOUDFRONT_DEV_DOMAIN}
+      # S3_PROD_BUCKET_NAME: ${S3_PROD_BUCKET_NAME}
+      # CLOUDFRONT_PROD_DOMAIN: ${CLOUDFRONT_PROD_DOMAIN}
+
+      # --- Prefect API Info (if Phoenix needs to call Prefect API, e.g., trigger flows) ---
       # PREFECT_API_URL: ${PREFECT_API_URL:-http://prefect-server:4200/api}
-      # INTAKE_DEPLOYMENT_SLUG: "intake-default" # Match the name in prefect.yaml
-                                                # Or if your flow_name is "Intake Source Video"
-                                                # and deployment name is "intake-default",
-                                                # the slug is "Intake Source Video/intake-default"
+      # INTAKE_DEPLOYMENT_SLUG: ${INTAKE_DEPLOYMENT_SLUG}
     volumes:
       - ./frontend:/app
     working_dir: /app
@@ -167,7 +194,7 @@ services:
     depends_on:
       app-db-dev:
         condition: service_healthy
-      backend:
-        condition: service_started
+      backend: # Optional: if frontend needs backend to be started (e.g. for API calls at startup)
+        condition: service_started # or service_healthy if backend has a healthcheck
     tty: true
     stdin_open: true

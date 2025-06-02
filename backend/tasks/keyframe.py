@@ -19,7 +19,6 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 try:
-    # Ensure db_utils provides connection pool management for psycopg2
     from db.sync_db import get_db_connection, release_db_connection, initialize_db_pool
 except ImportError as e:
     print(f"Error importing DB utils in keyframe.py: {e}")
@@ -27,28 +26,40 @@ except ImportError as e:
     def release_db_connection(conn): pass
     def initialize_db_pool(): pass # Add dummy if needed
 
-# --- S3 Configuration ---
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
-AWS_REGION = os.getenv("AWS_REGION")
-
 # --- Configuration ---
 KEYFRAMES_S3_PREFIX = os.getenv("KEYFRAMES_S3_PREFIX", "clip_artifacts/keyframes/")
 ARTIFACT_TYPE_KEYFRAME = "keyframe" # Constant for artifact type
 
+# --- Environment Configuration ---
+APP_ENV = os.getenv("APP_ENV", "development")
+
+# --- S3 Configuration ---
+AWS_REGION = os.getenv("AWS_REGION", "us-west-1")
+
+if APP_ENV == "development":
+    S3_BUCKET_NAME = os.getenv("S3_DEV_BUCKET_NAME")
+    env_log_msg_suffix = f"DEVELOPMENT environment using S3 Bucket: '{S3_BUCKET_NAME}'"
+else:
+    S3_BUCKET_NAME = os.getenv("S3_PROD_BUCKET_NAME")
+    env_log_msg_suffix = f"PRODUCTION environment using S3 Bucket: '{S3_BUCKET_NAME}'"
+
 # --- Initialize S3 Client ---
 s3_client = None
-if S3_BUCKET_NAME:
+if S3_BUCKET_NAME: # Proceed only if a bucket name was resolved
     try:
         s3_client = boto3.client('s3', region_name=AWS_REGION)
-        print(f"Keyframe Task: Successfully initialized S3 client for bucket: {S3_BUCKET_NAME}")
+        print(f"Keyframe.py: Initialized S3 client for region: {AWS_REGION}. {env_log_msg_suffix}")
     except NoCredentialsError:
-         print("Keyframe Task: ERROR initializing S3 client - AWS credentials not found.")
+         print("Keyframe.py: ERROR initializing S3 client - AWS credentials not found.")
          s3_client = None
     except Exception as e:
-        print(f"Keyframe Task: ERROR initializing S3 client: {e}")
+        print(f"Keyframe.py: ERROR initializing S3 client: {e}")
         s3_client = None
 else:
-     print("Keyframe Task: WARNING - S3_BUCKET_NAME not set. S3 operations will fail.")
+     print(
+        f"Keyframe.py: WARNING - S3_BUCKET_NAME could not be determined for APP_ENV='{APP_ENV}'. "
+        f"S3 operations will fail. Ensure S3_DEV_BUCKET_NAME or S3_PROD_BUCKET_NAME is set."
+     )
 
 
 # --- Core Frame Extraction Logic ---

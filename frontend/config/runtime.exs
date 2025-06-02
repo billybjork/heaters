@@ -1,105 +1,201 @@
 import Config
 
-# Configure phoenix_html to mòve CSRF tokens into the cookie session
+# Configure phoenix_html to move CSRF tokens into the cookie session
 # to protect Nerves devices from CSRF token rotation attacks.
 # Disable if you prefer to store tokens in the HTML.
-# config :phoenix_html, :csrf_tokens_via_cookie_session, true # You might or might not have this line
+# config :phoenix_html, :csrf_tokens_via_cookie_session, true # Keep if you have this line
 
 if System.get_env("PHX_SERVER") do
   config :frontend, FrontendWeb.Endpoint, server: true
 end
 
-# ───────── common ─────────
-# Only configure Repo from DATABASE_URL if MIX_ENV is not :dev
-# OR if DATABASE_URL is explicitly set (allowing overrides even in dev if desired).
-# This allows dev.exs to fully manage its DB config without needing DATABASE_URL.
+# === S3/CloudFront Configuration (based on APP_ENV) ===
+# APP_ENV is expected to be "development" for local Docker Compose runs (from .env)
+# and "production" for Render deployments (set in Render service environment).
+app_env_string = System.get_env("APP_ENV")
 
-# If you always want dev.exs to control the DB for :dev environment:
+config :frontend, :app_env, app_env_string # Make APP_ENV available in application config if needed
+
+# Configure Cloudfront Domain
+current_cloudfront_domain =
+  case app_env_string do
+    "development" ->
+      # In local dev (docker-compose with APP_ENV="development"), expect CLOUDFRONT_DEV_DOMAIN from .env.
+      System.get_env("CLOUDFRONT_DEV_DOMAIN") ||
+        (IO.puts(:stderr, "Warning: CLOUDFRONT_DEV_DOMAIN not set for APP_ENV=development. Falling back to generic CLOUDFRONT_DOMAIN or localhost.")
+         System.get_env("CLOUDFRONT_DOMAIN") || "http://localhost:4000") # Fallback for dev
+    "production" ->
+      # In production (Render with APP_ENV="production"), expect CLOUDFRONT_PROD_DOMAIN.
+      # Fallback to CLOUDFRONT_DOMAIN which MUST be set on Render for prod.
+      System.get_env("CLOUDFRONT_PROD_DOMAIN") ||
+        System.fetch_env!("CLOUDFRONT_DOMAIN") # CLOUDFRONT_DOMAIN must be set on Render (pointing to prod CF)
+    _ ->
+      # APP_ENV not "development" or "production" (e.g., nil during compile time or local mix outside Docker).
+      # Fallback based on MIX_ENV and generic CLOUDFRONT_DOMAIN.
+      effective_mix_env = config_env()
+      IO.puts(:stderr, "Warning: APP_ENV is '#{app_env_string || "not set"}'. Inferring CloudFront domain using MIX_ENV=#{effective_mix_env}.")
+      if effective_mix_env == :prod do
+        # Likely a prod build context (MIX_ENV=prod) without APP_ENV explicitly set.
+        # CLOUDFRONT_DOMAIN should be available (e.g., from build env or .env sourced by build).
+        System.fetch_env!("CLOUDFRONT_DOMAIN")
+      else
+        # Dev context (MIX_ENV=dev) outside Docker, or other.
+        # Use CLOUDFRONT_DOMAIN from .env (if sourced by shell/direnv) or a default.
+        System.get_env("CLOUDFRONT_DOMAIN") || "http://localhost:4000"
+      end
+  end
+config :frontend, :cloudfront_domain, current_cloudfront_domain
+IO.puts "[Runtime.exs] Configured CloudFront Domain: #{current_cloudfront_domain}"
+
+# Configure S3 Bucket Name (if Phoenix needs to know it directly for URL generation, etc.)
+current_s3_bucket =
+  case app_env_string do
+    "development" ->
+      System.get_env("S3_DEV_BUCKET_NAME") || System.get_env("S3_BUCKET_NAME") # Fallback to generic if _DEV_ missing
+    "production" ->
+      System.get_env("S3_PROD_BUCKET_NAME") || System.get_env("S3_BUCKET_NAME") # Fallback to generic if _PROD_ missing
+    _ ->
+      # Fallback if APP_ENV is not explicitly "development" or "production".
+      # Relies on S3_BUCKET_NAME being appropriately set in the environment (e.g. from .env via direnv).
+      effective_mix_env = config_env()
+      IO.puts(:stderr, "Warning: APP_ENV is '#{app_env_string || "not set"}'. Inferring S3 Bucket using MIX_ENV=#{effective_mix_env}.")
+      # For S3 bucket, typically you'd want it to be mandatory if needed.
+      # If it's critical for prod builds, System.fetch_env! might be appropriate in the :prod branch here.
+      System.get_env("S3_BUCKET_NAME") # This will be nil if not set, Phoenix code should handle nil if it's optional.
+  end
+
+if current_s3_bucket do
+  config :frontend, :s3_bucket, current_s3_bucket
+  IO.puts "[Runtime.exs] Configured S3 Bucket: #{current_s3_bucket}"
+else
+  IO.puts "[Runtime.exs] S3 Bucket not configured via APP_ENV specific vars or S3_BUCKET_NAME."
+end
+
+
+# === Database Configuration ===
+# Only configure Repo from DATABASE_URL if MIX_ENV is not :dev (e.g., :prod, :test).
+# For :dev, config/dev.exs manages its own database configuration (app-db-dev Docker container).
 if config_env() != :dev do
+  # For production (or any non-dev MIX_ENV):
+  # 1. Try PROD_DATABASE_URL (from .env, for local scripts targeting prod or specific prod-like envs).
+  # 2. Fallback to DATABASE_URL (this is what Render injects for its managed DB).
   database_url =
-    System.get_env("DATABASE_URL") ||
+    System.get_env("PROD_DATABASE_URL") ||
+      System.get_env("DATABASE_URL") ||
       raise """
-      environment variable DATABASE_URL is missing.
-      It's required for environments other than :dev (e.g., :prod).
+      environment variable PROD_DATABASE_URL or DATABASE_URL is missing.
+      It's required for environments other than :dev (e.g., :prod, :test).
       For :dev, ensure your config/dev.exs sets up the Frontend.Repo configuration.
       """
 
-  config :frontend, :cloudfront_domain, System.fetch_env!("CLOUDFRONT_DOMAIN") # Keep if needed universally
+  IO.puts "[Runtime.exs] Configuring Repo for #{config_env()} using DATABASE_URL (source: PROD_DATABASE_URL or DATABASE_URL)"
 
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 
-  render_db? = String.contains?(database_url, ".render.com")
-  db_host    = URI.parse(database_url).host |> to_charlist()
+  # Check if the database_url points to a Render managed database.
+  # System.get_env("RENDER_INSTANCE_ID") is a reliable way to check if running on Render.
+  is_on_render_platform = System.get_env("RENDER_INSTANCE_ID") != nil
+  is_render_db_host = String.contains?(database_url, ".render.com")
 
   ssl_opts =
-    if render_db? do
-      [
-        verify: :verify_peer,
-        cacertfile: '/etc/ssl/certs/ca-certificates.crt',
-        server_name_indication: db_host
-        # hostname: db_host # server_name_indication is usually sufficient
-      ]
-    else
-      # For other DBs via DATABASE_URL, you might need different SSL logic or none
-      # Example: allow self-signed certs if DATABASE_URL has ?ssl=true&sslrootcert=...
-      # For simplicity here, if not Render DB via URL, assume no special SSL handling needed by default
-      # or that the URL itself contains all necessary SSL params.
-      if String.contains?(database_url, "ssl=true") or String.contains?(database_url, "sslmode=require") do
-        # Basic SSL, could be expanded if certs are needed
-        [] # Postgrex will handle basic SSL if the URL indicates it
-      else
+    cond do
+      is_on_render_platform and is_render_db_host ->
+        # Running on Render platform and connecting to a Render DB.
+        # Use CAStore for Render's managed certificates.
+        # Add {:castore, "~> 1.0"} to mix.exs deps and CAStore.init() in application.ex if using.
+        [
+          verify: :verify_peer,
+          cacertfile: CAStore.file_path(), # Requires CAStore dependency and initialization.
+          server_name_indication: URI.parse(database_url).host |> to_charlist()
+          # For older Elixir/Erlang, you might need:
+          # sni: URI.parse(database_url).host |> String.to_charlist()
+        ]
+      is_render_db_host ->
+        # Connecting to a Render DB host, but NOT from the Render platform (e.g., local script).
+        # PROD_DATABASE_URL from .env should include "?sslmode=require".
+        # psycopg2/Postgrex handles `sslmode=require` from the DSN.
+        # Explicit options can be added if `sslmode=verify-full` is used and CA certs need local management.
+        # For `sslmode=require`, often empty list or `ssl: true` is enough if system trusts CAs.
+        # Relying on sslmode in URL. For verify-full, you'd need cacertfile path.
+        if String.contains?(database_url, "sslmode=verify-full") do
+          [
+            verify: :verify_peer,
+            # cacertfile: "/path/to/your/local/render-ca-cert.pem", # If needed for verify-full
+            server_name_indication: URI.parse(database_url).host |> to_charlist()
+          ]
+        else
+          # For sslmode=require, Postgrex handles it if present in URL.
+          # If not in URL, `ssl: true` can enable basic SSL.
+          if String.contains?(database_url, "sslmode=") or String.contains?(database_url, "ssl=true"), do: [], else: [ssl: true]
+        end
+      String.contains?(database_url, "ssl=true") or String.contains?(database_url, "sslmode=require") ->
+        # For other non-Render DBs that specify SSL in the URL.
+        [] # Postgrex handles basic SSL if the URL indicates it.
+      true ->
+        # No SSL indicated or needed.
         false
-      end
     end
 
-  repo_url =
-    if render_db? and not String.contains?(database_url, "sslmode") and not String.contains?(database_url, "ssl=true") do
+  # Ensure sslmode=require is part of the URL for Render DBs if not already,
+  # to simplify SSL setup, especially if CAStore is not used or for local connections to Render.
+  # Your PROD_DATABASE_URL in .env already includes this.
+  # This primarily helps if Render's auto-injected DATABASE_URL doesn't include it.
+  repo_url_with_sslmode =
+    if is_render_db_host and not String.contains?(database_url, "sslmode=") and not String.contains?(database_url, "ssl=") do
       database_url <> "?sslmode=require"
     else
       database_url
     end
 
   config :frontend, Frontend.Repo,
-    url: repo_url,
+    url: repo_url_with_sslmode,
     ssl: ssl_opts,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
     socket_options: maybe_ipv6
 
 else
-  # In :dev environment, we assume config/dev.exs handles Repo config.
-  # You can still set CLOUDFRONT_DOMAIN or other shared settings here if needed for dev.
-  # If CLOUDFRONT_DOMAIN is also set in dev.exs, that will take precedence.
-  # If it's ONLY needed when DATABASE_URL is used, move it inside the `if config_env() != :dev` block.
-  # For now, let's assume it might be needed in dev too, fetched from env.
-  if cloudfront_domain_env = System.get_env("CLOUDFRONT_DOMAIN") do
-    config :frontend, :cloudfront_domain, cloudfront_domain_env
-  else
-    # Optional: provide a default or raise if it's critical for dev too
-    # config :frontend, :cloudfront_domain, "http://localhost:4000" # Example default
-    IO.puts("Warning: CLOUDFRONT_DOMAIN not set, some image URLs might be broken in dev.")
-  end
+  # In :dev environment (config_env() == :dev), config/dev.exs handles Repo config.
+  # The APP_ENV based CloudFront/S3 config at the top of this file already covers dev.
+  IO.puts "[Runtime.exs] Repo configuration for :dev is handled by config/dev.exs."
 end
 
 
-# ───────── production only ─────────
+# === Production Only settings (when MIX_ENV=prod) ===
+# This block applies settings specifically for production builds/releases.
 if config_env() == :prod do
-  # SECRET_KEY_BASE is critical for prod, ensure it's set
+  IO.puts "[Runtime.exs] Applying production-specific endpoint configurations (MIX_ENV=prod)."
+  # SECRET_KEY_BASE is critical for prod, ensure it's set.
   secret_key_base =
     System.get_env("SECRET_KEY_BASE") ||
       raise "environment variable SECRET_KEY_BASE is missing for prod"
 
-  host = System.get_env("PHX_HOST") || "example.com" # Default for safety
+  # PHX_HOST for constructing canonical URLs.
+  # RENDER_EXTERNAL_HOSTNAME is provided by Render.
+  host = System.get_env("PHX_HOST") || System.get_env("RENDER_EXTERNAL_HOSTNAME") ||
+    raise "PHX_HOST or RENDER_EXTERNAL_HOSTNAME must be set for prod"
+
   port = String.to_integer(System.get_env("PORT") || "4000")
 
-  # This DNS_CLUSTER_QUERY is typically for clustered deployments.
-  # If you have it, it's likely prod-specific.
+  # DNS_CLUSTER_QUERY is for clustered deployments (e.g., libcluster with DNS strategy).
   if dns_cluster_query_env = System.get_env("DNS_CLUSTER_QUERY") do
     config :frontend, :dns_cluster_query, dns_cluster_query_env
   end
 
   config :frontend, FrontendWeb.Endpoint,
-    url:  [host: host, port: 443, scheme: "https"], # Assuming prod is HTTPS
-    http: [ip: {0, 0, 0, 0, 0, 0, 0, 0}, port: port],
-    secret_key_base: secret_key_base
-    # Consider adding force_ssl: [hsts: true] for prod here
+    url: [host: host, port: 443, scheme: "https"], # Prod typically runs on HTTPS.
+    http: [
+      ip: {0, 0, 0, 0, 0, 0, 0, 0}, # Listen on all interfaces.
+      port: port # Port the app binds to internally on Render.
+    ],
+    secret_key_base: secret_key_base,
+    # Enable HSTS and other security headers for production.
+    force_ssl: [hsts: true, host: host], # Ensure host matches for HSTS
+    cache_static_manifest: "priv/static/cache_manifest.json" # For long-lived caching of static assets.
+
+  # The `force_ssl` option above implies HTTPS, so `https` scheme is appropriate.
+  # Render handles SSL termination at its load balancers, forwarding traffic as HTTP to your app on `port`.
+  # Phoenix needs to know the original scheme (https) and host for correct URL generation.
 end
+
+# General debug log at the end of runtime.exs
+IO.puts "[Runtime.exs] Runtime configuration finished for MIX_ENV=#{config_env()} and APP_ENV=#{System.get_env("APP_ENV") || "not set"}."

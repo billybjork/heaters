@@ -45,24 +45,38 @@ FFMPEG_ARGS = [
     "-movflags", "+faststart",
 ]
 
+# --- Environment Configuration ---
+APP_ENV = os.getenv("APP_ENV", "development")
+
 # --- S3 Configuration ---
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
 AWS_REGION = os.getenv("AWS_REGION", "us-west-1")
 
-# Validate required env vars
+if APP_ENV == "development":
+    S3_BUCKET_NAME = os.getenv("S3_DEV_BUCKET_NAME")
+    env_log_msg_suffix = f"DEVELOPMENT environment using S3 Bucket: '{S3_BUCKET_NAME}'"
+else:
+    S3_BUCKET_NAME = os.getenv("S3_PROD_BUCKET_NAME")
+    env_log_msg_suffix = f"PRODUCTION environment using S3 Bucket: '{S3_BUCKET_NAME}'"
+
+# Validate required S3 bucket name
 if not S3_BUCKET_NAME:
-    raise ValueError("Missing required environment variable: S3_BUCKET_NAME")
+    # Stop the module from loading if the bucket isn't configured
+    raise ValueError(
+        f"S3_BUCKET_NAME is not configured for APP_ENV='{APP_ENV}'. "
+        f"Ensure S3_DEV_BUCKET_NAME (if dev) or S3_PROD_BUCKET_NAME (if prod) is set."
+    )
 
 # --- Initialize S3 Client ---
-s3_client = None # Initialize to None
+s3_client = None
 try:
     s3_client = boto3.client("s3", region_name=AWS_REGION)
-    print(f"Initialized S3 client for bucket: {S3_BUCKET_NAME} in region: {AWS_REGION}")
+    # Initial log message using print, as logger might not be ready
+    print(f"Intake.py: Initialized S3 client for region: {AWS_REGION}. {env_log_msg_suffix}")
 except NoCredentialsError:
-    print("AWS credentials not found. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY or use IAM roles.")
+    print("Intake.py: AWS credentials not found. S3 operations will fail.")
     # Error will be caught later in the task if s3_client is None
 except Exception as e:
-    print(f"Failed to initialize S3 client: {e}")
+    print(f"Intake.py: Failed to initialize S3 client: {e}. S3 operations will fail.")
     # Error will be caught later in the task if s3_client is None
 
 

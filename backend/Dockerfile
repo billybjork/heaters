@@ -37,6 +37,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
         libgl1 libglib2.0-0 libgomp1 curl ca-certificates \
+        postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # ─────────────────────────
@@ -48,9 +49,14 @@ RUN apt-get update && \
 # We auto-detect the correct libgomp.so.1 path and instruct the
 # dynamic loader to pre-load it for every executable via ld.so.preload.
 RUN set -e; \
-    GOMP="$(ldconfig -p | grep -Eo '/.*libgomp\.so\.1$' | head -n1)"; \
-    echo "Preloading ${GOMP}"; \
-    echo "${GOMP}" > /etc/ld.so.preload
+    GOMP_PATH="$(find /usr/lib -name libgomp.so.1 | head -n1)"; \
+    if [ -n "$GOMP_PATH" ]; then \
+        echo "Preloading ${GOMP_PATH}"; \
+        echo "${GOMP_PATH}" > /etc/ld.so.preload; \
+    else \
+        echo "Warning: libgomp.so.1 not found, OpenMP preload not configured."; \
+    fi
+    # Note: Original ldconfig method is also fine, find is more direct if path varies.
 
 # Set threads and unbuffered output for Python
 ENV OMP_NUM_THREADS=1 \

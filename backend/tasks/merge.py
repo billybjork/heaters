@@ -11,7 +11,7 @@ import sys
 from prefect import task, get_run_logger
 import psycopg2
 from psycopg2 import sql, extras
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, NoCredentialsError
 
 # --- Project Root Setup ---
 try:
@@ -26,33 +26,102 @@ except ImportError:
         def get_db_connection(cursor_factory=None): raise NotImplementedError("Dummy DB connection")
         def release_db_connection(conn): pass
 
-# --- Import Shared Components ---
+# --- Import Shared Components & S3 Configuration ---
 s3_client = None
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+S3_BUCKET_NAME = None # Initialize to None, will be set by import or fallback
+AWS_REGION = os.getenv("AWS_REGION", "us-west-1")
+
 FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
 CLIP_S3_PREFIX = os.getenv("CLIP_S3_PREFIX", "clips/")
 
 try:
-    # Attempt to import from splice first
-    from .splice import s3_client as splice_s3_client, run_ffmpeg_command, sanitize_filename
-    if splice_s3_client: s3_client = splice_s3_client
-    print("Imported shared components (S3 client?, ffmpeg runner, sanitizer) from tasks.splice")
-except ImportError as e:
-     print(f"INFO: Could not import components from .splice, using defaults/direct init. Error: {e}")
-     # Define fallbacks (same as before)
-     def run_ffmpeg_command(cmd, step, cwd=None):
-         logger = get_run_logger(); logger.info(f"Executing Fallback FFMPEG Step: {step}"); logger.debug(f"Command: {' '.join(cmd)}")
-         try: result = subprocess.run(cmd, capture_output=True, text=True, check=True, cwd=cwd, encoding='utf-8', errors='replace'); logger.debug(f"FFMPEG Output:\n{result.stdout[:500]}..."); return result
-         except FileNotFoundError: logger.error(f"ERROR: {cmd[0]} command not found at path '{FFMPEG_PATH}'."); raise
-         except subprocess.CalledProcessError as e: logger.error(f"ERROR: {step} failed. Code: {e.returncode}\nStderr:\n{e.stderr}"); raise
-     def sanitize_filename(name):
-         name = re.sub(r'[^\w\.\-]+', '_', name); name = re.sub(r'_+', '_', name).strip('_'); return name if name else "default_filename"
+    from .splice import (
+        s3_client as imported_s3_client,
+        S3_BUCKET_NAME as imported_s3_bucket_name,
+        run_ffmpeg_command as imported_run_ffmpeg,
+        sanitize_filename as imported_sanitize_filename,
+    )
+    if imported_s3_client and imported_s3_bucket_name:
+        s3_client = imported_s3_client
+        S3_BUCKET_NAME = imported_s3_bucket_name
+        print(f"{__name__}: Using S3 configuration imported from .splice. Bucket: {S3_BUCKET_NAME}")
+    else:
+        # Fall through to local initialization if splice.py didn't provide them
+        print(f"{__name__}: .splice imported but S3 config incomplete, will init locally.")
+        s3_client = None # Ensure it triggers local init
 
-# Initialize S3 client if not imported
-if not s3_client and S3_BUCKET_NAME:
-     try: import boto3; s3_client = boto3.client('s3', region_name=os.getenv("AWS_REGION")); print("Initialized default Boto3 S3 client in merge.")
-     except ImportError: print("ERROR: Boto3 required but not installed."); s3_client = None
-     except Exception as boto_err: print(f"ERROR: Failed to initialize fallback Boto3 client: {boto_err}"); s3_client = None
+    run_ffmpeg_command = imported_run_ffmpeg
+    sanitize_filename = imported_sanitize_filename
+
+except ImportError as e:
+     print(f"{__name__}: INFO: Could not import from .splice, using defaults/direct init. Error: {e}")
+     s3_client = None # Ensure it triggers local init
+
+     def run_ffmpeg_command(cmd_list, step_name="ffmpeg command", cwd=None):
+         logger = get_run_logger()
+         logger.info(f"Executing Fallback FFMPEG Step: {step_name} in {__name__}")
+         logger.debug(f"Command: {' '.join(cmd_list)}")
+         try:
+             result = subprocess.run(
+                 cmd_list, capture_output=True, text=True, check=True, cwd=cwd,
+                 encoding='utf-8', errors='replace'
+             )
+             logger.debug(f"FFMPEG Output:\n{result.stdout[:500]}...")
+             if result.stderr: logger.warning(f"FFMPEG Stderr for {step_name}:\n{result.stderr[:500]}...")
+             return result
+         except FileNotFoundError:
+              logger.error(f"ERROR in {__name__}: {cmd_list[0]} command not found at path '{FFMPEG_PATH}'.")
+              raise
+         except subprocess.CalledProcessError as exc:
+              logger.error(f"ERROR in {__name__}: {step_name} failed. Exit code: {exc.returncode}")
+              logger.error(f"Stderr:\n{exc.stderr}")
+              raise
+
+     def sanitize_filename(name):
+         name = re.sub(r'[^\w\.\-]+', '_', str(name))
+         name = re.sub(r'_+', '_', name).strip('_')
+         return name if name else "default_filename_fallback"
+
+# Fallback or direct initialization if not successfully imported AND S3_BUCKET_NAME is not yet set
+if not s3_client or not S3_BUCKET_NAME:
+    APP_ENV = os.getenv("APP_ENV", "development")
+    _current_module_name = __name__.split('.')[-1]
+    env_log_msg_prefix = ""
+
+    if APP_ENV == "development":
+        _temp_bucket_name = os.getenv("S3_DEV_BUCKET_NAME")
+        env_log_msg_prefix = f"DEVELOPMENT using S3 Bucket '{_temp_bucket_name}'"
+    else:
+        _temp_bucket_name = os.getenv("S3_PROD_BUCKET_NAME")
+        env_log_msg_prefix = f"PRODUCTION using S3 Bucket '{_temp_bucket_name}'"
+
+    if not _temp_bucket_name:
+        raise ValueError(
+            f"{_current_module_name}.py: S3_BUCKET_NAME is not set for APP_ENV='{APP_ENV}'. "
+            f"Ensure S3_DEV_BUCKET_NAME or S3_PROD_BUCKET_NAME is configured."
+        )
+    S3_BUCKET_NAME = _temp_bucket_name # Assign to the module-level variable
+
+    # Initialize s3_client only if it's still None (i.e., not imported successfully)
+    if not s3_client:
+        try:
+            import boto3 # Import boto3 here, as it's only needed for fallback
+            # NoCredentialsError already imported at top level
+            s3_client = boto3.client("s3", region_name=AWS_REGION)
+            print(f"{_current_module_name}.py: Fallback S3 Init: Initialized S3 client for region: {AWS_REGION}. Env: {env_log_msg_prefix}")
+        except ImportError:
+            print(f"ERROR in {_current_module_name}.py: Boto3 required for fallback S3 client but not installed.")
+            s3_client = None # Keep it None to indicate failure
+        except NoCredentialsError:
+            print(f"ERROR in {_current_module_name}.py: AWS credentials not found for fallback S3 client.")
+            s3_client = None
+        except Exception as e_boto:
+            print(f"ERROR in {_current_module_name}.py: Failed fallback Boto3 init: {e_boto}")
+            s3_client = None
+    else:
+        # This case means s3_client was imported, but S3_BUCKET_NAME was not (or was None).
+        # S3_BUCKET_NAME is now set, and we assume the imported s3_client is valid.
+        print(f"{_current_module_name}.py: Using imported s3_client with locally determined S3 bucket: {S3_BUCKET_NAME} ({env_log_msg_prefix})")
 
 
 # --- Task Definition ---
@@ -76,36 +145,38 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int):
     clip_source_data = None
     expected_target_state = 'pending_merge_target'
     expected_source_state = 'marked_for_merge_into_previous'
+    task_outcome = "failed" # Default task outcome
 
     # --- Pre-checks ---
     if clip_id_target == clip_id_source: raise ValueError("Cannot merge a clip with itself.")
-    if not all([s3_client, S3_BUCKET_NAME]): raise RuntimeError("S3 client or bucket name is not configured.")
-    if not FFMPEG_PATH or not shutil.which(FFMPEG_PATH): raise FileNotFoundError(f"ffmpeg command not found at '{FFMPEG_PATH}'.")
+    if not all([s3_client, S3_BUCKET_NAME]):
+        logger.error(f"S3 client or bucket name not configured. Client: {s3_client}, Bucket: {S3_BUCKET_NAME}")
+        raise RuntimeError("S3 client or bucket name is not configured for merge.py.")
+    if not FFMPEG_PATH or not shutil.which(FFMPEG_PATH):
+        raise FileNotFoundError(f"ffmpeg command not found at '{FFMPEG_PATH}'.")
 
     try:
-        conn = get_db_connection() # Use connection pool
+        conn = get_db_connection()
         if conn is None: raise ConnectionError("Failed to get database connection.")
-        conn.autocommit = False # Manual transaction control
+        conn.autocommit = False
 
         # === Database Operations: Initial Fetch and Validation ===
         try:
             with conn.cursor(cursor_factory=extras.DictCursor) as cur:
-                # Lock both clips involved using advisory locks
                 cur.execute("SELECT pg_advisory_xact_lock(2, %s)", (clip_id_target,))
                 cur.execute("SELECT pg_advisory_xact_lock(2, %s)", (clip_id_source,))
                 logger.debug(f"Acquired locks for target {clip_id_target} and source {clip_id_source}")
 
-                # Fetch data for both clips AND source title
                 cur.execute(
                     """
                     SELECT
                         c.id, c.clip_filepath, c.clip_identifier, c.start_frame, c.end_frame,
                         c.start_time_seconds, c.end_time_seconds, c.source_video_id,
                         c.ingest_state, c.processing_metadata,
-                        sv.title AS source_title -- Fetch source title
+                        sv.title AS source_title
                     FROM clips c
-                    JOIN source_videos sv ON c.source_video_id = sv.id -- Join source_videos
-                    WHERE c.id = ANY(%s::int[]) FOR UPDATE;
+                    JOIN source_videos sv ON c.source_video_id = sv.id
+                    WHERE c.id = ANY(%s::int[]) FOR UPDATE OF c, sv;
                     """, ([clip_id_target, clip_id_source],)
                 )
                 results = cur.fetchall()
@@ -115,193 +186,232 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int):
                 clip_source_data = next((r for r in results if r['id'] == clip_id_source), None)
                 if not clip_target_data or not clip_source_data: raise ValueError("Mismatch fetching clip data.")
 
-                # --- Validation ---
                 if clip_target_data['source_video_id'] != clip_source_data['source_video_id']:
                     raise ValueError("Clips do not belong to the same source video.")
                 source_video_id = clip_target_data['source_video_id']
+                source_title = clip_target_data.get('source_title', f'source_{source_video_id}')
 
-                # Extract source title (should be the same for both)
-                source_title = clip_target_data.get('source_title', f'source_{source_video_id}') # Use target's, fallback
-
-                # Validate states (allow proceeding with warning for robustness, but log it)
                 if clip_target_data['ingest_state'] != expected_target_state:
                      logger.warning(f"Target clip {clip_id_target} state is '{clip_target_data['ingest_state']}' (expected '{expected_target_state}'). Proceeding cautiously.")
                 if clip_source_data['ingest_state'] != expected_source_state:
                      logger.warning(f"Source clip {clip_id_source} state is '{clip_source_data['ingest_state']}' (expected '{expected_source_state}'). Proceeding cautiously.")
 
-                # Basic metadata check (optional stricter check)
-                target_meta = clip_target_data['processing_metadata'] or {}
-                source_meta = clip_source_data['processing_metadata'] or {}
-                if target_meta.get('merge_source_clip_id') != clip_id_source: logger.warning(f"Target {clip_id_target} metadata missing/incorrect source link.")
-                if source_meta.get('merge_target_clip_id') != clip_id_target: logger.warning(f"Source {clip_id_source} metadata missing/incorrect target link.")
+                target_meta = clip_target_data.get('processing_metadata') or {}
+                source_meta = clip_source_data.get('processing_metadata') or {}
+                if target_meta.get('merge_source_clip_id') != clip_id_source: logger.warning(f"Target {clip_id_target} metadata missing/incorrect source link. Metadata: {target_meta}")
+                if source_meta.get('merge_target_clip_id') != clip_id_target: logger.warning(f"Source {clip_id_source} metadata missing/incorrect target link. Metadata: {source_meta}")
 
                 if not clip_target_data['clip_filepath'] or not clip_source_data['clip_filepath']:
-                    raise ValueError("One or both clips are missing filepaths.")
-
-            # Keep transaction open
-            logger.info(f"Clips validated. Target: {clip_id_target}, Source: {clip_id_source}")
+                    raise ValueError("One or both clips are missing S3 filepaths.")
+            
+            # Do not commit here, keep transaction open for main processing if DB ops are part of it.
+            # However, for merge, the main processing is ffmpeg and S3, so releasing row locks might be okay.
+            # For simplicity and safety, let's assume we commit after validation and before long I/O
+            conn.commit()
+            logger.info(f"Clips validated and initial transaction committed. Target: {clip_id_target}, Source: {clip_id_source}")
 
         except (ValueError, psycopg2.DatabaseError) as db_err:
              logger.error(f"DB Error during initial checks/locking for merge: {db_err}", exc_info=True)
              if conn: conn.rollback()
-             raise # Re-raise to fail the task
+             task_outcome = "failed_db_initial_check"
+             raise
 
         # === Main Processing: Download, Merge, Upload ===
-        if source_title is None: # Add a check just in case assignment failed silently (shouldn't happen)
+        if source_title is None:
             raise RuntimeError("Source title could not be determined before processing.")
-        
-        temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"heaters_merge_")
+
+        temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"heaters_merge_{source_video_id}_")
         temp_dir = Path(temp_dir_obj.name)
         logger.info(f"Using temporary directory: {temp_dir}")
 
         local_clip_target_path = temp_dir / Path(clip_target_data['clip_filepath']).name
         local_clip_source_path = temp_dir / Path(clip_source_data['clip_filepath']).name
         concat_list_path = temp_dir / "concat_list.txt"
+
         logger.info(f"Downloading clips to {temp_dir}...")
         try:
+            logger.debug(f"Downloading target: s3://{S3_BUCKET_NAME}/{clip_target_data['clip_filepath']} to {local_clip_target_path}")
             s3_client.download_file(S3_BUCKET_NAME, clip_target_data['clip_filepath'], str(local_clip_target_path))
+            logger.debug(f"Downloading source: s3://{S3_BUCKET_NAME}/{clip_source_data['clip_filepath']} to {local_clip_source_path}")
             s3_client.download_file(S3_BUCKET_NAME, clip_source_data['clip_filepath'], str(local_clip_source_path))
         except ClientError as s3_err:
             logger.error(f"Failed to download clips from S3: {s3_err}", exc_info=True)
-            if conn: conn.rollback()
+            # No open transaction to rollback here if initial commit was done
+            task_outcome = "failed_s3_download"
             raise RuntimeError(f"S3 download failed") from s3_err
 
-        with open(concat_list_path, "w") as f:
+        with open(concat_list_path, "w", encoding='utf-8') as f: # Specify encoding
+            # Ensure paths are POSIX-style for ffmpeg concat file, especially on Windows
             f.write(f"file '{local_clip_target_path.resolve().as_posix()}'\n")
             f.write(f"file '{local_clip_source_path.resolve().as_posix()}'\n")
 
         new_end_frame = clip_source_data['end_frame']
         new_end_time = clip_source_data['end_time_seconds']
-
-        # Sanitize source title for use in path
         sanitized_source_title = sanitize_filename(source_title)
 
-        # Generate new identifier and filename for the merged clip
-        source_prefix = f"{clip_target_data['source_video_id']}"
+        source_prefix = f"{clip_target_data['source_video_id']}" # Should be same as source_video_id
         updated_clip_identifier = f"{source_prefix}_{clip_target_data['start_frame']}_{new_end_frame}_merged"
         updated_clip_filename = f"{sanitize_filename(updated_clip_identifier)}.mp4"
         updated_local_clip_path = temp_dir / updated_clip_filename
 
-        # Ensure clip prefix ends with / and add sanitized source title
-        s3_base_prefix = CLIP_S3_PREFIX.strip('/') + '/'
-        updated_clip_s3_key = f"{s3_base_prefix}{sanitized_source_title}/{updated_clip_filename}"
+        s3_base_prefix_for_clips = CLIP_S3_PREFIX.strip('/') + '/'
+        updated_clip_s3_key = f"{s3_base_prefix_for_clips}{sanitized_source_title}/{updated_clip_filename}"
 
         ffmpeg_merge_cmd_copy = [ FFMPEG_PATH, '-y', '-f', 'concat', '-safe', '0', '-i', str(concat_list_path), '-c', 'copy', str(updated_local_clip_path) ]
         try:
             run_ffmpeg_command(ffmpeg_merge_cmd_copy, "ffmpeg Merge (copy)", cwd=str(temp_dir))
         except Exception as e:
             logger.warning(f"FFmpeg copy merge failed ({e}), attempting re-encode...")
-            ffmpeg_merge_cmd_reencode = [ FFMPEG_PATH, '-y', '-f', 'concat', '-safe', '0', '-i', str(concat_list_path), '-c:v', 'libx264', '-preset', 'medium', '-crf', '23', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', str(updated_local_clip_path) ]
-            try: run_ffmpeg_command(ffmpeg_merge_cmd_reencode, "ffmpeg Merge (re-encode)", cwd=str(temp_dir))
+            ffmpeg_merge_cmd_reencode = [
+                FFMPEG_PATH, '-y', '-f', 'concat', '-safe', '0', '-i', str(concat_list_path),
+                '-c:v', 'libx264', '-preset', 'medium', '-crf', '23', '-pix_fmt', 'yuv420p',
+                '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+                str(updated_local_clip_path)
+            ]
+            try:
+                run_ffmpeg_command(ffmpeg_merge_cmd_reencode, "ffmpeg Merge (re-encode)", cwd=str(temp_dir))
             except Exception as reencode_err:
                 logger.error(f"FFmpeg re-encode merge also failed: {reencode_err}", exc_info=True)
-                if conn: conn.rollback()
+                task_outcome = "failed_ffmpeg_merge"
                 raise RuntimeError("FFmpeg merge failed") from reencode_err
 
         if not updated_local_clip_path.is_file() or updated_local_clip_path.stat().st_size == 0:
+             task_outcome = "failed_ffmpeg_output"
              raise RuntimeError(f"Merged output file missing or empty: {updated_local_clip_path}")
 
         logger.info(f"Uploading merged clip to s3://{S3_BUCKET_NAME}/{updated_clip_s3_key}")
         try:
-            with open(updated_local_clip_path, "rb") as f:
-                s3_client.upload_fileobj(f, S3_BUCKET_NAME, updated_clip_s3_key)
+            with open(updated_local_clip_path, "rb") as f_up:
+                s3_client.upload_fileobj(f_up, S3_BUCKET_NAME, updated_clip_s3_key)
         except ClientError as s3_err:
             logger.error(f"Failed to upload merged clip to S3: {s3_err}", exc_info=True)
-            if conn: conn.rollback()
+            task_outcome = "failed_s3_upload"
             raise RuntimeError(f"S3 upload failed") from s3_err
 
-        # === Final Database Updates (within the existing transaction) ===
+        # === Final Database Updates (New Transaction) ===
+        conn.autocommit = False # Ensure manual transaction control for this block
         try:
             with conn.cursor() as cur:
-                # 1. Delete ALL existing artifacts for BOTH clips
-                # It's safer to delete artifacts before updating the clip states
-                delete_artifacts_sql = sql.SQL("""
-                    DELETE FROM clip_artifacts WHERE clip_id = ANY(%s);
-                """)
+                # Re-acquire advisory locks for this transaction
+                cur.execute("SELECT pg_advisory_xact_lock(2, %s)", (clip_id_target,))
+                cur.execute("SELECT pg_advisory_xact_lock(2, %s)", (clip_id_source,))
+                logger.debug(f"Re-acquired locks for final DB update of target {clip_id_target} and source {clip_id_source}")
+
+                delete_artifacts_sql = sql.SQL("DELETE FROM clip_artifacts WHERE clip_id = ANY(%s);")
                 affected_clips_list = [clip_id_target, clip_id_source]
                 cur.execute(delete_artifacts_sql, (affected_clips_list,))
                 logger.info(f"Deleted {cur.rowcount} existing artifact(s) for clips {clip_id_target} and {clip_id_source}.")
 
-                # 2. Update the Target Clip (N-1)
                 update_target_sql = sql.SQL("""
                     UPDATE clips
                     SET
-                        clip_filepath = %s,       -- New S3 path
-                        clip_identifier = %s,   -- New identifier
-                        end_frame = %s,           -- Source clip's end frame
-                        end_time_seconds = %s,    -- Source clip's end time
-                        ingest_state = %s,        -- Send back for sprite gen
-                        processing_metadata = NULL, -- Clear merge metadata
+                        clip_filepath = %s, clip_identifier = %s,
+                        end_frame = %s, end_time_seconds = %s,
+                        ingest_state = %s, processing_metadata = NULL,
                         last_error = 'Merged with clip ' || %s::text,
-                        updated_at = NOW(),
-                        keyframed_at = NULL,      -- Reset timestamps as content changed
-                        embedded_at = NULL
-                    WHERE id = %s;
+                        updated_at = NOW(), keyframed_at = NULL, embedded_at = NULL
+                    WHERE id = %s AND ingest_state = %s; -- Concurrency check on expected state
                 """)
                 cur.execute(update_target_sql, (
                     updated_clip_s3_key, updated_clip_identifier, new_end_frame,
-                    new_end_time, 'pending_sprite_generation', # Back into pipeline
-                    clip_id_source, clip_id_target
+                    new_end_time, 'pending_sprite_generation',
+                    clip_id_source, clip_id_target, expected_target_state # Check against original state
                 ))
+                if cur.rowcount == 0:
+                    logger.error(f"Target clip {clip_id_target} update failed. Row not found or state changed from '{expected_target_state}'.")
+                    raise RuntimeError(f"Target clip {clip_id_target} update failed due to state mismatch or deletion.")
                 logger.info(f"Updated target clip {clip_id_target}. State -> 'pending_sprite_generation'.")
 
-                # 3. Archive the Source Clip (N)
                 archive_source_sql = sql.SQL("""
                     UPDATE clips
                     SET
-                        ingest_state = 'merged',      -- Final state
+                        ingest_state = 'merged',
                         processing_metadata = jsonb_set(COALESCE(processing_metadata, '{}'::jsonb), '{merged_into_clip_id}', %s::jsonb),
                         last_error = 'Merged into clip ' || %s::text,
-                        updated_at = NOW(),
-                        keyframed_at = NULL,          -- Clear timestamps
-                        embedded_at = NULL
-                    WHERE id = %s;
+                        updated_at = NOW(), keyframed_at = NULL, embedded_at = NULL
+                    WHERE id = %s AND ingest_state = %s; -- Concurrency check
                 """)
                 cur.execute(archive_source_sql, (
-                    json.dumps(clip_id_target), # Store link in metadata
-                    clip_id_target, clip_id_source
+                    json.dumps(clip_id_target),
+                    clip_id_target, clip_id_source, expected_source_state # Check against original state
                 ))
-                logger.info(f"Archived source clip {clip_id_source} with state 'merged'.")
+                if cur.rowcount == 0:
+                    logger.error(f"Source clip {clip_id_source} archival failed. Row not found or state changed from '{expected_source_state}'.")
+                    # This might be acceptable if target update succeeded, but log warning.
+                    # For stricter consistency, could raise error.
+                    logger.warning(f"Source clip {clip_id_source} archival failed due to state mismatch or deletion. Target was updated.")
+                else:
+                    logger.info(f"Archived source clip {clip_id_source} with state 'merged'.")
 
-                # Log S3 keys for potential later cleanup
                 logger.info(f"S3 Cleanup eventually needed for ORIGINAL clips: s3://{S3_BUCKET_NAME}/{clip_target_data['clip_filepath']} and s3://{S3_BUCKET_NAME}/{clip_source_data['clip_filepath']}")
 
-            conn.commit() # Commit artifact deletion and clip updates
-            logger.info(f"Merge DB changes committed. Target clip {clip_id_target} updated, source clip {clip_id_source} archived.")
+            conn.commit()
+            logger.info(f"Merge DB changes committed. Target clip {clip_id_target} updated, source clip {clip_id_source} (attempted) archived.")
+            task_outcome = "success"
             return {"status": "success", "updated_clip_id": clip_id_target, "archived_clip_id": clip_id_source}
 
-        except (ValueError, psycopg2.DatabaseError) as db_err:
+        except (ValueError, psycopg2.DatabaseError, RuntimeError) as db_err:
             logger.error(f"DB Error during final update for merge: {db_err}", exc_info=True)
             if conn: conn.rollback()
-            raise # Re-raise to trigger main error handling
+            task_outcome = "failed_db_final_update"
+            raise
 
-    # === Main Error Handling Block ===
     except Exception as e:
         logger.error(f"TASK FAILED [Merge Backward]: Target {clip_id_target}, Source {clip_id_source} - {e}", exc_info=True)
-        if conn:
-            try:
-                conn.rollback()
-                conn.autocommit = True
-                with conn.cursor() as err_cur:
-                    error_message = f"Merge failed: {type(e).__name__}: {str(e)[:450]}"
-                    # Revert both clips to 'merge_failed' state
+        error_message_for_db = f"Merge failed: {type(e).__name__}: {str(e)[:450]}"
+        
+        # Use a new connection for error state update
+        error_conn = None
+        try:
+            # If the main conn was used and failed mid-transaction, it should be rolled back by the exception handler.
+            # This new connection is for a separate, atomic update.
+            error_conn = get_db_connection()
+            if error_conn:
+                error_conn.autocommit = True # For simple error update
+                with error_conn.cursor() as err_cur:
+                    # Revert both clips to 'merge_failed' state if they were in the expected pre-merge states
+                    # This attempts to reset their states for potential re-processing or manual review.
                     err_cur.execute(
                         """
                         UPDATE clips SET ingest_state = 'merge_failed', last_error = %s,
-                                        processing_metadata = NULL, updated_at = NOW()
+                                        processing_metadata = NULL, -- Clear merge-related metadata
+                                        updated_at = NOW(),
+                                        retry_count = COALESCE(retry_count, 0) + 1
                         WHERE id = ANY(%s::int[]) AND ingest_state IN (%s, %s);
                         """,
-                        (error_message, [clip_id_target, clip_id_source], expected_target_state, expected_source_state)
+                        (error_message_for_db, [clip_id_target, clip_id_source], expected_target_state, expected_source_state)
                     )
-                logger.info(f"Attempted to revert clips {clip_id_target}, {clip_id_source} states to 'merge_failed'.")
-            except Exception as db_err_on_fail:
-                logger.error(f"CRITICAL: Failed to update error state in DB after merge failure: {db_err_on_fail}")
-        raise e
+                logger.info(f"Attempted to revert clips {clip_id_target}, {clip_id_source} states to 'merge_failed'. Status: {err_cur.statusmessage if 'err_cur' in locals() else 'N/A'}")
+            else:
+                logger.error("Could not obtain DB connection to update error state after merge failure.")
+        except Exception as db_err_on_fail:
+            logger.error(f"CRITICAL: Failed to update error state in DB after merge failure: {db_err_on_fail}")
+        finally:
+            if error_conn:
+                release_db_connection(error_conn)
+        
+        # Ensure task_outcome reflects the failure if not already set by a specific phase
+        if task_outcome != "failed" and not task_outcome.startswith("failed_"):
+            task_outcome = "failed_unknown" # Generic if not caught by specific phase
+        
+        raise e # Re-raise the original exception
+
     finally:
-        # Cleanup connection and temp dir
-        if conn:
-            release_db_connection(conn) # Use pool release function
-            logger.debug("DB connection released.")
+        if conn: # Main connection
+            try:
+                conn.autocommit = True # Reset state
+                conn.rollback() # Ensure clean state before releasing
+            except Exception as conn_cleanup_err:
+                logger.warning(f"Error during final cleanup of main DB connection: {conn_cleanup_err}")
+            finally:
+                release_db_connection(conn)
+                logger.debug("Main DB connection released.")
+        
         if temp_dir_obj:
-            try: shutil.rmtree(temp_dir); logger.debug(f"Cleaned up temp dir: {temp_dir}")
-            except Exception as cleanup_err: logger.warning(f"Error cleaning up temp dir {temp_dir}: {cleanup_err}")
+            try:
+                shutil.rmtree(temp_dir)
+                logger.info(f"Cleaned up temp dir: {temp_dir}")
+            except Exception as cleanup_err:
+                 logger.warning(f"Error cleaning up temp dir {temp_dir}: {cleanup_err}")
+        
+        logger.info(f"Merge task for target {clip_id_target} and source {clip_id_source} concluded. Final outcome: {task_outcome}")
