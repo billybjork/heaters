@@ -264,7 +264,7 @@ def generate_embeddings_task(
 
             # 6. Setup Temp Dir & Download
             if not s3_client: raise RuntimeError("S3 client unavailable.")
-            temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"meatspace_embed_{clip_id}_")
+            temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"heaters_embed_{clip_id}_")
             temp_dir = Path(temp_dir_obj.name)
             logger.info(f"Using temporary directory: {temp_dir}")
 

@@ -328,7 +328,7 @@ def extract_keyframes_task(
         if not s3_client: raise RuntimeError("S3 client unavailable.")
 
         try:
-            temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"meatspace_keyframe_{clip_id}_")
+            temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"heaters_keyframe_{clip_id}_")
             temp_dir = Path(temp_dir_obj.name)
             logger.info(f"Using temporary directory: {temp_dir}")
 

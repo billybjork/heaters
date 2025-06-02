@@ -320,7 +320,7 @@ def splice_video_task(source_video_id: int):
                 raise # Re-raise to be caught by main handler
 
         # === Main Processing ===
-        temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"meatspace_splice_{source_video_id}_")
+        temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"heaters_splice_{source_video_id}_")
         temp_dir = Path(temp_dir_obj.name)
         logger.info(f"Using temporary directory: {temp_dir}")
 

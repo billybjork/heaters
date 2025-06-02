@@ -252,7 +252,7 @@ def intake_task(source_video_id: int,
             # Advisory lock is also released by commit.
 
         # === Core Processing in Temporary Directory ===
-        temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"meatspace_intake_{source_video_id}_")
+        temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"heaters_intake_{source_video_id}_")
         temp_dir = Path(temp_dir_obj.name)
         logger.info(f"Using temporary directory: {temp_dir}")
 

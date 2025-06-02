@@ -132,7 +132,7 @@ def split_clip_task(clip_id: int):
         if conn is None:
             raise ConnectionError("Failed to get database connection.")
         conn.autocommit = False
-        temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"meatspace_split_{clip_id}_")
+        temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"heaters_split_{clip_id}_")
         temp_dir = Path(temp_dir_obj.name)
         logger.info(f"Using temporary directory: {temp_dir}")
 
@@ -204,7 +204,7 @@ def split_clip_task(clip_id: int):
 
             if ffprobe_path and original_clip_s3_path:
                 try:
-                    probe_dir = tempfile.TemporaryDirectory(prefix=f"meatspace_split_probe_{clip_id}_")
+                    probe_dir = tempfile.TemporaryDirectory(prefix=f"heaters_split_probe_{clip_id}_")
                     local_probe_path = Path(probe_dir.name) / Path(original_clip_s3_path).name
                     logger.info(f"Downloading clip for FPS probe: {original_clip_s3_path}")
                     s3_client.download_file(S3_BUCKET_NAME, original_clip_s3_path, str(local_probe_path))

@@ -150,7 +150,7 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int):
         if source_title is None: # Add a check just in case assignment failed silently (shouldn't happen)
             raise RuntimeError("Source title could not be determined before processing.")
         
-        temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"meatspace_merge_")
+        temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"heaters_merge_")
         temp_dir = Path(temp_dir_obj.name)
         logger.info(f"Using temporary directory: {temp_dir}")
 

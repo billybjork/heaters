@@ -7,7 +7,7 @@ load_dotenv(dotenv_path=dotenv_path)
 print(f"Attempted loading .env from: {dotenv_path}")
 
 # --- Logging Setup ---
-log = logging.getLogger("meatspace_api") # Specific logger name for the API
+log = logging.getLogger("heaters_api") # Specific logger name for the API
 if not log.hasHandlers():
     handler = logging.StreamHandler()
     # Logging format

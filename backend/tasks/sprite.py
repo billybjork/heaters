@@ -202,7 +202,7 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False):
         clip_s3_key = clip_data['clip_filepath']
         clip_identifier = clip_data['clip_identifier'] # Used for filename generation
 
-        temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"meatspace_spritegen_{clip_id}_")
+        temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"heaters_spritegen_{clip_id}_")
         temp_dir = Path(temp_dir_obj.name)
         local_clip_path = temp_dir / Path(clip_s3_key).name # Use Path object methods
 

@@ -1,5 +1,5 @@
 # Generic project metadata
-name: meatspace-ingest
+name: heaters-ingest
 prefect-version: 3
 
 # Define how deployments are built (using `prefect deploy --all`)
