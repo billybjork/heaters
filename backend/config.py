@@ -42,7 +42,11 @@ S3_PROD_BUCKET_NAME = os.getenv("S3_PROD_BUCKET_NAME")
 AWS_REGION = os.getenv("AWS_REGION", "us-west-1") # Default if not set
 
 # CloudFront - kept for compatibility, ensure it's set if used elsewhere
-CLOUDFRONT_DOMAIN = os.getenv("CLOUDFRONT_DOMAIN")
+# CLOUDFRONT_DOMAIN = os.getenv("CLOUDFRONT_DOMAIN") # Will be replaced by dynamic getter
+
+# CloudFront Domains (New)
+CLOUDFRONT_DEV_DOMAIN = os.getenv("CLOUDFRONT_DEV_DOMAIN")
+CLOUDFRONT_PROD_DOMAIN = os.getenv("CLOUDFRONT_PROD_DOMAIN")
 
 
 # --- Input Validation (for critical startup configs) ---
@@ -57,9 +61,15 @@ if not PROD_DATABASE_URL:
 
 
 # CLOUDFRONT_DOMAIN validation can remain if it's critical for other parts of app startup
-if not CLOUDFRONT_DOMAIN:
-    config_logger.critical("FATAL: CLOUDFRONT_DOMAIN not found. Relevant functionalities will fail.")
-    raise ValueError("CLOUDFRONT_DOMAIN not found in environment variables.")
+# if not CLOUDFRONT_DOMAIN: # Old validation, will be handled by get_cloudfront_domain
+#     config_logger.critical("FATAL: CLOUDFRONT_DOMAIN not found. Relevant functionalities will fail.")
+#     raise ValueError("CLOUDFRONT_DOMAIN not found in environment variables.")
+
+# New validation for environment-specific CloudFront domains
+if not CLOUDFRONT_DEV_DOMAIN:
+    config_logger.warning("CLOUDFRONT_DEV_DOMAIN is not set. 'development' CloudFront URLs may be incorrect.")
+if not CLOUDFRONT_PROD_DOMAIN:
+    config_logger.warning("CLOUDFRONT_PROD_DOMAIN is not set. 'production' CloudFront URLs may be incorrect.")
 
 # Basic check for S3 bucket names at load time (get_s3_resources will do more specific checks)
 if not S3_DEV_BUCKET_NAME:
@@ -166,6 +176,42 @@ def get_s3_resources(environment: str, logger: logging.Logger = None):
         log.error(err_msg, exc_info=True) # Include stack trace for unexpected errors
         raise RuntimeError(err_msg) from e
 
+# --- Utility Function for CloudFront Domain ---
+def get_cloudfront_domain(environment: str, logger: logging.Logger = None) -> str:
+    """
+    Provides the CloudFront domain based on the specified environment.
+
+    Args:
+        environment (str): The execution environment, e.g., "development" or "production".
+        logger (logging.Logger, optional): Logger to use. Defaults to config_logger.
+
+    Returns:
+        str: The CloudFront domain.
+
+    Raises:
+        ValueError: If the CloudFront domain for the environment is missing.
+    """
+    log = logger if logger else config_logger
+    cloudfront_domain_val = None
+
+    if environment == "production":
+        cloudfront_domain_val = CLOUDFRONT_PROD_DOMAIN
+        log.info(f"Using PRODUCTION CloudFront Domain: {cloudfront_domain_val} (is set: {bool(cloudfront_domain_val)})")
+    elif environment == "development":
+        cloudfront_domain_val = CLOUDFRONT_DEV_DOMAIN
+        log.info(f"Using DEVELOPMENT CloudFront Domain: {cloudfront_domain_val} (is set: {bool(cloudfront_domain_val)})")
+    else:
+        log.warning(f"Unknown environment '{environment}' specified for CloudFront domain. Defaulting to DEVELOPMENT.")
+        cloudfront_domain_val = CLOUDFRONT_DEV_DOMAIN # Default to dev for unknown environments
+        log.info(f"Using DEVELOPMENT CloudFront Domain for unknown env '{environment}': {cloudfront_domain_val} (is set: {bool(cloudfront_domain_val)})")
+
+    if not cloudfront_domain_val:
+        err_msg = f"CloudFront domain not configured for environment '{environment}'. Check CLOUDFRONT_DEV_DOMAIN/CLOUDFRONT_PROD_DOMAIN."
+        log.error(err_msg)
+        raise ValueError(err_msg)
+    
+    return cloudfront_domain_val
+
 
 # --- Log Loaded Configuration ---
 config_logger.info("--- Backend Configuration Loaded ---")
@@ -175,7 +221,9 @@ config_logger.info(f"PROD_DATABASE_URL (first 15 chars): {PROD_DATABASE_URL[:15]
 config_logger.info(f"S3_DEV_BUCKET_NAME: {S3_DEV_BUCKET_NAME}")
 config_logger.info(f"S3_PROD_BUCKET_NAME: {S3_PROD_BUCKET_NAME}")
 config_logger.info(f"AWS_REGION: {AWS_REGION}")
-config_logger.info(f"CLOUDFRONT_DOMAIN: {CLOUDFRONT_DOMAIN}")
+# config_logger.info(f"CLOUDFRONT_DOMAIN: {CLOUDFRONT_DOMAIN}") # Old logging
+config_logger.info(f"CLOUDFRONT_DEV_DOMAIN: {CLOUDFRONT_DEV_DOMAIN}")
+config_logger.info(f"CLOUDFRONT_PROD_DOMAIN: {CLOUDFRONT_PROD_DOMAIN}")
 config_logger.info(f"Default Model: {DEFAULT_MODEL_NAME}")
 config_logger.info(f"Default Strategy: {DEFAULT_GENERATION_STRATEGY}")
 config_logger.info(f"Number of Results: {NUM_RESULTS}")

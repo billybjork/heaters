@@ -22,26 +22,26 @@ current_cloudfront_domain =
     "development" ->
       # In local dev (docker-compose with APP_ENV="development"), expect CLOUDFRONT_DEV_DOMAIN from .env.
       System.get_env("CLOUDFRONT_DEV_DOMAIN") ||
-        (IO.puts(:stderr, "Warning: CLOUDFRONT_DEV_DOMAIN not set for APP_ENV=development. Falling back to generic CLOUDFRONT_DOMAIN or localhost.")
-         System.get_env("CLOUDFRONT_DOMAIN") || "http://localhost:4000") # Fallback for dev
+        raise "CLOUDFRONT_DEV_DOMAIN not set for APP_ENV=development. Please set it in your .env file."
     "production" ->
       # In production (Render with APP_ENV="production"), expect CLOUDFRONT_PROD_DOMAIN.
-      # Fallback to CLOUDFRONT_DOMAIN which MUST be set on Render for prod.
       System.get_env("CLOUDFRONT_PROD_DOMAIN") ||
-        System.fetch_env!("CLOUDFRONT_DOMAIN") # CLOUDFRONT_DOMAIN must be set on Render (pointing to prod CF)
+        raise "CLOUDFRONT_PROD_DOMAIN not set for APP_ENV=production. Please set it in your Render environment variables."
     _ ->
       # APP_ENV not "development" or "production" (e.g., nil during compile time or local mix outside Docker).
-      # Fallback based on MIX_ENV and generic CLOUDFRONT_DOMAIN.
+      # This case should ideally not be hit if APP_ENV is always correctly set.
+      # For safety during build or other contexts, try to infer, but log a significant warning.
       effective_mix_env = config_env()
-      IO.puts(:stderr, "Warning: APP_ENV is '#{app_env_string || "not set"}'. Inferring CloudFront domain using MIX_ENV=#{effective_mix_env}.")
-      if effective_mix_env == :prod do
-        # Likely a prod build context (MIX_ENV=prod) without APP_ENV explicitly set.
-        # CLOUDFRONT_DOMAIN should be available (e.g., from build env or .env sourced by build).
-        System.fetch_env!("CLOUDFRONT_DOMAIN")
-      else
-        # Dev context (MIX_ENV=dev) outside Docker, or other.
-        # Use CLOUDFRONT_DOMAIN from .env (if sourced by shell/direnv) or a default.
-        System.get_env("CLOUDFRONT_DOMAIN") || "http://localhost:4000"
+      IO.puts(:stderr, "Critical Warning: APP_ENV is '#{app_env_string || "not set"}'. Attempting to infer CloudFront domain using MIX_ENV=#{effective_mix_env}, but this is not recommended. Ensure APP_ENV is correctly set to 'development' or 'production'.")
+      cond do
+        effective_mix_env == :prod ->
+          System.get_env("CLOUDFRONT_PROD_DOMAIN") ||
+            raise "CLOUDFRONT_PROD_DOMAIN not set, and APP_ENV was not 'production' during a :prod mix_env context."
+        effective_mix_env == :dev ->
+          System.get_env("CLOUDFRONT_DEV_DOMAIN") ||
+            raise "CLOUDFRONT_DEV_DOMAIN not set, and APP_ENV was not 'development' during a :dev mix_env context."
+        true -> # Default fallback if MIX_ENV is also something unexpected
+          raise "Cannot determine CloudFront domain: APP_ENV is '#{app_env_string || "not set"}' and MIX_ENV is '#{effective_mix_env}'. Please check your environment configuration."
       end
   end
 config :frontend, :cloudfront_domain, current_cloudfront_domain

@@ -378,7 +378,8 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
     logger = get_run_logger()
     # Determine the operating environment from the parameter, or the worker's APP_ENV as a fallback.
     effective_env = environment if environment else os.getenv("APP_ENV", "development")
-    logger.info(f"INITIATOR FLOW: Running in environment: '{effective_env}'. Provided param: '{environment}', Worker APP_ENV fallback: '{os.getenv("APP_ENV")}'.")
+    worker_app_env_actual = os.getenv("APP_ENV", "<APP_ENV not set>") # Store for logging
+    logger.info(f"INITIATOR FLOW: Running in environment: '{effective_env}'. Provided param: '{environment}', Worker actual APP_ENV: '{worker_app_env_actual}'.")
 
     # Initialize DB pool for the determined environment *once* per flow run if not already done
     try:

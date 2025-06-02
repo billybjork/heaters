@@ -242,7 +242,7 @@ def get_all_pending_work(environment: str, limit_per_stage: int = 50) -> List[Di
         conn = get_db_connection(environment, cursor_factory=RealDictCursor)
         with conn:
             with conn.cursor() as cur:
-                query = sql.SQL(\"\"\"
+                query = sql.SQL("""
                     (SELECT id, 'intake'       AS stage FROM source_videos WHERE ingest_state = %s ORDER BY id LIMIT %s)
                     UNION ALL
                     (SELECT id, 'splice'       AS stage FROM source_videos WHERE ingest_state = %s ORDER BY id LIMIT %s)
@@ -252,7 +252,7 @@ def get_all_pending_work(environment: str, limit_per_stage: int = 50) -> List[Di
                     (SELECT id, 'post_review'  AS stage FROM clips         WHERE ingest_state = %s ORDER BY id LIMIT %s)
                     UNION ALL
                     (SELECT id, 'embedding'    AS stage FROM clips         WHERE ingest_state = %s ORDER BY id LIMIT %s)
-                \"\"\")
+                """)
                 params = [
                     "new", limit_per_stage,
                     "downloaded", limit_per_stage,
@@ -310,7 +310,7 @@ def get_pending_merge_pairs(environment: str) -> List[Tuple[int, int]]:
         conn = get_db_connection(environment, cursor_factory=RealDictCursor)
         with conn:
             with conn.cursor() as cur:
-                query = sql.SQL(\"\"\"
+                query = sql.SQL("""
                     SELECT
                         t.id AS target_id,
                         (t.processing_metadata ->> 'merge_source_clip_id')::int AS source_id
@@ -318,7 +318,7 @@ def get_pending_merge_pairs(environment: str) -> List[Tuple[int, int]]:
                     JOIN clips s ON s.id = (t.processing_metadata ->> 'merge_source_clip_id')::int
                     WHERE t.ingest_state = 'pending_merge_target'
                       AND s.ingest_state = 'marked_for_merge_into_previous';
-                \"\"\")
+                """)
                 task_log.debug(f"Fetching pending merge pairs (env: {environment})...")
                 cur.execute(query)
                 pairs = [(row["target_id"], row["source_id"]) for row in cur.fetchall()]
@@ -344,13 +344,13 @@ def get_pending_split_jobs(environment: str) -> List[Tuple[int, int]]:
         conn = get_db_connection(environment, cursor_factory=RealDictCursor)
         with conn:
             with conn.cursor() as cur:
-                query = sql.SQL(\"\"\"
+                query = sql.SQL("""
                     SELECT id,
                            (processing_metadata ->> 'split_request_at_frame')::int AS split_frame
                     FROM clips
                     WHERE ingest_state = 'pending_split'
                       AND processing_metadata ? 'split_request_at_frame';
-                \"\"\")
+                """)
                 task_log.debug(f"Fetching pending split jobs (env: {environment})...")
                 cur.execute(query)
                 fetched_rows = cur.fetchall()

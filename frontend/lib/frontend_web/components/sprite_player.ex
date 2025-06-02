@@ -39,7 +39,7 @@ defmodule FrontendWeb.SpritePlayer do
 
     ~H"""
     <div class="clip-display-container" style={"width: #{@meta["tile_width"]}px;"}>
-      
+
       <div
         id={"viewer-#{@clip.id}"}
         phx-hook="SpritePlayer"
@@ -156,8 +156,8 @@ defmodule FrontendWeb.SpritePlayer do
 
   defp cdn_url(key) do
     domain =
-      System.get_env("CLOUDFRONT_DOMAIN") ||
-        raise "CLOUDFRONT_DOMAIN environment variable is not set"
+      Application.get_env(:frontend, :cloudfront_domain) ||
+        raise "CloudFront domain not configured. Check runtime.exs and ensure CLOUDFRONT_DEV_DOMAIN or CLOUDFRONT_PROD_DOMAIN is set."
 
     "https://#{domain}/#{String.trim_leading(key, "/")}"
   end
