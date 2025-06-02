@@ -369,127 +369,123 @@ def process_clip_post_review(
 
 
 @flow(name="Scheduled Ingest Initiator", log_prints=True)
-def scheduled_ingest_initiator(limit_per_stage: int = 50):
+def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | None = None):
     """
     Main Prefect flow to periodically check for pending work across various ingest stages.
     The environment for this flow and the tasks it triggers is determined by the
-    APP_ENV of the worker running this flow.
+    explicit 'environment' parameter, falling back to the worker's APP_ENV if not provided.
     """
     logger = get_run_logger()
-    # Determine the operating environment from the worker's APP_ENV
-    # This means a worker designated for 'development' will process dev work,
-    # and a worker for 'production' will process prod work for scheduled tasks.
-    worker_app_env = os.getenv("APP_ENV", "development")
-    logger.info(f"INITIATOR FLOW: Running in environment: '{worker_app_env}' (derived from worker's APP_ENV).")
+    # Determine the operating environment from the parameter, or the worker's APP_ENV as a fallback.
+    effective_env = environment if environment else os.getenv("APP_ENV", "development")
+    logger.info(f"INITIATOR FLOW: Running in environment: '{effective_env}'. Provided param: '{environment}', Worker APP_ENV fallback: '{os.getenv("APP_ENV")}'.")
 
     # Initialize DB pool for the determined environment *once* per flow run if not already done
     try:
-        logger.info(f"Initializing DB pool for environment: '{worker_app_env}' in initiator flow...")
-        initialize_db_pool(environment=worker_app_env)
-        logger.info(f"DB pool for '{worker_app_env}' should be initialized.")
+        logger.info(f"Initializing DB pool for environment: '{effective_env}' in initiator flow...")
+        initialize_db_pool(environment=effective_env)
+        logger.info(f"DB pool for '{effective_env}' should be initialized.")
     except Exception as pool_init_err:
-        logger.error(f"Failed to initialize DB pool for '{worker_app_env}' in initiator: {pool_init_err}", exc_info=True)
-        # Depending on severity, might want to raise or return to prevent further execution
-        # For now, let it proceed, subsequent DB calls will likely fail clearly.
+        logger.error(f"Failed to initialize DB pool for '{effective_env}' in initiator: {pool_init_err}", exc_info=True)
+        raise # Critical failure, cannot proceed without DB pool
 
     submitted_this_cycle = 0
 
     # --- 1. Commit Review Actions ---
-    logger.info("INITIATOR: Checking for review actions to commit...")
+    logger.info(f"INITIATOR ('{effective_env}'): Checking for review actions to commit...")
     try:
-        committed_count = _commit_pending_review_actions(environment=worker_app_env, grace_period_seconds=ACTION_COMMIT_GRACE_PERIOD_SECONDS)
-        logger.info(f"Committed {committed_count} review actions in '{worker_app_env}'.")
+        committed_count = _commit_pending_review_actions(environment=effective_env, grace_period_seconds=ACTION_COMMIT_GRACE_PERIOD_SECONDS)
+        logger.info(f"Committed {committed_count} review actions in '{effective_env}'.")
     except Exception as e_commit:
-        logger.error(f"Error committing review actions in '{worker_app_env}': {e_commit}", exc_info=True)
+        logger.error(f"Error committing review actions in '{effective_env}': {e_commit}", exc_info=True)
 
     # --- 2. Process Pending Merge Pairs (before general work to prioritize merges) ---
     if submitted_this_cycle < MAX_NEW_SUBMISSIONS_PER_CYCLE:
-        logger.info("INITIATOR: Checking for pending merge pairs...")
+        logger.info(f"INITIATOR ('{effective_env}'): Checking for pending merge pairs...")
         try:
-            pending_merges = get_pending_merge_pairs(environment=worker_app_env)
+            pending_merges = get_pending_merge_pairs(environment=effective_env)
             if pending_merges:
-                logger.info(f"Found {len(pending_merges)} merge pairs to process in '{worker_app_env}'.")
+                logger.info(f"Found {len(pending_merges)} merge pairs to process in '{effective_env}'.")
                 for target_id, source_id in pending_merges:
                     if submitted_this_cycle >= MAX_NEW_SUBMISSIONS_PER_CYCLE:
-                        logger.info(f"Reached max submissions ({MAX_NEW_SUBMISSIONS_PER_CYCLE}), deferring further merge tasks.")
+                        logger.info(f"Reached max submissions ({MAX_NEW_SUBMISSIONS_PER_CYCLE}), deferring further merge tasks for '{effective_env}'.")
                         break
                     try:
-                        logger.info(f"Submitting merge_clips_task for target {target_id}, source {source_id} in '{worker_app_env}'.")
-                        merge_clips_task.submit(clip_id_target=target_id, clip_id_source=source_id, environment=worker_app_env)
+                        logger.info(f"Submitting merge_clips_task for target {target_id}, source {source_id} in '{effective_env}'.")
+                        merge_clips_task.submit(clip_id_target=target_id, clip_id_source=source_id, environment=effective_env)
                         submitted_this_cycle += 1
                         time.sleep(TASK_SUBMIT_DELAY) # Small delay
                     except Exception as e_merge_submit:
-                        logger.error(f"Failed to submit merge_clips_task for target {target_id}, source {source_id} in '{worker_app_env}': {e_merge_submit}", exc_info=True)
+                        logger.error(f"Failed to submit merge_clips_task for target {target_id}, source {source_id} in '{effective_env}': {e_merge_submit}", exc_info=True)
             else:
-                logger.info("No pending merge pairs found.")
+                logger.info(f"No pending merge pairs found in '{effective_env}'.")
         except Exception as e_get_merges:
-            logger.error(f"Error fetching pending merge pairs in '{worker_app_env}': {e_get_merges}", exc_info=True)
+            logger.error(f"Error fetching pending merge pairs in '{effective_env}': {e_get_merges}", exc_info=True)
 
     # --- 3. Process Pending Split Jobs (before general work to prioritize splits) ---
     if submitted_this_cycle < MAX_NEW_SUBMISSIONS_PER_CYCLE:
-        logger.info("INITIATOR: Checking for pending split jobs...")
+        logger.info(f"INITIATOR ('{effective_env}'): Checking for pending split jobs...")
         try:
-            pending_splits = get_pending_split_jobs(environment=worker_app_env) # Pass environment
+            pending_splits = get_pending_split_jobs(environment=effective_env) # Pass environment
             if pending_splits:
-                logger.info(f"Found {len(pending_splits)} split jobs to process in '{worker_app_env}'.")
+                logger.info(f"Found {len(pending_splits)} split jobs to process in '{effective_env}'.")
                 for original_clip_id, split_frame in pending_splits: # Assuming get_pending_split_jobs returns this tuple
                     if submitted_this_cycle >= MAX_NEW_SUBMISSIONS_PER_CYCLE:
-                        logger.info(f"Reached max submissions ({MAX_NEW_SUBMISSIONS_PER_CYCLE}), deferring further split tasks.")
+                        logger.info(f"Reached max submissions ({MAX_NEW_SUBMISSIONS_PER_CYCLE}), deferring further split tasks for '{effective_env}'.")
                         break
                     try:
-                        logger.info(f"Submitting split_clip_task for original clip {original_clip_id} at frame {split_frame} in '{worker_app_env}'.")
-                        # The split_clip_task itself reads the split_at_frame from metadata, so we just pass the clip_id.
-                        split_clip_task.submit(clip_id=original_clip_id, environment=worker_app_env)
+                        logger.info(f"Submitting split_clip_task for original clip {original_clip_id} at frame {split_frame} in '{effective_env}'.")
+                        split_clip_task.submit(clip_id=original_clip_id, environment=effective_env)
                         submitted_this_cycle += 1
                         time.sleep(TASK_SUBMIT_DELAY)
                     except Exception as e_split_submit:
-                        logger.error(f"Failed to submit split_clip_task for clip {original_clip_id} in '{worker_app_env}': {e_split_submit}", exc_info=True)
+                        logger.error(f"Failed to submit split_clip_task for clip {original_clip_id} in '{effective_env}': {e_split_submit}", exc_info=True)
             else:
-                logger.info("No pending split jobs found.")
+                logger.info(f"No pending split jobs found in '{effective_env}'.")
         except Exception as e_get_splits:
-            logger.error(f"Error fetching pending split jobs in '{worker_app_env}': {e_get_splits}", exc_info=True)
+            logger.error(f"Error fetching pending split jobs in '{effective_env}': {e_get_splits}", exc_info=True)
 
     # --- 4. Process General Pending Work (Intake, Splice, Post-Review) ---
-    logger.info("INITIATOR: Checking for general pending work (intake, splice, post-review)...")
+    logger.info(f"INITIATOR ('{effective_env}'): Checking for general pending work (intake, splice, post-review)...")
     try:
-        items_to_process = get_all_pending_work(environment=worker_app_env, limit_per_stage=limit_per_stage)
-        logger.info(f"Found {len(items_to_process)} general pending work items in '{worker_app_env}'.")
+        items_to_process = get_all_pending_work(environment=effective_env, limit_per_stage=limit_per_stage)
+        logger.info(f"Found {len(items_to_process)} general pending work items in '{effective_env}'.")
 
         if not items_to_process:
-            logger.info("No pending work found across any stage.")
+            logger.info(f"No pending work found across any stage in '{effective_env}'.")
         else:
             for item in items_to_process:
                 if submitted_this_cycle >= MAX_NEW_SUBMISSIONS_PER_CYCLE:
-                    logger.info(f"Reached max submissions ({MAX_NEW_SUBMISSIONS_PER_CYCLE}), deferring further tasks.")
+                    logger.info(f"Reached max submissions ({MAX_NEW_SUBMISSIONS_PER_CYCLE}), deferring further tasks for '{effective_env}'.")
                     break
 
                 item_id = item.get('id')
                 stage = item.get('stage')
-                logger.info(f"Processing item ID: {item_id}, Stage: {stage} in '{worker_app_env}'")
+                logger.info(f"Processing item ID: {item_id}, Stage: {stage} in '{effective_env}'")
 
                 try:
                     if stage == 'intake':
-                        input_val = get_source_input_from_db(source_video_id=item_id, environment=worker_app_env)
+                        input_val = get_source_input_from_db(source_video_id=item_id, environment=effective_env)
                         if input_val:
-                            logger.info(f"Submitting intake_task for source_video_id {item_id} with input '{input_val[:50]}...' in '{worker_app_env}'")
-                            intake_task.submit(source_video_id=item_id, input_source=input_val, environment=worker_app_env)
+                            logger.info(f"Submitting intake_task for source_video_id {item_id} with input '{input_val[:50]}...' in '{effective_env}'")
+                            intake_task.submit(source_video_id=item_id, input_source=input_val, environment=effective_env)
                             submitted_this_cycle += 1
                         else:
-                            logger.warning(f"Skipping intake for source_video_id {item_id}: No input_source found in DB (env: '{worker_app_env}').")
-                            update_source_video_state_sync(environment=worker_app_env, source_video_id=item_id, new_state='download_failed', error_message='Missing input_source in DB')
+                            logger.warning(f"Skipping intake for source_video_id {item_id}: No input_source found in DB (env: '{effective_env}').")
+                            update_source_video_state_sync(environment=effective_env, source_video_id=item_id, new_state='download_failed', error_message='Missing input_source in DB')
 
                     elif stage == 'splice':
-                        logger.info(f"Submitting splice_video_task for source_video_id {item_id} in '{worker_app_env}'.")
-                        splice_video_task.submit(source_video_id=item_id, environment=worker_app_env)
+                        logger.info(f"Submitting splice_video_task for source_video_id {item_id} in '{effective_env}'.")
+                        splice_video_task.submit(source_video_id=item_id, environment=effective_env)
                         submitted_this_cycle += 1
 
                     elif stage == 'sprite': # This was 'sprite' from get_all_pending_work, now interpreted as post-review
-                        logger.info(f"Submitting process_clip_post_review deployment for clip_id {item_id} in '{worker_app_env}'.")
+                        logger.info(f"Submitting process_clip_post_review deployment for clip_id {item_id} in '{effective_env}'.")
                         run_deployment(
                             name="process-clip-post-review/process-clip-post-review-default",
                             parameters={
                                 "clip_id": item_id,
-                                "environment": worker_app_env # Pass the determined environment
+                                "environment": effective_env # Pass the determined environment
                             },
                             timeout=0 # Fire and forget
                         )
@@ -500,21 +496,20 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
                     time.sleep(TASK_SUBMIT_DELAY) # Small delay after each submission
 
                 except psycopg2.Error as db_err_item_processing: # Catch DB errors specific to item processing
-                    logger.error(f"Database error processing item ID {item_id}, Stage {stage} in '{worker_app_env}': {db_err_item_processing}", exc_info=True)
+                    logger.error(f"Database error processing item ID {item_id}, Stage {stage} in '{effective_env}': {db_err_item_processing}", exc_info=True)
                     # Optionally update state to failed for this specific item if appropriate
                 except Exception as e_item:
-                    logger.error(f"Error submitting task for item ID {item_id}, Stage {stage} in '{worker_app_env}': {e_item}", exc_info=True)
+                    logger.error(f"Error submitting task for item ID {item_id}, Stage {stage} in '{effective_env}': {e_item}", exc_info=True)
                     # Log and continue to next item
 
     except psycopg2.Error as db_err_main_loop:
-        logger.error(f"Database error in main processing loop of initiator (env '{worker_app_env}'): {db_err_main_loop}", exc_info=True)
-        # This might indicate a broader DB issue, consider if flow should retry or fail
+        logger.error(f"Database error in main processing loop of initiator (env '{effective_env}'): {db_err_main_loop}", exc_info=True)
+        raise # Critical failure
     except Exception as e_main:
-        logger.error(f"General error in scheduled_ingest_initiator (env '{worker_app_env}'): {e_main}", exc_info=True)
-        # Re-raise to make Prefect aware of the failure for the flow run
-        raise
+        logger.error(f"General error in scheduled_ingest_initiator (env '{effective_env}'): {e_main}", exc_info=True)
+        raise # Re-raise to make Prefect aware of the failure for the flow run
 
-    logger.info(f"INITIATOR FLOW: Finished processing cycle in '{worker_app_env}'. Submitted {submitted_this_cycle} tasks/deployments.")
+    logger.info(f"INITIATOR FLOW: Finished processing cycle in '{effective_env}'. Submitted {submitted_this_cycle} tasks/deployments.")
 
 
 # =============================================================================

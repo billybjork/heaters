@@ -7,8 +7,8 @@ build: null
 
 # Define deployments
 deployments:
-  - name: scheduled-ingest-dispatcher
-    description: Periodically checks DB for new ingest work and triggers tasks/flows.
+  - name: scheduled-ingest-dispatcher-dev
+    description: Periodically checks DEV DB for new ingest work and triggers tasks/flows.
     entrypoint: flows/ingest_flows.py:scheduled_ingest_initiator # Relative to /app inside container
     work_pool:
       name: default-agent-pool
@@ -16,11 +16,25 @@ deployments:
     schedule:
       interval: 60
       timezone: "UTC"
-    tags: ["ingest", "scheduled", "dispatcher"]
-    parameters: {}
+    tags: ["ingest", "scheduled", "dispatcher", "development"]
+    parameters: 
+      environment: "development"
 
-  - name: scheduled-clip-cleanup
-    description: Periodically cleans up sprites for approved/archived clips after a delay.
+  - name: scheduled-ingest-dispatcher-prod
+    description: Periodically checks PROD DB for new ingest work and triggers tasks/flows.
+    entrypoint: flows/ingest_flows.py:scheduled_ingest_initiator # Relative to /app inside container
+    work_pool:
+      name: default-agent-pool
+      work_queue_name: default
+    schedule:
+      interval: 60 # Can be same as dev, or different
+      timezone: "UTC"
+    tags: ["ingest", "scheduled", "dispatcher", "production"]
+    parameters:
+      environment: "production"
+
+  - name: scheduled-clip-cleanup-dev
+    description: Periodically cleans up sprites for approved/archived clips in DEV.
     entrypoint: flows/ingest_flows.py:cleanup_reviewed_clips_flow # Relative to /app
     work_pool:
       name: default-agent-pool
@@ -28,8 +42,22 @@ deployments:
     schedule:
       cron: "0 0 * * 0"  # Once a week, Sunday at 00:00 UTC
       timezone: "UTC"
-    tags: ["cleanup", "scheduled", "maintenance"]
-    parameters: {}
+    tags: ["cleanup", "scheduled", "maintenance", "development"]
+    parameters: 
+      environment: "development"
+
+  - name: scheduled-clip-cleanup-prod
+    description: Periodically cleans up sprites for approved/archived clips in PROD.
+    entrypoint: flows/ingest_flows.py:cleanup_reviewed_clips_flow # Relative to /app
+    work_pool:
+      name: default-agent-pool
+      work_queue_name: default
+    schedule:
+      cron: "5 0 * * 0"  # Once a week, Sunday at 00:05 UTC
+      timezone: "UTC"
+    tags: ["cleanup", "scheduled", "maintenance", "production"]
+    parameters:
+      environment: "production"
 
   - name: process-clip-post-review-default
     flow_name: process-clip-post-review
