@@ -33,9 +33,9 @@ try:
     from config import get_s3_resources # Import the new S3 utility function
 except ImportError as e:
     print(f"Error importing DB utils or config in embed.py: {e}")
-    def get_db_connection(): raise NotImplementedError("DB Utils not loaded")
-    def release_db_connection(conn): pass
-    def initialize_db_pool(): pass
+    def get_db_connection(environment: str, cursor_factory=None): raise NotImplementedError("DB Utils not loaded")
+    def release_db_connection(conn, environment: str): pass
+    def initialize_db_pool(environment: str): pass
     def get_s3_resources(environment: str, logger=None): raise NotImplementedError("S3 resource getter not loaded")
 
 # --- Environment Configuration ---
@@ -188,14 +188,14 @@ def generate_embeddings_task(
 
     # Explicitly initialize DB pool if needed
     try:
-        initialize_db_pool()
+        initialize_db_pool(environment)
     except Exception as pool_err:
-        logger.error(f"Failed to initialize DB pool at task start: {pool_err}")
-        raise RuntimeError("DB pool initialization failed") from pool_err
+        logger.error(f"Failed to initialize DB pool at task start for env '{environment}': {pool_err}")
+        raise RuntimeError(f"DB pool initialization failed for env '{environment}'") from pool_err
 
     try:
         # === Phase 1: Initial DB Check and State Update ===
-        conn = get_db_connection()
+        conn = get_db_connection(environment)
         conn.autocommit = False
 
         try:
@@ -409,26 +409,30 @@ def generate_embeddings_task(
 
     except (ValueError, FileNotFoundError, RuntimeError, ClientError, ImportError, NotImplementedError, psycopg2.DatabaseError) as e:
         # --- Main Error Handling ---
-        logger.error(f"TASK ERROR [Embedding]: clip_id {clip_id} - {e}", exc_info=True)
+        logger.error(f"TASK ERROR [Embedding]: clip_id {clip_id}, env '{environment}' - {e}", exc_info=True)
         final_status = final_status if final_status not in ["failed_init", "failed"] else "failed_processing"
         error_message_for_db = error_message_for_db or f"{type(e).__name__}: {str(e)[:500]}"
         task_exception = e
         if conn and needs_processing:
             try:
-                logger.warning(f"Attempting rollback and state update to 'embedding_failed' for clip {clip_id}.")
+                logger.warning(f"Attempting rollback and state update to 'embedding_failed' for clip {clip_id}, env '{environment}'.")
                 conn.rollback() # Ensure rollback happens before setting autocommit
                 conn.autocommit = True
                 with conn.cursor() as err_cur:
                     fail_update_sql = sql.SQL("UPDATE clips SET ingest_state = 'embedding_failed', last_error = %s, retry_count = COALESCE(retry_count, 0) + 1, updated_at = NOW() WHERE id = %s AND ingest_state IN ('embedding', 'keyframed');")
                     err_cur.execute(fail_update_sql, (error_message_for_db, clip_id))
-                logger.info(f"Attempted state update to 'embedding_failed' for clip {clip_id}.")
+                logger.info(f"Attempted state update to 'embedding_failed' for clip {clip_id}, env '{environment}'.")
             except Exception as db_fail_err:
-                logger.error(f"CRITICAL: Failed to update error state for clip {clip_id}: {db_fail_err}")
-        elif not conn: logger.error("DB connection unavailable for error state update.")
+                logger.error(f"CRITICAL: Failed to update error state for clip {clip_id}, env '{environment}': {db_fail_err}")
+            finally: # Ensure connection is released even if error update fails
+                if conn and not conn.closed:
+                    release_db_connection(conn, environment)
+                    conn = None # Prevent re-release in outer finally
+        elif not conn: logger.error(f"DB connection unavailable for error state update (clip {clip_id}, env '{environment}').")
 
     except Exception as e:
          # Catch unexpected errors
-         logger.error(f"UNEXPECTED TASK ERROR [Embedding]: clip_id {clip_id} - {e}", exc_info=True)
+         logger.error(f"UNEXPECTED TASK ERROR [Embedding]: clip_id {clip_id}, env '{environment}' - {e}", exc_info=True)
          final_status = "failed_unexpected"
          error_message_for_db = f"Unexpected:{type(e).__name__}: {str(e)[:480]}"
          task_exception = e
@@ -436,15 +440,19 @@ def generate_embeddings_task(
              try:
                 conn.rollback(); conn.autocommit = True
                 with conn.cursor() as err_cur: err_cur.execute(sql.SQL("UPDATE clips SET ingest_state = 'embedding_failed', last_error = %s, retry_count = COALESCE(retry_count, 0) + 1, updated_at = NOW() WHERE id = %s AND ingest_state IN ('embedding', 'keyframed');"), (error_message_for_db, clip_id))
-                logger.info(f"Attempted state update to 'embedding_failed' after unexpected error.")
-             except Exception as db_fail_err: logger.error(f"CRITICAL: Failed to update error state for clip {clip_id}: {db_fail_err}")
+                logger.info(f"Attempted state update to 'embedding_failed' after unexpected error (clip {clip_id}, env '{environment}').")
+             except Exception as db_fail_err: logger.error(f"CRITICAL: Failed to update error state for clip {clip_id}, env '{environment}': {db_fail_err}")
+             finally: # Ensure connection is released
+                if conn and not conn.closed:
+                    release_db_connection(conn, environment)
+                    conn = None # Prevent re-release in outer finally 
 
     finally:
         # --- Final Actions ---
-        if conn:
-            conn.autocommit = True
-            release_db_connection(conn)
-            logger.debug(f"DB connection released for clip_id: {clip_id}")
+        if conn and not conn.closed: # Check if conn still exists and is not closed
+            conn.autocommit = True # Ensure autocommit is on before releasing
+            release_db_connection(conn, environment)
+            logger.debug(f"DB connection released for clip_id: {clip_id}, env '{environment}'.")
         if temp_dir_obj:
             try: shutil.rmtree(temp_dir, ignore_errors=True); logger.info(f"Cleaned up temp dir: {temp_dir}")
             except Exception as cleanup_err: logger.warning(f"Error cleaning temp dir {temp_dir}: {cleanup_err}")

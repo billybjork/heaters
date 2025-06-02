@@ -52,10 +52,10 @@ services:
       # --- S3 & CloudFront (Generic Fallbacks - app-secrets group provides _PROD_ versions) ---
       # runtime.exs will use S3_PROD_BUCKET_NAME and CLOUDFRONT_PROD_DOMAIN from app-secrets.
       # These are fallbacks if those specific vars weren't found.
-      - key: S3_BUCKET_NAME
-        value: "heaters-prod"
-      - key: CLOUDFRONT_DOMAIN
-        value: "d25r6bb79rag3x.cloudfront.net"
+      - key: S3_PROD_BUCKET_NAME # Explicitly define for clarity, value from app-secrets or Render UI
+        value: "heaters-prod" # Replace with your actual prod bucket name if different, or ensure app-secrets has it
+      - key: CLOUDFRONT_PROD_DOMAIN # Explicitly define for clarity
+        value: "d25r6bb79rag3x.cloudfront.net" # Replace with your actual prod CF domain, or ensure app-secrets has it
 
       # --- Prefect API Interaction (for Phoenix) ---
       # Since your Prefect backend is currently local (via docker-compose),

@@ -7,6 +7,7 @@ import time
 import re
 import sys
 import json
+from datetime import datetime
 
 from prefect import task, get_run_logger
 import psycopg2
@@ -18,12 +19,13 @@ try:
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
-    from db.sync_db import get_db_connection, release_db_connection
+    from db.sync_db import get_db_connection, release_db_connection, update_clip_state_sync
     from config import get_s3_resources # Import the new S3 utility function
 except ImportError as e:
     print(f"ERROR importing db_utils or config in split.py: {e}")
-    def get_db_connection(cursor_factory=None): raise NotImplementedError("Dummy DB connection")
-    def release_db_connection(conn): pass
+    def get_db_connection(environment: str, cursor_factory=None): raise NotImplementedError("Dummy DB connection")
+    def release_db_connection(conn, environment: str): pass
+    def update_clip_state_sync(environment: str, clip_id: int, new_state: str, error_message: str | None = None): pass
     def get_s3_resources(environment: str, logger=None): raise NotImplementedError("Dummy S3 resource getter")
 
 # Module-level constants that are not S3 client/bucket specific
@@ -102,7 +104,7 @@ def split_clip_task(clip_id: int, environment: str = "development"):
         logger.warning("ffprobe not found. FPS calculation might be less accurate.")
 
     try:
-        conn = get_db_connection()
+        conn = get_db_connection(environment, cursor_factory=extras.DictCursor)
         if conn is None:
             raise ConnectionError("Failed to get database connection.")
         conn.autocommit = False
@@ -345,7 +347,7 @@ def split_clip_task(clip_id: int, environment: str = "development"):
         logger.error(f"TASK FAILED [Split]: clip {clip_id} - {e}", exc_info=True)
         # Attempt error-state update
         try:
-            error_conn = get_db_connection()
+            error_conn = get_db_connection(environment, cursor_factory=extras.DictCursor)
             if error_conn:
                 error_conn.autocommit = True
                 with error_conn.cursor() as er_cur:
@@ -361,7 +363,7 @@ def split_clip_task(clip_id: int, environment: str = "development"):
                         """,
                         (err_msg, clip_id)
                     )
-                release_db_connection(error_conn)
+                release_db_connection(error_conn, environment)
         except Exception as db_err:
             logger.error(f"Failed error-state update: {db_err}", exc_info=True)
         raise
@@ -372,7 +374,7 @@ def split_clip_task(clip_id: int, environment: str = "development"):
                 conn.rollback()
             except Exception:
                 pass
-            release_db_connection(conn)
+            release_db_connection(conn, environment)
         if temp_dir_obj:
             try:
                 shutil.rmtree(temp_dir)

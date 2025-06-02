@@ -4,39 +4,61 @@ import asyncio
 import json
 import logging
 import os
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional, Dict
 from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
+import sys # For sys.path modification in fallback
 
 import asyncpg
+
+# --- Local Imports ---\n# Attempt to import get_database_url from config
+try:
+    from config import get_database_url
+except ImportError:
+    # Fallback for local testing if config.py is not directly in sys.path
+    sys_path_modified = False
+    try:
+        project_root_for_config = Path(__file__).resolve().parent.parent # backend/
+        if str(project_root_for_config) not in sys.path:
+            sys.path.insert(0, str(project_root_for_config))
+            sys_path_modified = True
+        from config import get_database_url
+    except ImportError as e:
+        print(f"ERROR importing get_database_url from config in async_db.py: {e}")
+        def get_database_url(environment: str, logger=None) -> str:
+            raise NotImplementedError("Dummy get_database_url in async_db.py")
+    finally:
+        if sys_path_modified: # Clean up sys.path if we modified it
+            if sys.path[0] == str(project_root_for_config): # Basic check
+                 sys.path.pop(0)
+
 
 # --- Configuration ---
 # Use standard logging
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)  # Adjust level as needed
 
-# Load .env from project root so DATABASE_URL is available here
-project_root = Path(__file__).resolve().parents[2]
-load_dotenv(project_root / ".env")
+# Load .env from project root (less critical now, but kept for potential direct use)
+# project_root_env_load = Path(__file__).resolve().parents[2] # heaters/src/backend/db/async_db.py
+# load_dotenv(project_root_env_load / ".env")
 
-# Get Application DB URL from environment (set by docker-compose or .env)
-DATABASE_URL = os.getenv("DATABASE_URL")
+# DATABASE_URL = os.getenv("DATABASE_URL") # This is now dynamic
 
 # Define pool size constants (can also get from os.getenv if preferred)
-MIN_POOL_SIZE = int(os.getenv("MIN_POOL_SIZE", 1))
-MAX_POOL_SIZE = int(os.getenv("MAX_POOL_SIZE", 10))
+MIN_POOL_SIZE = int(os.getenv("MIN_ASYNC_POOL_SIZE", 1)) # Renamed for clarity
+MAX_POOL_SIZE = int(os.getenv("MAX_ASYNC_POOL_SIZE", 10)) # Renamed for clarity
 
-# --- Internal State ---
-_pool: asyncpg.Pool | None = None  # Module-level variable for the pool
-_pool_lock = asyncio.Lock()        # Lock to prevent race conditions during pool creation
+# --- Internal State for Environment-Specific Pools ---
+_env_async_pools: Dict[str, asyncpg.Pool] = {}
+_env_pool_locks: Dict[str, asyncio.Lock] = {} # One lock per environment pool
 
 
 # --- Initialization for new connections ---
 async def _init_connection(conn: asyncpg.Connection):
     """Initialize new connection settings, register JSON/JSONB codecs."""
     # Using id(conn) for logging can be confusing if connections are reused, but okay for init phase
-    log.debug(f"Initializing new DB connection {id(conn)}...")
+    log.debug(f"Initializing new async DB connection {id(conn)}...")
     try:
         # Register JSON/JSONB <-> Python dict codecs
         for json_type in ('json', 'jsonb'):
@@ -47,103 +69,149 @@ async def _init_connection(conn: asyncpg.Connection):
                 schema='pg_catalog',
                 format='text' # Use text format for JSON string transfer
             )
-        log.debug(f"Registered JSON/JSONB type codecs for connection {id(conn)}.")
+        log.debug(f"Registered JSON/JSONB type codecs for async connection {id(conn)}.")
         # Add any other per-connection setup here if needed
         # E.g., await conn.execute("SET TIME ZONE 'UTC';")
     except Exception as e:
-        log.error(f"Error setting type codecs for connection {id(conn)}: {e}", exc_info=True)
+        log.error(f"Error setting type codecs for async connection {id(conn)}: {e}", exc_info=True)
         # Depending on severity, you might want to raise an error to prevent pool usage
         # raise
 
 
-# --- Pool Management ---
-async def get_db_pool() -> asyncpg.Pool:
+# --- Pool Management (now environment-specific) ---
+async def get_db_pool(environment: str) -> asyncpg.Pool:
     """
-    Creates and returns the asyncpg database connection pool singleton.
-    Handles potential race conditions during initial creation.
+    Creates and returns the asyncpg database connection pool for the specified environment.
+    Handles potential race conditions during initial creation for each environment's pool.
     """
-    global _pool
+    task_log = logging.getLogger(f"async_db.{environment}") # Per-environment logger for pool ops
+
+    # Get or create lock for this environment
+    # This part needs to be outside the async lock if _env_pool_locks can be modified concurrently
+    # by different event loop iterations for different environments initially.
+    # However, typical usage pattern might be one worker = one environment.
+    # For simplicity and assuming one event loop, direct access is okay here.
+    if environment not in _env_pool_locks:
+        _env_pool_locks[environment] = asyncio.Lock()
+    
+    env_specific_lock = _env_pool_locks[environment]
+
     # Fast path: Check if pool already exists without acquiring lock
-    if _pool is not None:
-        return _pool
+    if environment in _env_async_pools and _env_async_pools[environment] is not None:
+        return _env_async_pools[environment]
 
-    # Acquire lock to ensure only one coroutine creates the pool
-    async with _pool_lock:
-        # Check again inside the lock in case another coroutine created it while waiting
-        if _pool is not None:
-            return _pool
+    async with env_specific_lock:
+        # Check again inside the lock
+        if environment in _env_async_pools and _env_async_pools[environment] is not None:
+            return _env_async_pools[environment]
 
-        # Proceed with pool creation
-        if not DATABASE_URL:
-            log.critical("FATAL ERROR: DATABASE_URL environment variable not set.")
-            raise RuntimeError("DATABASE_URL not configured.")
-
-        log_url = DATABASE_URL.split('@')[-1] # Avoid logging password
-        log.info(f"Creating asyncpg pool for APPLICATION DB ({log_url})... (Min: {MIN_POOL_SIZE}, Max: {MAX_POOL_SIZE})")
+        task_log.info(f"Creating asyncpg pool for APPLICATION DB (Environment: {environment})...")
+        
         try:
-            _pool = await asyncpg.create_pool(
-                dsn=DATABASE_URL,
+            database_url_for_env = get_database_url(environment, logger=task_log)
+        except ValueError as e:
+            task_log.critical(f"FATAL ERROR: Could not get DATABASE_URL for environment '{environment}'. {e}")
+            raise RuntimeError(f"DATABASE_URL not configured for environment '{environment}'") from e
+
+        log_url_display = database_url_for_env.split('@')[-1] if '@' in database_url_for_env else database_url_for_env
+        task_log.info(f"Asyncpg pool for '{environment}' using DB ({log_url_display}). Min: {MIN_POOL_SIZE}, Max: {MAX_POOL_SIZE}")
+        
+        try:
+            new_pool = await asyncpg.create_pool(
+                dsn=database_url_for_env,
                 min_size=MIN_POOL_SIZE,
                 max_size=MAX_POOL_SIZE,
                 init=_init_connection # Setup codecs for every new connection
             )
-            log.info("Successfully created asyncpg APPLICATION database connection pool.")
+            task_log.info(f"Successfully created asyncpg pool for environment '{environment}'.")
 
             # Perform a quick connection test after pool creation
-            async with _pool.acquire() as connection:
+            async with new_pool.acquire() as connection:
                  version = await connection.fetchval("SELECT version();")
-                 test_json = await connection.fetchval("SELECT '{\"test\": 1}'::jsonb;")
-                 log.info(f"APP DB (asyncpg) connection test successful. PostgreSQL version: {version[:15]}..., JSONB codec test type: {type(test_json)}")
+                 test_json = await connection.fetchval("SELECT '{\\\"test\\\": 1}'::jsonb;")
+                 task_log.info(f"Async DB ({environment}) connection test successful. Version: {version[:15]}..., JSONB type: {type(test_json)}")
+            
+            _env_async_pools[environment] = new_pool
+            return new_pool
 
         except Exception as e:
-            log.critical(f"FATAL ERROR: Failed to create asyncpg pool: {e}", exc_info=True)
-            _pool = None # Ensure pool remains None if creation failed
-            raise RuntimeError("Could not create asyncpg database pool") from e
-
-    # This should now always return a valid pool or have raised an error
-    if _pool is None:
-         # This state should ideally not be reached due to checks above, but defensively:
-         raise RuntimeError("Pool creation failed unexpectedly.")
-
-    return _pool
+            task_log.critical(f"FATAL ERROR: Failed to create asyncpg pool for environment '{environment}': {e}", exc_info=True)
+            # Ensure pool is not partially set for this environment on failure
+            if environment in _env_async_pools: del _env_async_pools[environment]
+            raise RuntimeError(f"Could not create asyncpg database pool for '{environment}'") from e
+    
+    # Should be unreachable due to logic inside lock, but as a failsafe:
+    raise RuntimeError(f"Pool creation failed unexpectedly for environment '{environment}'.")
 
 
-async def close_db_pool():
-    """Closes the asyncpg database connection pool if it exists."""
-    global _pool
-    # Acquire lock to prevent closing while creating or vice-versa
-    async with _pool_lock:
-        if _pool:
-            log.info("Closing asyncpg database connection pool...")
+async def close_all_db_pools():
+    """Closes all asyncpg database connection pools for all environments."""
+    log.info("Attempting to close all asyncpg database connection pools...")
+    closed_count = 0
+    # Iterate over a copy of keys in case dict changes due to errors, though less likely with async
+    all_environments = list(_env_async_pools.keys())
+
+    for env_name in all_environments:
+        env_specific_lock = _env_pool_locks.get(env_name)
+        if not env_specific_lock:
+            log.warning(f"No lock found for environment '{env_name}' during close_all_db_pools. Skipping lock acquisition.")
+            # Potentially risky to proceed without lock if pool could be initializing, but close should be idempotent
+        
+        # Try to acquire lock, but don't wait indefinitely if something is wrong
+        acquired_lock_for_close = False
+        if env_specific_lock:
             try:
-                # Gracefully close the pool, waiting for connections to be released
-                await _pool.close()
-                log.info("Asyncpg database connection pool closed successfully.")
+                await asyncio.wait_for(env_specific_lock.acquire(), timeout=5.0)
+                acquired_lock_for_close = True
+            except asyncio.TimeoutError:
+                log.error(f"Timeout acquiring lock for environment '{env_name}' during close. Pool might be busy or deadlocked.")
+            except Exception as lock_e:
+                log.error(f"Error acquiring lock for environment '{env_name}' during close: {lock_e}")
+
+        pool_to_close = _env_async_pools.get(env_name)
+        if pool_to_close:
+            log.info(f"Closing asyncpg pool for environment '{env_name}'...")
+            try:
+                await pool_to_close.close() # Gracefully close
+                log.info(f"Asyncpg pool for '{env_name}' closed successfully.")
+                closed_count +=1
             except Exception as e:
-                log.error(f"Error closing asyncpg pool: {e}", exc_info=True)
+                log.error(f"Error closing asyncpg pool for '{env_name}': {e}", exc_info=True)
             finally:
-                 _pool = None # Ensure pool variable is reset
+                if env_name in _env_async_pools: del _env_async_pools[env_name]
+        
+        if acquired_lock_for_close and env_specific_lock:
+            try: env_specific_lock.release()
+            except RuntimeError: pass # Lock might not be owned if acquire failed or timed out
+
+    log.info(f"Finished closing asyncpg pools. Closed {closed_count} pool(s) out of {len(all_environments)} tracked.")
+    _env_async_pools.clear()
+    _env_pool_locks.clear() # Clear locks as well
 
 
-# --- Context Manager for Connections ---
+# --- Context Manager for Connections (now requires environment) ---
 @asynccontextmanager
-async def get_db_connection() -> AsyncGenerator[asyncpg.Connection, None]:
+async def get_db_connection(environment: str) -> AsyncGenerator[asyncpg.Connection, None]:
     """
-    Provides an asyncpg connection from the pool using an async context manager.
+    Provides an asyncpg connection from the specified environment's pool.
+
+    Args:
+        environment (str): The execution environment ("development" or "production").
 
     Usage:
-        async with get_db_connection() as conn:
+        async with get_db_connection(environment="production") as conn:
             await conn.execute(...)
     """
-    pool = await get_db_pool() # Ensure pool is initialized
+    task_log = logging.getLogger(f"async_db.conn.{environment}")
+    pool = await get_db_pool(environment) # Ensure pool for this environment is initialized
     connection: asyncpg.Connection | None = None
     try:
         # Acquire connection from the pool
         connection = await pool.acquire()
-        log.debug(f"Acquired DB connection {id(connection)} from asyncpg pool.")
+        task_log.debug(f"Acquired DB connection {id(connection)} from asyncpg pool '{environment}'.")
         yield connection # Provide the connection to the 'with' block
     except Exception as e:
-        log.error(f"ERROR during asyncpg DB operation: {e}", exc_info=True)
+        task_log.error(f"ERROR during asyncpg DB operation (env: {environment}): {e}", exc_info=True)
         # Re-raise the error so the calling code knows something went wrong
         raise
     finally:
@@ -151,32 +219,41 @@ async def get_db_connection() -> AsyncGenerator[asyncpg.Connection, None]:
             try:
                 # Release connection back to the pool
                 await pool.release(connection)
-                log.debug(f"Released DB connection {id(connection)} back to asyncpg pool.")
+                task_log.debug(f"Released DB connection {id(connection)} back to asyncpg pool '{environment}'.")
             except Exception as release_err:
                  # Log error if releasing fails, but don't obscure the original error (if any)
-                 log.error(f"Error releasing DB connection {id(connection)}: {release_err}", exc_info=True)
+                 task_log.error(f"Error releasing DB connection {id(connection)} (env: {environment}): {release_err}", exc_info=True)
 
-# --- Example Usage (Optional - for testing this module directly) ---
-async def _test_connection():
-    print("Testing asyncpg connection...")
+# --- Example Usage (needs to be updated to pass environment) ---
+async def _test_connection_for_env(test_env: str):
+    print(f"Testing asyncpg connection for environment: '{test_env}'...")
     try:
-        async with get_db_connection() as conn:
+        # Make sure DEV_DATABASE_URL or PROD_DATABASE_URL is set in .env or environment for test
+        # Example: export DEV_DATABASE_URL='postgresql://user:pass@host:port/dev_db'
+        # Example: export PROD_DATABASE_URL='postgresql://user:pass@host:port/prod_db'
+        db_url_to_check = os.getenv("DEV_DATABASE_URL") if test_env == "development" else os.getenv("PROD_DATABASE_URL")
+        if not db_url_to_check:
+            print(f"DATABASE_URL for '{test_env}' (DEV_DATABASE_URL or PROD_DATABASE_URL) not set. Skipping test for this env.")
+            return
+
+        async with get_db_connection(environment=test_env) as conn:
             result = await conn.fetchval("SELECT 1 + 1;")
-            print(f"Test query (1+1) result: {result}")
-            json_result = await conn.fetchrow("SELECT '{\"key\": \"value\"}'::jsonb as data;")
-            print(f"Test JSONB fetch: {json_result} (type: {type(json_result['data'])})")
-        print("Connection test successful.")
+            print(f"Test query (1+1) result for '{test_env}': {result}")
+            json_result = await conn.fetchrow("SELECT '{\\\"key\\\": \\\"value\\\"}'::jsonb as data;")
+            print(f"Test JSONB fetch for '{test_env}': {json_result} (type: {type(json_result['data'])})")
+        print(f"Connection test for '{test_env}' successful.")
     except Exception as e:
-        print(f"Connection test failed: {e}")
-    finally:
-        await close_db_pool()
+        print(f"Connection test for '{test_env}' failed: {e}", exc_info=True)
+    # No individual pool close here, use close_all_db_pools() after all tests
+
+async def main_test_routine():
+    # Test both environments if configured
+    await _test_connection_for_env("development")
+    await _test_connection_for_env("production")
+    await close_all_db_pools()
 
 if __name__ == "__main__":
-    # This allows running python backend/database.py to test connection
-    # Make sure DATABASE_URL is set in your environment if running directly
-    if not DATABASE_URL:
-         print("Error: DATABASE_URL environment variable is not set.")
-         print("Please set it before running this script directly for testing.")
-         # Example: export DATABASE_URL='postgresql://user:pass@host:port/db'
-    else:
-        asyncio.run(_test_connection())
+    # This allows running python backend/db/async_db.py to test connections
+    # Ensure relevant DEV_DATABASE_URL and/or PROD_DATABASE_URL are set in your environment or .env
+    print("Running async_db.py direct test...")
+    asyncio.run(main_test_routine())

@@ -17,12 +17,13 @@ from botocore.exceptions import ClientError, NoCredentialsError
 try:
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if project_root not in sys.path: sys.path.insert(0, project_root)
-    from db.sync_db import get_db_connection, release_db_connection
+    from db.sync_db import get_db_connection, release_db_connection, update_clip_state_sync
     from config import get_s3_resources # Import the new S3 utility function
 except ImportError as e:
     print(f"ERROR importing db_utils or config in merge.py: {e}")
-    def get_db_connection(cursor_factory=None): raise NotImplementedError("Dummy DB connection")
-    def release_db_connection(conn): pass
+    def get_db_connection(environment: str, cursor_factory=None): raise NotImplementedError("Dummy DB connection")
+    def release_db_connection(conn, environment: str): pass
+    def update_clip_state_sync(environment: str, clip_id: int, new_state: str, error_message: str | None = None): pass
     def get_s3_resources(environment: str, logger=None): raise NotImplementedError("Dummy S3 resource getter")
 
 # Module-level constants that are not S3 client/bucket specific
@@ -94,7 +95,7 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int, environment: str 
         raise FileNotFoundError(f"ffmpeg command not found at '{FFMPEG_PATH}'.")
 
     try:
-        conn = get_db_connection()
+        conn = get_db_connection(environment, cursor_factory=extras.DictCursor)
         if conn is None: raise ConnectionError("Failed to get database connection.")
         conn.autocommit = False
 
@@ -303,7 +304,7 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int, environment: str 
         try:
             # If the main conn was used and failed mid-transaction, it should be rolled back by the exception handler.
             # This new connection is for a separate, atomic update.
-            error_conn = get_db_connection()
+            error_conn = get_db_connection(environment, cursor_factory=extras.DictCursor)
             if error_conn:
                 error_conn.autocommit = True # For simple error update
                 with error_conn.cursor() as err_cur:
@@ -326,7 +327,7 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int, environment: str 
             logger.error(f"CRITICAL: Failed to update error state in DB after merge failure: {db_err_on_fail}")
         finally:
             if error_conn:
-                release_db_connection(error_conn)
+                release_db_connection(error_conn, environment)
         
         # Ensure task_outcome reflects the failure if not already set by a specific phase
         if task_outcome != "failed" and not task_outcome.startswith("failed_"):
@@ -342,7 +343,7 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int, environment: str 
             except Exception as conn_cleanup_err:
                 logger.warning(f"Error during final cleanup of main DB connection: {conn_cleanup_err}")
             finally:
-                release_db_connection(conn)
+                release_db_connection(conn, environment)
                 logger.debug("Main DB connection released.")
         
         if temp_dir_obj:

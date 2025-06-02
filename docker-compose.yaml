@@ -108,8 +108,6 @@ services:
       PREFECT_WORKER_CONCURRENCY_LIMIT: "3"
 
       # --- S3/CloudFront for Local Worker (uses DEV resources) ---
-      S3_BUCKET_NAME: ${S3_DEV_BUCKET_NAME}
-      CLOUDFRONT_DOMAIN: ${CLOUDFRONT_DEV_DOMAIN}
       # S3_PROD_BUCKET_NAME and CLOUDFRONT_PROD_DOMAIN are also available from .env if Python needs to choose
 
       # --- AWS Credentials (already in .env, but explicit pass-through is fine) ---

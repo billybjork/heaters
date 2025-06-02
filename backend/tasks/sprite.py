@@ -25,8 +25,8 @@ try:
 except ImportError as e:
     # Fallback for db_utils and config - critical for task operation
     print(f"ERROR: Cannot import db_utils or config in sprite.py. {e}", file=sys.stderr)
-    def get_db_connection(cursor_factory=None): raise NotImplementedError("Dummy DB getter")
-    def release_db_connection(conn): pass
+    def get_db_connection(environment: str, cursor_factory=None): raise NotImplementedError("Dummy DB getter")
+    def release_db_connection(conn, environment: str): pass
     def get_s3_resources(environment: str, logger=None): raise NotImplementedError("Dummy S3 resource getter")
 
 # FFMPEG_PATH can remain a module-level constant if it's universally applicable
@@ -82,7 +82,7 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False, e
     Updates the clip state upon success or failure.
     """
     logger = get_run_logger()
-    logger.info(f"TASK [SpriteGen]: Starting for clip_id: {clip_id}")
+    logger.info(f"TASK [SpriteGen]: Starting for clip_id: {clip_id}, Env: {environment}")
 
     # --- Resource Management & State ---
     conn = None
@@ -104,14 +104,14 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False, e
     if not shutil.which(FFMPEG_PATH):
         logger.error(f"ffmpeg command ('{FFMPEG_PATH}') not found in PATH.")
         # Update state to failed before raising
-        _update_clip_state_on_error(clip_id, "ffmpeg_not_found", "FFMPEG executable not found.", logger)
+        _update_clip_state_on_error(clip_id, "ffmpeg_not_found", "FFMPEG executable not found.", logger, environment=environment)
         raise FileNotFoundError(f"ffmpeg command not found at '{FFMPEG_PATH}'.")
     if not shutil.which("ffprobe"):
          logger.warning("ffprobe command not found in PATH. Metadata extraction may fail or be inaccurate.")
 
     try:
         # === Phase 1: DB Check, Lock, and Verify State ===
-        conn = get_db_connection(cursor_factory=extras.DictCursor)
+        conn = get_db_connection(environment, cursor_factory=extras.DictCursor)
         if conn is None: raise ConnectionError("Failed to get DB connection.")
         conn.autocommit = False # Manual transaction control
 
@@ -426,32 +426,8 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False, e
             except Exception as rb_err:
                 logger.warning(f"Error during rollback before failure update: {rb_err}")
         
-        error_conn = None
-        try:
-             error_conn = get_db_connection()
-             if not error_conn:
-                 logger.critical(f"CRITICAL: Failed to get separate DB connection to update error state for clip {clip_id}")
-             else:
-                error_conn.autocommit = True
-                with error_conn.cursor() as err_cur:
-                    logger.info(f"Attempting to set clip {clip_id} state to '{failure_state}' after error...")
-                    err_cur.execute(
-                        """
-                        UPDATE clips SET
-                            ingest_state = %s,
-                            last_error = %s,
-                            retry_count = COALESCE(retry_count, 0) + 1,
-                            updated_at = NOW()
-                        WHERE id = %s AND ingest_state = 'generating_sprite';
-                        """,
-                        (failure_state, error_message, clip_id)
-                    )
-                    logger.info(f"DB update executed to set clip {clip_id} to '{failure_state}'. Status: {err_cur.statusmessage}")
-        except Exception as db_err_update:
-             logger.critical(f"CRITICAL: Failed to update error state in DB for clip {clip_id}: {db_err_update}")
-        finally:
-             if error_conn:
-                 release_db_connection(error_conn)
+        # Use the helper to update state, now passing environment
+        _update_clip_state_on_error(clip_id, failure_state, error_message, logger, environment=environment)
         raise e
 
     finally:
@@ -475,12 +451,13 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False, e
 
         if conn:
             try:
-                conn.autocommit = True
-                conn.rollback()
+                conn.autocommit = True # Ensure autocommit is on if we are just closing/releasing
+                # No explicit rollback here as transactions should be committed or rolled back before finally
             except Exception as conn_cleanup_err:
-                logger.warning(f"Exception during final connection cleanup for clip {clip_id}: {conn_cleanup_err}")
-            finally:
-                release_db_connection(conn)
+                logger.warning(f"Exception during final connection autocommit toggle for clip {clip_id}: {conn_cleanup_err}")
+            finally: # Nested finally to ensure release_db_connection is always called if conn exists
+                # release_db_connection(conn) # Old
+                release_db_connection(conn, environment) # New
                 logger.debug(f"DB connection released for clip {clip_id}.")
         if temp_dir_obj:
             try:
@@ -500,16 +477,17 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False, e
     }
 
 # Helper function to update clip state on error, encapsulated to reduce repetition
-def _update_clip_state_on_error(clip_id, new_state, error_msg_for_db, logger, artifact_id_to_clear=None):
-    conn = None
+def _update_clip_state_on_error(clip_id, new_state, error_msg_for_db, logger, artifact_id_to_clear=None, environment: str = "development"):
+    conn_err_update = None # Rename to avoid conflict with outer scope 'conn'
     try:
-        conn = get_db_connection() # Uses default cursor
-        if conn is None: 
-            logger.error(f"[StateUpdateHelper] Failed to get DB connection for clip {clip_id} to set state '{new_state}'.")
+        # conn_err_update = get_db_connection() # Old
+        conn_err_update = get_db_connection(environment) # New
+        if conn_err_update is None: 
+            logger.error(f"[StateUpdateHelper] Failed to get DB connection for clip {clip_id} to set state '{new_state}' in env '{environment}'.")
             return
         
-        conn.autocommit = True # Simple update, use autocommit
-        with conn.cursor() as cur:
+        conn_err_update.autocommit = True # Simple update, use autocommit
+        with conn_err_update.cursor() as cur:
             # If an artifact ID was created but the process failed later (e.g., S3 upload fails after DB insert for artifact)
             # we might want to clear it or mark the artifact as failed.
             # For now, just updating clip state and error.
@@ -537,5 +515,6 @@ def _update_clip_state_on_error(clip_id, new_state, error_msg_for_db, logger, ar
     except Exception as e_db_update:
         logger.error(f"[StateUpdateHelper] CRITICAL: DB error while updating clip {clip_id} to error state '{new_state}': {e_db_update}", exc_info=True)
     finally:
-        if conn:
-            release_db_connection(conn)
+        if conn_err_update:
+            # release_db_connection(conn_err_update) # Old
+            release_db_connection(conn_err_update, environment) # New

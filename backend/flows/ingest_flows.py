@@ -83,7 +83,7 @@ ARTIFACT_TYPE_SPRITE_SHEET = "sprite_sheet"
 # =============================================================================
 # ===                        COMMIT WORKER LOGIC                            ===
 # =============================================================================
-def _commit_pending_review_actions(grace_period_seconds: int):
+def _commit_pending_review_actions(environment: str, grace_period_seconds: int):
     """
     Find the newest 'selected_*' event for every clip that is still in
     'pending_review', has survived the grace period and was *not* undone,
@@ -103,7 +103,7 @@ def _commit_pending_review_actions(grace_period_seconds: int):
     committed_count = 0
     conn = None
     try:
-        conn = get_db_connection(cursor_factory=psycopg2.extras.RealDictCursor)
+        conn = get_db_connection(environment, cursor_factory=psycopg2.extras.RealDictCursor)
 
         with conn:                              # Outer transaction for all actions
             with conn.cursor() as cur:
@@ -141,10 +141,10 @@ def _commit_pending_review_actions(grace_period_seconds: int):
                 actions = cur.fetchall()
 
                 if not actions:
-                    logger.debug("No review actions ready for commit.")
+                    logger.debug(f"No review actions ready for commit in env '{environment}'.")
                     return 0
 
-                logger.info(f"Committing {len(actions)} clip actions…")
+                logger.info(f"Committing {len(actions)} clip actions in env '{environment}'…")
 
                 for row in actions:
                     clip_id    = row["clip_id"]
@@ -179,21 +179,21 @@ def _commit_pending_review_actions(grace_period_seconds: int):
                                 processing_metadata_update_payload = psycopg2.extras.Json({
                                     "split_request_at_frame": frame_to_split
                                 })
-                                logger.debug(f"[Clip {clip_id}] Action '{action}' will set processing_metadata with split_request_at_frame: {frame_to_split}")
+                                logger.debug(f"[Clip {clip_id}, Env {environment}] Action '{action}' will set processing_metadata with split_request_at_frame: {frame_to_split}")
                             except (ValueError, TypeError):
                                 logger.warning(
-                                    f"[Clip {clip_id}] 'selected_split' action for clip {clip_id} has invalid "
+                                    f"[Clip {clip_id}, Env {environment}] 'selected_split' action for clip {clip_id} has invalid "
                                     f"'split_at_frame' ('{split_at_frame_val}') in event_data. Skipping commit for this action."
                                 )
                                 continue # Skip this action if data is bad
                         else:
                             logger.warning(
-                                f"[Clip {clip_id}] 'selected_split' action for clip {clip_id} is missing "
+                                f"[Clip {clip_id}, Env {environment}] 'selected_split' action for clip {clip_id} is missing "
                                 f"'split_at_frame' in event_data. Skipping commit for this action."
                             )
                             continue # Skip if essential data is missing
                     else:
-                        logger.warning(f"[Clip {clip_id}] Unknown action '{action}' encountered during commit. Skipping.")
+                        logger.warning(f"[Clip {clip_id}, Env {environment}] Unknown action '{action}' encountered during commit. Skipping.")
                         continue
 
                     # Inner transaction per clip effectively (managed by outer `with conn:` and loop structure)
@@ -205,7 +205,7 @@ def _commit_pending_review_actions(grace_period_seconds: int):
                                 try:
                                     group_target_id = int(event_data["group_with_clip_id"])
                                 except (ValueError, TypeError):
-                                    logger.warning(f"[Clip {clip_id}] Invalid group_with_clip_id '{event_data.get('group_with_clip_id')}' in event_data for grouping.")
+                                    logger.warning(f"[Clip {clip_id}, Env {environment}] Invalid group_with_clip_id '{event_data.get('group_with_clip_id')}' in event_data for grouping.")
                                     group_target_id = None # Ensure it's None if conversion fails
 
 
@@ -223,7 +223,7 @@ def _commit_pending_review_actions(grace_period_seconds: int):
                                     try:
                                         group_target_id = int(res[0])
                                     except (ValueError, TypeError):
-                                        logger.warning(f"[Clip {clip_id}] Invalid group_with_clip_id '{res[0]}' from DB fallback for grouping.")
+                                        logger.warning(f"[Clip {clip_id}, Env {environment}] Invalid group_with_clip_id '{res[0]}' from DB fallback for grouping.")
                                         group_target_id = None
 
 
@@ -232,10 +232,10 @@ def _commit_pending_review_actions(grace_period_seconds: int):
                                     "UPDATE clips SET grouped_with_clip_id = %s WHERE id = %s;",
                                     (group_target_id, clip_id)
                                 )
-                                logger.info(f"[Clip {clip_id}] Updated grouped_with_clip_id to {group_target_id} for action '{action}'.")
+                                logger.info(f"[Clip {clip_id}, Env {environment}] Updated grouped_with_clip_id to {group_target_id} for action '{action}'.")
                             else:
                                 logger.warning(
-                                    f"[Clip {clip_id}] Group requested but no valid target id found for '{action}'. "
+                                    f"[Clip {clip_id}, Env {environment}] Group requested but no valid target id found for '{action}'. "
                                     "Leaving grouped_with_clip_id NULL or unchanged."
                                 )
 
@@ -266,29 +266,29 @@ def _commit_pending_review_actions(grace_period_seconds: int):
 
                         if cur.rowcount == 1:
                             committed_count += 1
-                            logger.info(f"[Clip {clip_id}] Action '{action}' → state '{target_state}' committed.")
+                            logger.info(f"[Clip {clip_id}, Env {environment}] Action '{action}' → state '{target_state}' committed.")
                             if processing_metadata_update_payload:
-                                logger.info(f"[Clip {clip_id}] Also updated processing_metadata for action '{action}'.")
+                                logger.info(f"[Clip {clip_id}, Env {environment}] Also updated processing_metadata for action '{action}'.")
                         else:
                             logger.warning(
-                                f"[Clip {clip_id}] State may have changed concurrently, item not found, or not in 'pending_review'; "
+                                f"[Clip {clip_id}, Env {environment}] State may have changed concurrently, item not found, or not in 'pending_review'; "
                                 f"commit for action '{action}' skipped (rowcount: {cur.rowcount}). Expected state 'pending_review'."
                             )
                     except Exception as e_inner:
-                        logger.error(f"[Clip {clip_id}] Inner commit transaction failed for action '{action}': {e_inner}", exc_info=True)
+                        logger.error(f"[Clip {clip_id}, Env {environment}] Inner commit transaction failed for action '{action}': {e_inner}", exc_info=True)
                         # This error, if not re-raised, allows other clips to be processed.
                         # The outer 'with conn:' block ensures atomicity for the entire batch if an error
                         # propagates out of this loop (e.g., from db_err below).
                         # For now, log and continue with other clips as per original structure.
 
     except (Exception, psycopg2.Error) as db_err: # Catch psycopg2 specific errors too
-        logger.error(f"Commit-worker encountered a database error: {db_err}", exc_info=True)
+        logger.error(f"Commit-worker (env: {environment}) encountered a database error: {db_err}", exc_info=True)
         # If this block is hit, the 'with conn:' context manager will trigger a rollback for all actions in this cycle.
     finally:
         if conn:
-            release_db_connection(conn)
+            release_db_connection(conn, environment)
 
-    logger.info(f"Finished commit step. Committed {committed_count} clip action(s).")
+    logger.info(f"Finished commit step for env '{environment}'. Committed {committed_count} clip action(s).")
     return committed_count
 
 
@@ -363,9 +363,9 @@ def process_clip_post_review(
 
     except Exception as e:
         stage = "embedding" if keyframe_task_succeeded_or_skipped else "keyframing"
-        logger.error(f"Error during post-review processing flow (stage: {stage}) for clip_id {clip_id}: {e}", exc_info=True)
+        logger.error(f"Error during post-review processing flow (stage: {stage}, env: {environment}) for clip_id {clip_id}: {e}", exc_info=True)
         raise # Re-raise to mark the flow run as failed
-    logger.info(f"FLOW: Finished post-review processing flow for clip_id: {clip_id}")
+    logger.info(f"FLOW: Finished post-review processing flow for clip_id: {clip_id}, Env: {environment}")
 
 
 @flow(name="Scheduled Ingest Initiator", log_prints=True)
@@ -398,7 +398,7 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
     # --- First, commit pending review actions ---
     try:
         logger.info(f"Running commit step with grace period: {ACTION_COMMIT_GRACE_PERIOD_SECONDS} seconds...")
-        committed_clips_count = _commit_pending_review_actions(grace_period_seconds=ACTION_COMMIT_GRACE_PERIOD_SECONDS)
+        committed_clips_count = _commit_pending_review_actions(worker_app_env, grace_period_seconds=ACTION_COMMIT_GRACE_PERIOD_SECONDS)
         logger.info(f"Commit step finished, {committed_clips_count} clip states finalized.")
     except Exception as commit_err:
         logger.error(f"Error during the commit actions step: {commit_err}", exc_info=True)
@@ -409,7 +409,7 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
     if newly_submitted_in_this_cycle < MAX_NEW_SUBMISSIONS_PER_CYCLE: # Only fetch if we can submit more
         try:
             logger.info("Fetching work items based on committed states...")
-            all_work = get_all_pending_work(limit_per_stage=limit_per_stage)
+            all_work = get_all_pending_work(worker_app_env, limit_per_stage=limit_per_stage)
             logger.info(f"Found {len(all_work)} total work items across stages for potential processing.")
         except Exception as db_query_err:
             logger.error(f"[All Stages] Failed to query for work: {db_query_err}", exc_info=True)
@@ -434,8 +434,8 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
                 logger.info(f"[{stage_name}] MAX_NEW_SUBMISSIONS_PER_CYCLE reached. Deferring remaining {stage_name} work.")
                 break
             try:
-                if update_source_video_state_sync(sid, 'downloading'):
-                    source_input = get_source_input_from_db(sid)
+                if update_source_video_state_sync(worker_app_env, sid, 'downloading'):
+                    source_input = get_source_input_from_db(sid, worker_app_env)
                     if source_input:
                         # Pass worker_app_env to intake_task
                         intake_task.submit(source_video_id=sid, input_source=source_input, environment=worker_app_env)
@@ -460,7 +460,7 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
                 logger.info(f"[{stage_name}] MAX_NEW_SUBMISSIONS_PER_CYCLE reached. Deferring remaining {stage_name} work.")
                 break
             try:
-                if update_source_video_state_sync(sid, 'splicing'):
+                if update_source_video_state_sync(worker_app_env, sid, 'splicing'):
                     # Pass worker_app_env to splice_video_task
                     splice_video_task.submit(source_video_id=sid, environment=worker_app_env)
                     submitted_counts[stage_name] += 1
@@ -482,7 +482,7 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
                 logger.info(f"[{stage_name}] MAX_NEW_SUBMISSIONS_PER_CYCLE reached. Deferring remaining {stage_name} work.")
                 break
             try:
-                if update_clip_state_sync(cid, 'generating_sprite'):
+                if update_clip_state_sync(worker_app_env, cid, 'generating_sprite'):
                     # Pass worker_app_env to generate_sprite_sheet_task
                     generate_sprite_sheet_task.submit(clip_id=cid, environment=worker_app_env)
                     submitted_counts[stage_name] += 1
@@ -505,7 +505,7 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
                 logger.info(f"[{stage_name}] MAX_NEW_SUBMISSIONS_PER_CYCLE reached. Deferring remaining {stage_name} work.")
                 break
             try:
-                if update_clip_state_sync(cid, 'processing_post_review'):
+                if update_clip_state_sync(worker_app_env, cid, 'processing_post_review'):
                     run_deployment(
                         name=deployment_name,
                         parameters={"clip_id": cid, 
@@ -529,7 +529,7 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
     stage_name = "Merge"
     if newly_submitted_in_this_cycle < MAX_NEW_SUBMISSIONS_PER_CYCLE:
         try:
-            merge_pairs = get_pending_merge_pairs()
+            merge_pairs = get_pending_merge_pairs(worker_app_env)
             processed_counts[stage_name] = len(merge_pairs) # Count found items before submission limit
             if merge_pairs:
                  logger.info(f"[{stage_name}] Found {len(merge_pairs)} pairs for merging. Submitting tasks...")
@@ -562,7 +562,7 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50):
     stage_name = "Split"
     if newly_submitted_in_this_cycle < MAX_NEW_SUBMISSIONS_PER_CYCLE:
         try:
-            clips_to_split_data = get_pending_split_jobs()
+            clips_to_split_data = get_pending_split_jobs(worker_app_env)
             processed_counts[stage_name] = len(clips_to_split_data) # Count found items
             if clips_to_split_data:
                 logger.info(f"[{stage_name}] Found {len(clips_to_split_data)} clips pending split. Submitting tasks...")
@@ -641,7 +641,7 @@ async def cleanup_reviewed_clips_flow(
     error_count = 0
 
     try:
-        async with get_async_db_connection() as conn:
+        async with get_async_db_connection(environment) as conn:
             logger.info("Acquired asyncpg connection via context manager for cleanup flow.")
 
             delay_interval = timedelta(minutes=cleanup_delay_minutes)
@@ -671,6 +671,7 @@ async def cleanup_reviewed_clips_flow(
             for clip_record in clips_to_cleanup:
                 clip_id = clip_record["id"]
                 current_state = clip_record["ingest_state"]
+                log_prefix = f"[Cleanup Clip {clip_id}, Env {environment}]"
                 log_prefix = f"[Cleanup Clip {clip_id}]"
                 logger.info(f"{log_prefix} Processing for state: {current_state}")
 

@@ -27,10 +27,14 @@ config_logger.setLevel(logging.INFO)
 
 
 # --- Configuration Values ---
-DATABASE_URL = os.getenv("DATABASE_URL")
+# DATABASE_URL = os.getenv("DATABASE_URL") # This will be replaced by dynamic getter
 DEFAULT_MODEL_NAME = os.getenv("DEFAULT_MODEL_NAME", "openai/clip-vit-base-patch32")
 DEFAULT_GENERATION_STRATEGY = os.getenv("DEFAULT_GENERATION_STRATEGY", "keyframe_midpoint")
 NUM_RESULTS = int(os.getenv("NUM_RESULTS", 10))
+
+# Database URLs (New)
+DEV_DATABASE_URL = os.getenv("DEV_DATABASE_URL")
+PROD_DATABASE_URL = os.getenv("PROD_DATABASE_URL")
 
 # S3 Specific Environment Variables (will be used by get_s3_resources)
 S3_DEV_BUCKET_NAME = os.getenv("S3_DEV_BUCKET_NAME")
@@ -42,9 +46,15 @@ CLOUDFRONT_DOMAIN = os.getenv("CLOUDFRONT_DOMAIN")
 
 
 # --- Input Validation (for critical startup configs) ---
-if not DATABASE_URL:
-    config_logger.critical("FATAL: DATABASE_URL not found. Application core functionality will fail.")
-    raise ValueError("DATABASE_URL not found in environment variables.")
+# if not DATABASE_URL: # Old check, will be handled by get_database_url
+#     config_logger.critical("FATAL: DATABASE_URL not found. Application core functionality will fail.")
+#     raise ValueError("DATABASE_URL not found in environment variables.")
+
+if not DEV_DATABASE_URL:
+    config_logger.warning("DEV_DATABASE_URL is not set. 'development' database operations will fail if not overridden or if it's the default.")
+if not PROD_DATABASE_URL:
+    config_logger.warning("PROD_DATABASE_URL is not set. 'production' database operations will fail.")
+
 
 # CLOUDFRONT_DOMAIN validation can remain if it's critical for other parts of app startup
 if not CLOUDFRONT_DOMAIN:
@@ -59,6 +69,42 @@ if not S3_PROD_BUCKET_NAME:
 if not AWS_REGION:
     config_logger.warning("AWS_REGION is not set explicitly, defaulting to 'us-west-1'. This might not be intended for production.")
 
+
+# --- Utility Function for Database URL ---
+def get_database_url(environment: str, logger: logging.Logger = None) -> str:
+    """
+    Provides the database connection URL based on the specified environment.
+
+    Args:
+        environment (str): The execution environment, e.g., "development" or "production".
+        logger (logging.Logger, optional): Logger to use. Defaults to config_logger.
+
+    Returns:
+        str: The database connection URL.
+
+    Raises:
+        ValueError: If the required database URL for the environment is missing.
+    """
+    log = logger if logger else config_logger
+    db_url = None
+
+    if environment == "production":
+        db_url = PROD_DATABASE_URL
+        log.info(f"Using PRODUCTION Database URL (is set: {bool(db_url)})")
+    elif environment == "development":
+        db_url = DEV_DATABASE_URL
+        log.info(f"Using DEVELOPMENT Database URL (is set: {bool(db_url)})")
+    else:
+        log.warning(f"Unknown environment '{environment}' specified for database URL. Defaulting to DEVELOPMENT.")
+        db_url = DEV_DATABASE_URL # Default to dev for unknown environments
+        log.info(f"Using DEVELOPMENT Database URL for unknown env '{environment}' (is set: {bool(db_url)})")
+
+    if not db_url:
+        err_msg = f"Database URL not configured for environment '{environment}'. Check DEV_DATABASE_URL/PROD_DATABASE_URL."
+        log.error(err_msg)
+        raise ValueError(err_msg)
+    
+    return db_url
 
 # --- Utility Function for S3 Resources ---
 def get_s3_resources(environment: str, logger: logging.Logger = None):
@@ -123,7 +169,9 @@ def get_s3_resources(environment: str, logger: logging.Logger = None):
 
 # --- Log Loaded Configuration ---
 config_logger.info("--- Backend Configuration Loaded ---")
-config_logger.info(f"DATABASE_URL (first 15 chars): {DATABASE_URL[:15]}...")
+# config_logger.info(f"DATABASE_URL (first 15 chars): {DATABASE_URL[:15]}...") # Removed
+config_logger.info(f"DEV_DATABASE_URL (first 15 chars): {DEV_DATABASE_URL[:15] if DEV_DATABASE_URL else 'Not Set'}...")
+config_logger.info(f"PROD_DATABASE_URL (first 15 chars): {PROD_DATABASE_URL[:15] if PROD_DATABASE_URL else 'Not Set'}...")
 config_logger.info(f"S3_DEV_BUCKET_NAME: {S3_DEV_BUCKET_NAME}")
 config_logger.info(f"S3_PROD_BUCKET_NAME: {S3_PROD_BUCKET_NAME}")
 config_logger.info(f"AWS_REGION: {AWS_REGION}")

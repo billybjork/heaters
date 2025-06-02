@@ -12,21 +12,23 @@ from botocore.exceptions import ClientError, NoCredentialsError
 from prefect import task, get_run_logger
 import psycopg2
 from psycopg2 import sql
+import sys # Added for sys.path manipulation in fallback
 
 try:
-    from db.sync_db import get_db_connection
+    from db.sync_db import get_db_connection, release_db_connection # Added release_db_connection
     from config import get_s3_resources # Import the new utility function
 except ImportError:
-    import sys
+    # sys = __import__('sys') # Not needed, import sys directly
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
     try:
-        from db.sync_db import get_db_connection
+        from db.sync_db import get_db_connection, release_db_connection # Added release_db_connection
         from config import get_s3_resources # Import again in fallback
     except ImportError as e:
         print(f"Failed to import db_utils or config in splice.py: {e}")
-        def get_db_connection(): raise NotImplementedError("Dummy get_db_connection")
+        def get_db_connection(environment: str, cursor_factory=None): raise NotImplementedError("Dummy get_db_connection") # Add environment
+        def release_db_connection(conn, environment: str): raise NotImplementedError("Dummy release_db_connection") # Add environment
         def get_s3_resources(env, logger=None): raise NotImplementedError("Dummy get_s3_resources")
 
 # Module-level APP_ENV can be used for general worker context if needed outside tasks
@@ -258,7 +260,7 @@ def splice_video_task(source_video_id: int, environment: str = "development"):
 
     try:
         # --- Database Connection and Initial Check ---
-        conn = get_db_connection()
+        conn = get_db_connection(environment) # New
         if conn is None: raise ConnectionError("Failed to get DB connection.")
         conn.autocommit = False # Manual transaction control
 
@@ -526,7 +528,7 @@ def splice_video_task(source_video_id: int, environment: str = "development"):
             try:
                 conn.rollback()
                 logger.info("Database transaction rolled back due to task failure.")
-                conn.autocommit = True
+                conn.autocommit = True # Switch to autocommit for the error update
                 with conn.cursor() as err_cur:
                     err_cur.execute(
                         """
@@ -541,13 +543,14 @@ def splice_video_task(source_video_id: int, environment: str = "development"):
                 logger.info(f"Attempted to set source {source_video_id} state to 'splicing_failed'.")
             except Exception as db_err:
                 logger.error(f"Failed to update error state in DB after rollback: {db_err}")
+            finally: # Ensure connection is released even if error update fails
+                release_db_connection(conn, environment) # New
         raise
 
     finally:
-        if conn:
-            conn.autocommit = True
-            conn.close()
-            logger.debug(f"DB connection closed for source_video_id: {source_video_id}")
+        if conn and not conn.closed: # Ensure conn is not None and not closed before trying to release
+            release_db_connection(conn, environment) # New
+            logger.debug(f"DB connection released for source_video_id: {source_video_id}")
         if temp_dir_obj:
             try:
                 temp_dir_obj.cleanup()

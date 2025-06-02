@@ -29,9 +29,9 @@ except ImportError:
         from config import get_s3_resources # Import again in fallback
     except ImportError as e:
         print(f"ERROR importing db_utils or config in intake.py: {e}")
-        def get_db_connection():
+        def get_db_connection(environment: str, cursor_factory=None):
             raise NotImplementedError("Dummy get_db_connection")
-        def release_db_connection(conn):
+        def release_db_connection(conn, environment: str):
             raise NotImplementedError("Dummy release_db_connection")
         def get_s3_resources(env, logger=None):
             raise NotImplementedError("Dummy get_s3_resources")
@@ -203,7 +203,7 @@ def intake_task(source_video_id: int,
 
     try:
         # --- Database Connection and Lock Setup ---
-        conn = get_db_connection()
+        conn = get_db_connection(environment)
         if conn is None:
              # Raise specific error if connection fails initially
              error_message = "Failed to get database connection from pool."
@@ -442,7 +442,7 @@ def intake_task(source_video_id: int,
         conn_final = None
         try:
             logger.info("Attempting final database update...")
-            conn_final = get_db_connection()
+            conn_final = get_db_connection(environment)
             if conn_final is None: raise ConnectionError("Failed to get DB connection for final update.")
             conn_final.autocommit = False
             with conn_final.cursor() as cur_final:
@@ -508,7 +508,7 @@ def intake_task(source_video_id: int,
              raise # Re-raise the caught exception
         finally:
              if conn_final:
-                 release_db_connection(conn_final)
+                 release_db_connection(conn_final, environment)
 
         # === Successful Completion ===
         logger.info(f"TASK [Intake]: Successfully processed source_video_id: {source_video_id}. Final S3 key: {s3_object_key}")
@@ -535,7 +535,7 @@ def intake_task(source_video_id: int,
         error_conn = None
         try:
             logger.info(f"Attempting to update DB state to 'download_failed' for {source_video_id}...")
-            error_conn = get_db_connection()
+            error_conn = get_db_connection(environment)
             if error_conn is None: raise ConnectionError("Failed to get DB connection for error update.")
             error_conn.autocommit = True # Use autocommit for simple error update
             with error_conn.cursor() as err_cur:
@@ -553,7 +553,7 @@ def intake_task(source_video_id: int,
             logger.error(f"CRITICAL: Failed to update error state in DB for {source_video_id}: {db_err_update}")
         finally:
             if error_conn:
-                release_db_connection(error_conn)
+                release_db_connection(error_conn, environment)
 
         # Re-raise the original exception for Prefect
         raise e
@@ -566,7 +566,7 @@ def intake_task(source_video_id: int,
 
         # Release initial connection if acquired
         if conn:
-             release_db_connection(conn)
+             release_db_connection(conn, environment)
              logger.debug(f"Released initial DB connection for source_video_id: {source_video_id}")
 
         # Cleanup temporary directory

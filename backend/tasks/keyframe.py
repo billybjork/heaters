@@ -23,9 +23,9 @@ try:
     from config import get_s3_resources # Import the new S3 utility function
 except ImportError as e:
     print(f"Error importing DB utils or config in keyframe.py: {e}")
-    def get_db_connection(): raise NotImplementedError("DB Utils not loaded")
-    def release_db_connection(conn): pass
-    def initialize_db_pool(): pass
+    def get_db_connection(environment: str, cursor_factory=None): raise NotImplementedError("DB Utils not loaded")
+    def release_db_connection(conn, environment: str): pass
+    def initialize_db_pool(environment: str): pass
     def get_s3_resources(environment: str, logger=None): raise NotImplementedError("S3 resource getter not loaded")
 
 # --- Configuration ---
@@ -254,15 +254,15 @@ def extract_keyframes_task(
 
     # Explicitly initialize DB pool if needed (safer in task context)
     try:
-        initialize_db_pool()
+        initialize_db_pool(environment)
     except Exception as pool_err:
-        logger.error(f"Failed to initialize DB pool at task start: {pool_err}")
-        raise RuntimeError("DB pool initialization failed") from pool_err
+        logger.error(f"Failed to initialize DB pool at task start for env '{environment}': {pool_err}")
+        raise RuntimeError(f"DB pool initialization failed for env '{environment}'") from pool_err
 
     try:
         # === Phase 1: Initial DB Check and State Update ===
-        conn = get_db_connection(cursor_factory=psycopg2.extras.DictCursor) # Use DictCursor for easy column access
-        if not conn: raise ConnectionError("Failed to get DB connection from pool.")
+        conn = get_db_connection(environment, cursor_factory=psycopg2.extras.DictCursor)
+        if not conn: raise ConnectionError(f"Failed to get DB connection from pool for env '{environment}'.")
         conn.autocommit = False # Start transaction
 
         with conn.cursor() as cur:
@@ -483,11 +483,11 @@ def extract_keyframes_task(
     finally:
         # Update DB if an error occurred and status hasn't been successfully set
         if task_exception and final_status not in ["success", "skipped_exists", "skipped_state", "success_no_frames_strategy_none"]:
-            logger.warning(f"An error occurred ({final_status}). Updating clip {clip_id} state and error message in DB.")
+            logger.warning(f"An error occurred ({final_status}). Updating clip {clip_id} state and error message in DB for env '{environment}'.")
             error_conn = None
             try:
-                error_conn = get_db_connection()
-                if not error_conn: raise ConnectionError("Failed to get DB connection for error update.")
+                error_conn = get_db_connection(environment)
+                if not error_conn: raise ConnectionError(f"Failed to get DB connection for error update for env '{environment}'.")
                 error_conn.autocommit = True # Simple update
                 with error_conn.cursor() as err_cur:
                     # Determine the state to set on failure, typically 'keyframe_extraction_failed'
@@ -503,7 +503,8 @@ def extract_keyframes_task(
             except Exception as db_upd_err:
                 logger.error(f"CRITICAL: Failed to update DB state on error for clip {clip_id}: {db_upd_err}", exc_info=True)
             finally:
-                if error_conn: release_db_connection(error_conn)
+                if error_conn:
+                    release_db_connection(error_conn, environment)
 
         if temp_dir_obj:
             try:
@@ -512,7 +513,7 @@ def extract_keyframes_task(
             except Exception as cleanup_err:
                 logger.warning(f"Error cleaning up temp directory {temp_dir}: {cleanup_err}")
         if conn and not conn.closed:
-            release_db_connection(conn)
+            release_db_connection(conn, environment)
 
     logger.info(f"TASK [Keyframe] for clip_id {clip_id} finished. Status: {final_status}, S3 Keys: {len(generated_artifact_s3_keys)}, Bucket: {s3_bucket_name_for_task}")
     return {
