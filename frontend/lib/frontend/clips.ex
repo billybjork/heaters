@@ -285,10 +285,6 @@ defmodule Frontend.Clips do
   @doc """
   Paged list of **other** clips that belong to the same source_video.
 
-      iex> for_source_video(42, 777, 2, 24)
-      # second page (offset 24) of clips whose source_video_id is 42,
-      # excluding clip 777 itself, 24 rows max – preloaded for thumbnail grid.
-
   * sv_id       – the source_video.id that all clips must share
   * exclude_id  – the *current* clip (will be omitted from the result)
   * page        – 1-based page index

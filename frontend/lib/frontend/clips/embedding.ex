@@ -1,17 +1,4 @@
 defmodule Frontend.Clips.Embedding do
-  @moduledoc """
-  Ecto schema for the `embeddings` table, storing vector embeddings for each clip.
-
-  Columns:
-  - id: primary key
-  - clip_id: belongs_to association to `clips`
-  - embedding: `vector` (Pgvector.Ecto.Vector)
-  - model_name: text
-  - model_version: text (nullable)
-  - generation_strategy: text
-  - generated_at: timestamp with time zone (inserted_at)
-  - embedding_dim: integer (nullable)
-  """
 
   use Ecto.Schema
   import Ecto.Changeset

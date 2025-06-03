@@ -3,7 +3,7 @@ envVarGroups:
     envVars: []
 
 databases:
-  - name: app-db # Main application database for Phoenix
+  - name: app-db # Main application database
     plan: basic-1gb
     postgresMajorVersion: 16
     ipAllowList:
@@ -48,25 +48,6 @@ services:
       - key: SECRET_KEY_BASE
         generateValue: true   # Render will generate a secure value
       - fromGroup: app-secrets
-
-      # --- S3 & CloudFront (Generic Fallbacks - app-secrets group provides _PROD_ versions) ---
-      # runtime.exs will use S3_PROD_BUCKET_NAME and CLOUDFRONT_PROD_DOMAIN from app-secrets.
-      # These are fallbacks if those specific vars weren't found.
-      - key: S3_PROD_BUCKET_NAME # Explicitly define for clarity, value from app-secrets or Render UI
-        value: "heaters-prod" # Replace with your actual prod bucket name if different, or ensure app-secrets has it
-      - key: CLOUDFRONT_PROD_DOMAIN # Explicitly define for clarity
-        value: "d25r6bb79rag3x.cloudfront.net" # Replace with your actual prod CF domain, or ensure app-secrets has it
-
-      # --- Prefect API Interaction (for Phoenix) ---
-      # Since your Prefect backend is currently local (via docker-compose),
-      # this URL would need to point to an externally accessible Prefect API if Phoenix on Render
-      # needs to communicate with it.
-      # If you deploy Prefect to Render in the future, this would be an internal service URL.
-      # For now, this might be a placeholder or point to a ngrok tunnel for local testing if needed.
-      # - key: PREFECT_API_URL  # No longer needed for intake submission from Phoenix.
-      #   value: "YOUR_EXTERNALLY_ACCESSIBLE_PREFECT_API_URL" # Phoenix frontend no longer directly calls Prefect API for intake.
-      #                                                       # The scheduled Prefect initiator handles new DB entries.
-      #                                                       # This variable might be needed if other frontend features interact with Prefect.
 
     autoDeploy: true
     branch: main

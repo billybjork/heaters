@@ -42,7 +42,7 @@ services:
         condition: service_healthy
     environment:
       PREFECT_SERVER_API_HOST: 0.0.0.0
-      PREFECT_UI_API_URL: http://localhost:4200/api # For UI to connect to API within Docker might be prefect-server
+      PREFECT_UI_API_URL: http://localhost:4200/api
       PREFECT_API_DATABASE_CONNECTION_URL: "postgresql+asyncpg://${PREFECT_POSTGRES_USER}:${PREFECT_POSTGRES_PASSWORD}@prefect-postgres:${PREFECT_POSTGRES_PORT}/${PREFECT_POSTGRES_DB}"
       PREFECT_API_DATABASE_TIMEOUT: ${PREFECT_API_DATABASE_TIMEOUT:-600}
     command: >
@@ -146,20 +146,6 @@ services:
       PHX_HOST: localhost
       PORT: "4000"
       ERL_AFLAGS: "-kernel shell_history enabled"
-
-      # --- S3/CloudFront for Local Phoenix (runtime.exs will use these via APP_ENV) ---
-      # These are sourced from .env via `env_file` and explicitly listed here for clarity
-      # or if you prefer not to use env_file for frontend.
-      # If using env_file, these explicit settings here would override .env if uncommented.
-      # runtime.exs will pick up S3_DEV_BUCKET_NAME, CLOUDFRONT_DEV_DOMAIN, etc. from environment.
-      # S3_DEV_BUCKET_NAME: ${S3_DEV_BUCKET_NAME}
-      # CLOUDFRONT_DEV_DOMAIN: ${CLOUDFRONT_DEV_DOMAIN}
-      # S3_PROD_BUCKET_NAME: ${S3_PROD_BUCKET_NAME}
-      # CLOUDFRONT_PROD_DOMAIN: ${CLOUDFRONT_PROD_DOMAIN}
-
-      # --- Prefect API Info (if Phoenix needs to call Prefect API, e.g., trigger flows) ---
-      # PREFECT_API_URL: ${PREFECT_API_URL:-http://prefect-server:4200/api}
-      # INTAKE_DEPLOYMENT_SLUG: ${INTAKE_DEPLOYMENT_SLUG}
     volumes:
       - ./frontend:/app
     working_dir: /app
@@ -192,7 +178,5 @@ services:
     depends_on:
       app-db-dev:
         condition: service_healthy
-      backend: # Optional: if frontend needs backend to be started (e.g. for API calls at startup)
-        condition: service_started # or service_healthy if backend has a healthcheck
     tty: true
     stdin_open: true
