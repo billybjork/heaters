@@ -81,12 +81,12 @@ async def cleanup_reviewed_clips_flow(
             logger.info("Acquired asyncpg connection via context manager for cleanup flow.")
 
             delay_interval = timedelta(minutes=cleanup_delay_minutes)
-            pending_states = [
+            pending_states_for_action_commit = [
                 "approved_pending_deletion",
                 "archived_pending_deletion",
             ]
             query_clips = """
-            SELECT id, ingest_state
+            SELECT id, ingest_state, clip_filepath, action_committed_at, updated_at
               FROM clips
              WHERE ingest_state = ANY($1::text[])
                AND action_committed_at IS NOT NULL
@@ -95,10 +95,10 @@ async def cleanup_reviewed_clips_flow(
             """
 
             clips_to_cleanup = await conn.fetch(
-                query_clips, pending_states, delay_interval
+                query_clips, pending_states_for_action_commit, delay_interval
             )
             processed_count = len(clips_to_cleanup)
-            logger.info(f"Found {processed_count} clips ready for S3 artifact cleanup.")
+            logger.info(f"Found {processed_count} clips ready for S3 artifact/video cleanup.")
 
             if not clips_to_cleanup:
                 logger.info("No clips require S3 artifact cleanup at this time.")
@@ -111,6 +111,7 @@ async def cleanup_reviewed_clips_flow(
                 logger.info(f"{log_prefix} Processing for state: {current_state}")
 
                 sprite_artifact_s3_key = None
+                artifact_record = None
                 s3_deletion_successful = False
 
                 try:
@@ -125,42 +126,42 @@ async def cleanup_reviewed_clips_flow(
                     if artifact_record and artifact_record["s3_key"]:
                         sprite_artifact_s3_key = artifact_record["s3_key"]
                     else:
-                        logger.warning(f"{log_prefix} No sprite sheet artifact found in DB. Assuming S3 deletion step can be skipped.")
+                        logger.warning(f"{log_prefix} No sprite sheet artifact found in DB for state '{current_state}'. Assuming S3 deletion step can be skipped for sprite.")
                         s3_deletion_successful = True
 
                     if sprite_artifact_s3_key and not s3_deletion_successful:
                         if not s3_bucket_name_for_flow:
-                            logger.error(f"{log_prefix} S3_BUCKET_NAME_FOR_FLOW is not configured. Cannot delete artifact.")
+                            logger.error(f"{log_prefix} S3_BUCKET_NAME_FOR_FLOW is not configured. Cannot delete sprite artifact.")
                             error_count += 1
                             s3_deletion_successful = False
                         else:
                             try:
-                                logger.info(f"{log_prefix} Deleting S3 object: s3://{s3_bucket_name_for_flow}/{sprite_artifact_s3_key}")
+                                logger.info(f"{log_prefix} Deleting S3 sprite object: s3://{s3_bucket_name_for_flow}/{sprite_artifact_s3_key}")
                                 s3_client_for_flow.delete_object(
                                     Bucket=s3_bucket_name_for_flow,
                                     Key=sprite_artifact_s3_key,
                                 )
-                                logger.info(f"{log_prefix} Successfully deleted S3 object.")
+                                logger.info(f"{log_prefix} Successfully deleted S3 sprite object.")
                                 s3_deletion_successful = True
                                 s3_deleted_count += 1
                             except ClientError as e:
                                 error_code = e.response.get("Error", {}).get("Code", "Unknown")
                                 if error_code == "NoSuchKey":
-                                    logger.warning(f"{log_prefix} S3 object s3://{s3_bucket_name_for_flow}/{sprite_artifact_s3_key} not found (NoSuchKey). Assuming already deleted.")
+                                    logger.warning(f"{log_prefix} S3 sprite object s3://{s3_bucket_name_for_flow}/{sprite_artifact_s3_key} not found (NoSuchKey). Assuming already deleted.")
                                     s3_deletion_successful = True
                                 else:
-                                    logger.error(f"{log_prefix} Failed to delete S3 object s3://{s3_bucket_name_for_flow}/{sprite_artifact_s3_key}. Code: {error_code}, Error: {e}")
+                                    logger.error(f"{log_prefix} Failed to delete S3 sprite object s3://{s3_bucket_name_for_flow}/{sprite_artifact_s3_key}. Code: {error_code}, Error: {e}")
                                     s3_deletion_successful = False
                                     error_count += 1
-                            except Exception as e_s3:
-                                logger.error(f"{log_prefix} Unexpected error during S3 deletion: {e_s3}", exc_info=True)
+                            except Exception as e_s3_sprite:
+                                logger.error(f"{log_prefix} Unexpected error during S3 sprite deletion: {e_s3_sprite}", exc_info=True)
                                 s3_deletion_successful = False
                                 error_count += 1
-
+                
                     if s3_deletion_successful:
                         final_state_map = {
                             "approved_pending_deletion": "review_approved",
-                            "archived_pending_deletion": "archived",
+                            "archived_pending_deletion": "archived"
                         }
                         final_clip_state = final_state_map.get(current_state)
 
@@ -171,6 +172,7 @@ async def cleanup_reviewed_clips_flow(
 
                         async with conn.transaction():
                             logger.debug(f"{log_prefix} Starting DB transaction for final updates.")
+                            
                             if sprite_artifact_s3_key:
                                 delete_artifact_sql = """
                                 DELETE FROM clip_artifacts WHERE clip_id = $1 AND artifact_type = $2;
@@ -180,16 +182,16 @@ async def cleanup_reviewed_clips_flow(
                                 )
                                 deleted_artifact_rows = int(del_res_str.split()[-1]) if del_res_str and del_res_str.startswith("DELETE") else 0
                                 if deleted_artifact_rows > 0:
-                                    logger.info(f"{log_prefix} Deleted {deleted_artifact_rows} artifact record(s) from DB.")
+                                    logger.info(f"{log_prefix} Deleted {deleted_artifact_rows} artifact record(s) from DB for sprite.")
                                     db_artifact_deleted_count += deleted_artifact_rows
                                 else:
-                                    logger.warning(f"{log_prefix} No clip_artifact record found/deleted for S3 key {sprite_artifact_s3_key}.")
+                                    logger.warning(f"{log_prefix} No clip_artifact record found/deleted for sprite S3 key {sprite_artifact_s3_key} (state: {current_state}).")
 
                             update_clip_sql = """
                             UPDATE clips
                                SET ingest_state = $1,
                                    updated_at = NOW(),
-                                   action_committed_at = NULL,
+                                   action_committed_at = NULL, 
                                    last_error = NULL
                              WHERE id = $2 AND ingest_state = $3;
                             """

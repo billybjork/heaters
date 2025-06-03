@@ -29,6 +29,7 @@ except ImportError as e:
 # Module-level constants that are not S3 client/bucket specific
 FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
 CLIP_S3_PREFIX = os.getenv("CLIP_S3_PREFIX", "clips/") # Used for constructing new S3 keys
+ARTIFACT_TYPE_SPRITE_SHEET = "sprite_sheet" # Example, if you need to log specific artifact types
 
 # --- Helper functions (defined locally as the import from .splice is removed) ---
 def run_ffmpeg_command(cmd_list, step_name="ffmpeg command", cwd=None):
@@ -60,6 +61,53 @@ def sanitize_filename(name):
     name = re.sub(r'_+', '_', name).strip('_')
     return name[:150] if name else "default_filename_fallback"
 
+# --- S3 Artifact Deletion Helper ---
+def _delete_clip_s3_artifacts(conn_cursor, clip_id: int, s3_client, s3_bucket_name: str, logger_instance):
+    """
+    Fetches artifact S3 keys for a clip_id, deletes them from S3,
+    and then deletes their records from clip_artifacts table using the provided cursor.
+    """
+    conn_cursor.execute("SELECT id, s3_key FROM clip_artifacts WHERE clip_id = %s;", (clip_id,))
+    artifact_records = conn_cursor.fetchall()
+    
+    s3_keys_for_db_delete_confirmation = []
+
+    if artifact_records:
+        logger_instance.info(f"Found {len(artifact_records)} S3 artifact(s) for clip {clip_id} to process for deletion.")
+        for artifact_record in artifact_records:
+            s3_key_to_delete = artifact_record['s3_key']
+            artifact_db_id = artifact_record['id']
+            if s3_key_to_delete:
+                try:
+                    logger_instance.info(f"Deleting S3 artifact: s3://{s3_bucket_name}/{s3_key_to_delete} (DB ID: {artifact_db_id}) for clip {clip_id}")
+                    s3_client.delete_object(Bucket=s3_bucket_name, Key=s3_key_to_delete)
+                    s3_keys_for_db_delete_confirmation.append(s3_key_to_delete)
+                    logger_instance.info(f"Successfully deleted S3 artifact {s3_key_to_delete} for clip {clip_id}.")
+                except ClientError as e_s3_art:
+                    error_code = e_s3_art.response.get("Error", {}).get("Code", "Unknown")
+                    if error_code == "NoSuchKey":
+                        logger_instance.warning(f"S3 artifact {s3_key_to_delete} for clip {clip_id} not found (NoSuchKey). Assuming already deleted.")
+                        s3_keys_for_db_delete_confirmation.append(s3_key_to_delete) # Still counts as processed for DB deletion
+                    else:
+                        logger_instance.error(f"Failed to delete S3 artifact {s3_key_to_delete} for clip {clip_id}. Code: {error_code}, Error: {e_s3_art}. Artifact DB record will NOT be deleted.")
+                        # Do not add to s3_keys_for_db_delete_confirmation if S3 deletion failed for reasons other than NoSuchKey
+            else:
+                logger_instance.warning(f"Clip artifact DB record ID {artifact_db_id} for clip {clip_id} has no s3_key. Skipping S3 deletion for this record.")
+                # We might still want to delete this DB record if it's considered invalid.
+                # For now, only targeting records where S3 deletion was attempted or key was null.
+                # If s3_key is NULL, it means no S3 object to delete, so its DB record can be cleaned up.
+                s3_keys_for_db_delete_confirmation.append(None) # Representing a DB record to delete without S3 counterpart
+
+    # Delete all artifact DB records for the clip_id, regardless of S3 success for individual keys.
+    # The primary goal is that post-merge, the original clips should not have any artifact associations.
+    # Failures in S3 deletion for specific artifacts are logged.
+    if artifact_records: # If there were any records fetched
+        logger_instance.info(f"Deleting {len(artifact_records)} clip_artifacts DB record(s) for clip {clip_id}.")
+        conn_cursor.execute("DELETE FROM clip_artifacts WHERE clip_id = %s;", (clip_id,))
+        logger_instance.info(f"Finished delete attempt for {conn_cursor.rowcount} artifact DB records for clip {clip_id}.")
+    else:
+        logger_instance.info(f"No S3 artifacts found in DB for clip {clip_id}.")
+
 # --- Task Definition ---
 @task(name="Merge Clips Backward", retries=1, retry_delay_seconds=30)
 def merge_clips_task(clip_id_target: int, clip_id_source: int, environment: str = "development"):
@@ -85,7 +133,7 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int, environment: str 
     task_outcome = "failed" # Default task outcome
 
     # --- Get S3 Resources ---
-    s3_client_for_task, s3_bucket_name_for_task = get_s3_resources(environment, logger=get_run_logger())
+    s3_client_for_task, s3_bucket_name_for_task = get_s3_resources(environment, logger=logger)
 
     # --- Pre-checks ---
     if clip_id_target == clip_id_source: raise ValueError("Cannot merge a clip with itself.")
@@ -133,10 +181,10 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int, environment: str 
 
                 if clip_target_data['ingest_state'] != expected_target_state and clip_target_data['ingest_state'] != 'merge_failed':
                      logger.warning(f"Target clip {clip_id_target} state is '{clip_target_data['ingest_state']}' (expected '{expected_target_state}' or 'merge_failed').")
-                     # Depending on strictness, could raise error here.
+                     # Depending on strictness, could raise error here. Current logic allows proceeding.
                 if clip_source_data['ingest_state'] != expected_source_state and clip_source_data['ingest_state'] != 'merge_failed':
                      logger.warning(f"Source clip {clip_id_source} state is '{clip_source_data['ingest_state']}' (expected '{expected_source_state}' or 'merge_failed').")
-                     # Depending on strictness, could raise error here.
+                     # Depending on strictness, could raise error here. Current logic allows proceeding.
 
                 target_meta = clip_target_data.get('processing_metadata') or {}
                 source_meta = clip_source_data.get('processing_metadata') or {}
@@ -239,60 +287,109 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int, environment: str 
                 cur.execute("SELECT pg_advisory_xact_lock(2, %s)", (clip_id_source,))
                 logger.debug(f"Re-acquired locks for final DB update of target {clip_id_target} and source {clip_id_source}")
 
-                delete_artifacts_sql = sql.SQL("DELETE FROM clip_artifacts WHERE clip_id = ANY(%s);")
-                affected_clips_list = [clip_id_target, clip_id_source]
-                cur.execute(delete_artifacts_sql, (affected_clips_list,))
-                logger.info(f"Deleted {cur.rowcount} existing artifact(s) for clips {clip_id_target} and {clip_id_source}.")
+                # Delete S3 artifacts and their DB records for original clips
+                logger.info(f"Processing S3 artifact deletion for original target clip {clip_id_target}")
+                _delete_clip_s3_artifacts(cur, clip_id_target, s3_client_for_task, s3_bucket_name_for_task, logger)
+                logger.info(f"Processing S3 artifact deletion for original source clip {clip_id_source}")
+                _delete_clip_s3_artifacts(cur, clip_id_source, s3_client_for_task, s3_bucket_name_for_task, logger)
+                
+                # Insert new merged clip record
+                new_clip_start_frame = clip_target_data['start_frame']
+                new_clip_end_frame = clip_source_data['end_frame'] # from original source clip data
+                new_clip_start_time = clip_target_data['start_time_seconds']
+                new_clip_end_time = clip_source_data['end_time_seconds'] # from original source clip data
 
-                update_target_sql = sql.SQL("""
+                insert_new_clip_sql = sql.SQL("""
+                    INSERT INTO clips (
+                        source_video_id, clip_filepath, clip_identifier,
+                        start_frame, end_frame, start_time_seconds, end_time_seconds,
+                        ingest_state, processing_metadata, last_error
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    ) RETURNING id;
+                """)
+                new_clip_metadata = {
+                    "merged_from_clips": [clip_id_target, clip_id_source],
+                    "original_target_identifier": clip_target_data.get('clip_identifier'),
+                    "original_source_identifier": clip_source_data.get('clip_identifier')
+                }
+                cur.execute(insert_new_clip_sql, (
+                    source_video_id, updated_clip_s3_key, updated_clip_identifier,
+                    new_clip_start_frame, new_clip_end_frame, new_clip_start_time, new_clip_end_time,
+                    'pending_sprite_generation', psycopg2.extras.Json(new_clip_metadata), None
+                ))
+                new_merged_clip_id = cur.fetchone()[0]
+                if not new_merged_clip_id:
+                    raise RuntimeError("Failed to get new clip ID after insert.")
+                logger.info(f"Created new merged clip record with ID: {new_merged_clip_id}")
+
+                # Update original target clip
+                update_original_clip_sql = sql.SQL("""
                     UPDATE clips
                     SET
-                        clip_filepath = %s, clip_identifier = %s,
-                        end_frame = %s, end_time_seconds = %s,
-                        ingest_state = %s, processing_metadata = NULL,
-                        last_error = 'Merged with clip ' || %s::text,
+                        ingest_state = 'archived', 
+                        processing_metadata = %s::jsonb,
+                        last_error = %s,
                         keyframed_at = NULL, embedded_at = NULL,
-                        reviewed_at = NULL, -- Reset for new review cycle
-                        action_committed_at = NULL -- Reset for new review cycle
-                    WHERE id = %s AND ingest_state = %s; -- Concurrency check on expected state
-                """)
-                cur.execute(update_target_sql, (
-                    updated_clip_s3_key, updated_clip_identifier, new_end_frame,
-                    new_end_time, 'pending_sprite_generation',
-                    clip_id_source, clip_id_target, expected_target_state # Check against original expected state from initiator
+                        reviewed_at = NULL, action_committed_at = NULL,
+                        updated_at = NOW()
+                    WHERE id = %s AND ingest_state IN (%s, 'merge_failed'); 
+                """) # Allow update if it was already 'merge_failed' from a previous attempt
+
+                target_final_metadata = {"merged_into_clip_id": new_merged_clip_id}
+                cur.execute(update_original_clip_sql, (
+                    psycopg2.extras.Json(target_final_metadata),
+                    f'Merged to new clip {new_merged_clip_id}',
+                    clip_id_target, expected_target_state
                 ))
                 if cur.rowcount == 0:
-                    logger.error(f"Target clip {clip_id_target} update failed. Row not found or state changed from '{expected_target_state}'.")
-                    raise RuntimeError(f"Target clip {clip_id_target} update failed due to state mismatch or deletion.")
-                logger.info(f"Updated target clip {clip_id_target}. State -> 'pending_sprite_generation'.")
+                    logger.error(f"Original target clip {clip_id_target} update to 'archived' failed. Row not found or state not '{expected_target_state}' or 'merge_failed'.")
+                    # This could be critical, consider raising an error to rollback
+                    raise RuntimeError(f"Target clip {clip_id_target} update to 'archived' failed due to state mismatch or deletion.")
+                logger.info(f"Updated original target clip {clip_id_target} to state 'archived'.")
 
-                archive_source_sql = sql.SQL("""
-                    UPDATE clips
-                    SET
-                        ingest_state = 'merged',
-                        processing_metadata = jsonb_set(COALESCE(processing_metadata, '{}'::jsonb), '{merged_into_clip_id}', %s::jsonb),
-                        last_error = 'Merged into clip ' || %s::text,
-                        keyframed_at = NULL, embedded_at = NULL
-                    WHERE id = %s AND ingest_state = %s; -- Concurrency check
-                """)
-                cur.execute(archive_source_sql, (
-                    json.dumps(clip_id_target),
-                    clip_id_target, clip_id_source, expected_source_state # Check against original expected state from initiator
+                # Update original source clip
+                source_final_metadata = {"merged_into_clip_id": new_merged_clip_id}
+                cur.execute(update_original_clip_sql, (
+                    psycopg2.extras.Json(source_final_metadata),
+                    f'Merged to new clip {new_merged_clip_id}',
+                    clip_id_source, expected_source_state
                 ))
                 if cur.rowcount == 0:
-                    logger.error(f"Source clip {clip_id_source} archival failed. Row not found or state changed from '{expected_source_state}'.")
-                    # This might be acceptable if target update succeeded, but log warning.
-                    # For stricter consistency, could raise error.
-                    logger.warning(f"Source clip {clip_id_source} archival failed due to state mismatch or deletion. Target was updated.")
-                else:
-                    logger.info(f"Archived source clip {clip_id_source} with state 'merged'.")
+                    logger.error(f"Original source clip {clip_id_source} update to 'archived' failed. Row not found or state not '{expected_source_state}' or 'merge_failed'.")
+                    # This could be critical, consider raising an error to rollback
+                    raise RuntimeError(f"Source clip {clip_id_source} update to 'archived' failed due to state mismatch or deletion.")
+                logger.info(f"Updated original source clip {clip_id_source} to state 'archived'.")
 
-                logger.info(f"S3 Cleanup eventually needed for ORIGINAL clips: s3://{s3_bucket_name_for_task}/{clip_target_data['clip_filepath']} and s3://{s3_bucket_name_for_task}/{clip_source_data['clip_filepath']}")
+                # logger.info(f"S3 Video Cleanup eventually needed for ORIGINAL clips (now in 'merged_to_new' state): s3://{s3_bucket_name_for_task}/{clip_target_data['clip_filepath']} and s3://{s3_bucket_name_for_task}/{clip_source_data['clip_filepath']}")
 
             conn.commit()
-            logger.info(f"Merge DB changes committed. Target clip {clip_id_target} updated, source clip {clip_id_source} (attempted) archived.")
+            logger.info(f"Merge DB changes committed. New clip {new_merged_clip_id} created. Originals {clip_id_target}, {clip_id_source} updated to 'archived'.")
             task_outcome = "success"
-            return {"status": "success", "updated_clip_id": clip_id_target, "archived_clip_id": clip_id_source}
+
+            # Attempt to delete original S3 video files AFTER successful DB commit
+            original_s3_videos_to_delete = [
+                (clip_target_data['clip_filepath'], clip_id_target, "target"),
+                (clip_source_data['clip_filepath'], clip_id_source, "source")
+            ]
+            for s3_key, original_id, clip_role in original_s3_videos_to_delete:
+                if s3_key:
+                    try:
+                        logger.info(f"Attempting to delete original S3 video file for {clip_role} clip {original_id}: s3://{s3_bucket_name_for_task}/{s3_key}")
+                        s3_client_for_task.delete_object(Bucket=s3_bucket_name_for_task, Key=s3_key)
+                        logger.info(f"Successfully deleted original S3 video file for {clip_role} clip {original_id}.")
+                    except ClientError as e_s3_vid_del:
+                        error_code = e_s3_vid_del.response.get("Error", {}).get("Code", "Unknown")
+                        if error_code == "NoSuchKey":
+                            logger.warning(f"Original S3 video file for {clip_role} clip {original_id} (s3://{s3_bucket_name_for_task}/{s3_key}) not found (NoSuchKey). Assuming already deleted.")
+                        else:
+                            logger.error(f"Failed to delete original S3 video file for {clip_role} clip {original_id} (s3://{s3_bucket_name_for_task}/{s3_key}). Code: {error_code}, Error: {e_s3_vid_del}")
+                    except Exception as e_s3_vid_del_generic:
+                        logger.error(f"Unexpected error deleting original S3 video for {clip_role} clip {original_id} (s3://{s3_bucket_name_for_task}/{s3_key}): {e_s3_vid_del_generic}", exc_info=True)
+                else:
+                    logger.warning(f"No S3 filepath found for original {clip_role} clip {original_id}, cannot delete from S3.")
+
+            return {"status": "success", "new_clip_id": new_merged_clip_id, "original_clips_processed": [clip_id_target, clip_id_source]}
 
         except (ValueError, psycopg2.DatabaseError, RuntimeError) as db_err:
             logger.error(f"DB Error during final update for merge: {db_err}", exc_info=True)
