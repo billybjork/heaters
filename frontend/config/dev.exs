@@ -7,13 +7,11 @@ import Config
 # ensuring it connects to the 'app-db-dev' service regardless of
 # a DATABASE_URL environment variable that might be loaded from .env.
 config :frontend, Frontend.Repo,
+  # Setup info matching docker-compose.yaml
   username: "dev_user",
   password: "dev_password",
-  # Service name from docker-compose.yaml
   hostname: "app-db-dev",
-  # Matches POSTGRES_DB in app-db-dev service
   database: "frontend_dev_db",
-  # Port inside the Docker network for app-db-dev
   port: 5432,
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
@@ -63,14 +61,3 @@ config :logger, :console, format: "[$level] $message\n"
 config :phoenix, :stacktrace_depth, 20
 config :phoenix, :plug_init_mode, :runtime
 config :phoenix_live_view, :debug_heex_annotations, true
-
-# Regarding .env loading directly in dev.exs:
-# Since docker-compose's `env_file` directive now loads .env for the frontend service,
-# explicitly loading .env again here with Dotenvy is redundant and could lead to
-# confusion about which value takes precedence if a variable is defined in multiple places.
-# It's generally cleaner to let docker-compose manage the environment variable injection
-# from the .env file for the container.
-#
-# if Code.ensure_loaded?(Dotenvy) and File.exists?(".env") do
-#   Dotenvy.load() # This would load .env again. Best to avoid if docker-compose handles it.
-# end
