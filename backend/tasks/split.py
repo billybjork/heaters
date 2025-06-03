@@ -139,8 +139,8 @@ def split_clip_task(clip_id: int, environment: str = "development"):
                 if not original_clip_data:
                     raise ValueError(f"Original clip {clip_id} not found.")
                 current_state = original_clip_data['ingest_state']
-                if current_state != 'pending_split':
-                    raise ValueError(f"Clip {clip_id} not in 'pending_split' state (state: '{current_state}').")
+                if current_state not in ['splitting', 'split_failed']:
+                    raise ValueError(f"Clip {clip_id} not in 'splitting' or 'split_failed' state (state: '{current_state}'). Initiator should set this.")
                 if not original_clip_data['source_video_filepath']:
                     raise ValueError(f"Missing source video filepath for clip {clip_id}.")
 
@@ -158,10 +158,19 @@ def split_clip_task(clip_id: int, environment: str = "development"):
 
                 logger.debug(f"Source video {source_video_id} locked via FOR UPDATE.")
                 cur.execute(
-                    "UPDATE clips SET ingest_state = 'splitting', updated_at = NOW(), last_error = NULL WHERE id = %s",
+                    """
+                    UPDATE clips SET ingest_state = 'splitting', updated_at = NOW(), last_error = NULL WHERE id = %s
+                    AND ingest_state IN ('pending_split', 'split_failed'); -- Allow transition if it's a retry from pending_split or from a failed state
+                    """,
                     (clip_id,)
                 )
-                logger.info(f"Set clip {clip_id} state to 'splitting'")
+                if cur.rowcount == 0 and current_state != 'splitting': # If it was already splitting, rowcount 0 is okay.
+                     # If it wasn't 'splitting' and update failed, then state was unexpected.
+                     cur.execute("SELECT ingest_state FROM clips WHERE id = %s", (clip_id,))
+                     actual_current_state_on_fail = cur.fetchone()[0] if cur.fetchone() else "NOT_FOUND"
+                     logger.error(f"Failed to set clip {clip_id} to 'splitting'. Expected 'pending_split' or 'split_failed', found '{actual_current_state_on_fail}'.")
+                     raise RuntimeError(f"Failed to transition clip {clip_id} to 'splitting' state. Current state: {actual_current_state_on_fail}")
+                logger.info(f"Clip {clip_id} state confirmed/set to 'splitting' (was: '{current_state}')")
             conn.commit()
             logger.debug("Phase 1 committed.")
         except (ValueError, psycopg2.DatabaseError, TypeError) as err:
@@ -321,12 +330,14 @@ def split_clip_task(clip_id: int, environment: str = "development"):
                       updated_at=NOW(),
                       keyframed_at=NULL,
                       embedded_at=NULL
-                    WHERE id=%s AND ingest_state='splitting';
+                    WHERE id=%s AND ingest_state='splitting'; -- Conditional on active state
                     """,
                     (final_original_state, msg, clip_id)
                 )
                 if cur.rowcount == 0:
-                    raise RuntimeError("Failed to archive original clip")
+                    # This means the state was not 'splitting' when we tried to archive it.
+                    logger.error(f"Failed to archive original clip {clip_id}. Expected state 'splitting', but was different. This indicates a potential concurrency issue or logic error.")
+                    raise RuntimeError(f"Failed to archive original clip {clip_id} - state was not 'splitting'.")
                 cur.execute("DELETE FROM clip_artifacts WHERE clip_id=%s", (clip_id,))
                 logger.info(f"Deleted artifacts for clip {clip_id}")
             conn.commit()
@@ -359,7 +370,7 @@ def split_clip_task(clip_id: int, environment: str = "development"):
                           last_error=%s,
                           processing_metadata=processing_metadata - 'split_at_frame',
                           updated_at=NOW()
-                        WHERE id=%s AND ingest_state IN ('splitting','pending_split');
+                        WHERE id=%s AND ingest_state IN ('splitting','pending_split', 'split_failed'); -- Allow update if it failed at various points
                         """,
                         (err_msg, clip_id)
                     )

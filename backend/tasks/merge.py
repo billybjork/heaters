@@ -79,8 +79,9 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int, environment: str 
     source_video_id = None # Store common source video ID
     clip_target_data = None
     clip_source_data = None
-    expected_target_state = 'pending_merge_target'
-    expected_source_state = 'marked_for_merge_into_previous'
+    # Expected states set by the initiator flow
+    expected_target_state = 'merging_target' 
+    expected_source_state = 'merging_source'
     task_outcome = "failed" # Default task outcome
 
     # --- Get S3 Resources ---
@@ -130,10 +131,12 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int, environment: str 
                 source_video_id = clip_target_data['source_video_id']
                 source_title = clip_target_data.get('source_title', f'source_{source_video_id}')
 
-                if clip_target_data['ingest_state'] != expected_target_state:
-                     logger.warning(f"Target clip {clip_id_target} state is '{clip_target_data['ingest_state']}' (expected '{expected_target_state}'). Proceeding cautiously.")
-                if clip_source_data['ingest_state'] != expected_source_state:
-                     logger.warning(f"Source clip {clip_id_source} state is '{clip_source_data['ingest_state']}' (expected '{expected_source_state}'). Proceeding cautiously.")
+                if clip_target_data['ingest_state'] != expected_target_state and clip_target_data['ingest_state'] != 'merge_failed':
+                     logger.warning(f"Target clip {clip_id_target} state is '{clip_target_data['ingest_state']}' (expected '{expected_target_state}' or 'merge_failed').")
+                     # Depending on strictness, could raise error here.
+                if clip_source_data['ingest_state'] != expected_source_state and clip_source_data['ingest_state'] != 'merge_failed':
+                     logger.warning(f"Source clip {clip_id_source} state is '{clip_source_data['ingest_state']}' (expected '{expected_source_state}' or 'merge_failed').")
+                     # Depending on strictness, could raise error here.
 
                 target_meta = clip_target_data.get('processing_metadata') or {}
                 source_meta = clip_source_data.get('processing_metadata') or {}
@@ -248,13 +251,15 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int, environment: str 
                         end_frame = %s, end_time_seconds = %s,
                         ingest_state = %s, processing_metadata = NULL,
                         last_error = 'Merged with clip ' || %s::text,
-                        updated_at = NOW(), keyframed_at = NULL, embedded_at = NULL
+                        keyframed_at = NULL, embedded_at = NULL,
+                        reviewed_at = NULL, -- Reset for new review cycle
+                        action_committed_at = NULL -- Reset for new review cycle
                     WHERE id = %s AND ingest_state = %s; -- Concurrency check on expected state
                 """)
                 cur.execute(update_target_sql, (
                     updated_clip_s3_key, updated_clip_identifier, new_end_frame,
                     new_end_time, 'pending_sprite_generation',
-                    clip_id_source, clip_id_target, expected_target_state # Check against original state
+                    clip_id_source, clip_id_target, expected_target_state # Check against original expected state from initiator
                 ))
                 if cur.rowcount == 0:
                     logger.error(f"Target clip {clip_id_target} update failed. Row not found or state changed from '{expected_target_state}'.")
@@ -267,12 +272,12 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int, environment: str 
                         ingest_state = 'merged',
                         processing_metadata = jsonb_set(COALESCE(processing_metadata, '{}'::jsonb), '{merged_into_clip_id}', %s::jsonb),
                         last_error = 'Merged into clip ' || %s::text,
-                        updated_at = NOW(), keyframed_at = NULL, embedded_at = NULL
+                        keyframed_at = NULL, embedded_at = NULL
                     WHERE id = %s AND ingest_state = %s; -- Concurrency check
                 """)
                 cur.execute(archive_source_sql, (
                     json.dumps(clip_id_target),
-                    clip_id_target, clip_id_source, expected_source_state # Check against original state
+                    clip_id_target, clip_id_source, expected_source_state # Check against original expected state from initiator
                 ))
                 if cur.rowcount == 0:
                     logger.error(f"Source clip {clip_id_source} archival failed. Row not found or state changed from '{expected_source_state}'.")
@@ -314,9 +319,8 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int, environment: str 
                         """
                         UPDATE clips SET ingest_state = 'merge_failed', last_error = %s,
                                         processing_metadata = NULL, -- Clear merge-related metadata
-                                        updated_at = NOW(),
                                         retry_count = COALESCE(retry_count, 0) + 1
-                        WHERE id = ANY(%s::int[]) AND ingest_state IN (%s, %s);
+                        WHERE id = ANY(%s::int[]) AND ingest_state IN (%s, %s, 'merge_failed'); -- Allow update if already merge_failed
                         """,
                         (error_message_for_db, [clip_id_target, clip_id_source], expected_target_state, expected_source_state)
                     )

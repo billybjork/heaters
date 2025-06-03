@@ -416,38 +416,57 @@ def splice_video_task(source_video_id: int, environment: str = "development"):
                     logger.debug(f"S3 upload successful for {clip_s3_key}")
 
                     # Insert clip record into DB
+                    logger.info(f"Attempting to insert clip_id {idx} (identifier: {clip_identifier}) into database.")
                     cur.execute(
                         """
                         INSERT INTO clips (source_video_id, clip_filepath, clip_identifier,
                                            start_frame, end_frame, start_time_seconds, end_time_seconds,
-                                           ingest_state, created_at, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-                        ON CONFLICT (clip_identifier) DO UPDATE SET -- Handle potential reruns
+                                           ingest_state)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (clip_identifier) DO UPDATE SET
                            clip_filepath = EXCLUDED.clip_filepath,
                            start_frame = EXCLUDED.start_frame,
                            end_frame = EXCLUDED.end_frame,
                            start_time_seconds = EXCLUDED.start_time_seconds,
                            end_time_seconds = EXCLUDED.end_time_seconds,
-                           ingest_state = EXCLUDED.ingest_state, -- Reset state on conflict
-                           updated_at = NOW()
+                           ingest_state = EXCLUDED.ingest_state,
+                           -- updated_at = NOW(), -- Let trigger handle this
+                           last_error = NULL -- Clear error on successful re-processing
                         RETURNING id;
                         """,
                         (source_video_id, clip_s3_key, clip_identifier,
-                         start_frame, end_frame_exclusive, # Store frame numbers
-                         start_time_seconds, end_time_seconds, # Store calculated times
-                         'pending_sprite_generation')
+                         start_frame, end_frame_exclusive,
+                         start_time_seconds, end_time_seconds,
+                         'pending_sprite_generation' # Default state for new clips
+                         )
                     )
                     new_clip_id = cur.fetchone()[0]
                     created_clip_ids.append(new_clip_id)
                     processed_clip_count += 1
-                    logger.info(f"Successfully recorded clip_id: {new_clip_id} (State: pending_sprite_generation)") # Update log
+                    logger.info(f"Successfully recorded clip_id: {new_clip_id} (DB ID), identifier: {clip_identifier} (State: pending_sprite_generation)")
 
-                except (ClientError, psycopg2.DatabaseError, subprocess.CalledProcessError, Exception) as clip_err:
+                except psycopg2.Error as db_clip_err: # More specific catch for DB errors
                     failed_clip_count += 1
-                    logger.error(f"Failed to process/extract/upload/record clip {idx}: {clip_err}", exc_info=True)
-                    # Ensure DB is rolled back if error occurs within loop *before* commit
+                    logger.error(f"DATABASE ERROR processing clip {idx} (identifier: {clip_identifier}): {db_clip_err}. Transaction will be aborted.", exc_info=True)
+                    # It's crucial to break here as the transaction is now dead.
+                    # Further iterations in this loop would fail with InFailedSqlTransaction.
+                    break 
+                except (ClientError, subprocess.CalledProcessError) as non_db_clip_err: # Catch S3 or ffmpeg errors
+                    failed_clip_count += 1
+                    logger.error(f"Non-DB error (S3/ffmpeg) processing clip {idx} (identifier: {clip_identifier}): {non_db_clip_err}", exc_info=True)
+                    # For non-DB errors, the transaction might still be alive.
+                    # Depending on desired behavior, you could choose to 'continue' to try other clips
+                    # or 'break' if any failure should stop all clip processing.
+                    # For now, let's continue, as the transaction isn't necessarily dead.
+                    # However, if this was part of a stricter "all or nothing" for clips from one video, you'd break.
+                    continue # Try the next clip
+                except Exception as general_clip_err: # Catch any other unexpected errors
+                    failed_clip_count += 1
+                    logger.error(f"UNEXPECTED general error processing clip {idx} (identifier: {clip_identifier}): {general_clip_err}", exc_info=True)
+                    # Decide whether to continue or break. Breaking is safer if state is unknown.
+                    break
 
-            # 6. Final Source Video Update (within the same transaction)
+            # 6. Final Source Video Update (within the same transaction, which might be aborted)
             final_source_state = 'spliced'
             final_error_message = None
 
@@ -481,8 +500,7 @@ def splice_video_task(source_video_id: int, environment: str = "development"):
                 UPDATE source_videos
                 SET ingest_state = %s,
                     spliced_at = CASE WHEN %s IN ('spliced', 'splicing_partial_failure') THEN NOW() ELSE spliced_at END,
-                    last_error = %s,
-                    updated_at = NOW()
+                    last_error = %s
                 WHERE id = %s
                 """,
                 (final_source_state, final_source_state, final_error_message, source_video_id)
@@ -502,6 +520,9 @@ def splice_video_task(source_video_id: int, environment: str = "development"):
         logger.info(f"  Failed clip attempts: {failed_clip_count}")
         # Log the s3_bucket_name_for_task used in this run
         logger.info(f"  S3 Bucket Used: {s3_bucket_name_for_task}")
+
+        final_status = "success" # Initialize to success
+        error_message = None # Ensure error_message is also initialized
 
         if failed_clip_count > 0 or not created_clip_ids:
             final_status = "partial_success" if created_clip_ids else "failed_no_clips"
@@ -534,8 +555,7 @@ def splice_video_task(source_video_id: int, environment: str = "development"):
                         """
                         UPDATE source_videos
                         SET ingest_state = 'splicing_failed',
-                            last_error = %s,
-                            updated_at = NOW()
+                            last_error = %s
                         WHERE id = %s AND ingest_state = 'splicing'
                         """,
                         (f"{type(e).__name__}: {str(e)[:500]}", source_video_id)

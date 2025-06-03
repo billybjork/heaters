@@ -129,6 +129,7 @@ def _commit_pending_review_actions(environment: str, grace_period_seconds: int):
                 WHERE   l.rn = 1
                   AND   c.ingest_state = 'pending_review'
                   AND   l.created_at < (NOW() - INTERVAL %s)
+                  AND   (c.action_committed_at IS NULL OR l.created_at > c.action_committed_at)
                   AND   NOT EXISTS (
                          SELECT 1
                          FROM   clip_events u
@@ -303,10 +304,47 @@ def process_clip_post_review(
     model_name: str = DEFAULT_EMBEDDING_MODEL,
     environment: str = "development"
     ):
-    """Processes an approved clip: keyframing and embedding."""
     logger = get_run_logger()
-    logger.info(f"FLOW: Starting post-review processing for approved clip_id: {clip_id}, Env: {environment}")
+    logger.info(f"FLOW: Starting post-review processing for clip_id: {clip_id}, Env: {environment}")
+
+    initial_state_updated = False
+    try:
+        # Expect 'post_review_initiated' (from initiator) or 'review_approved' (for direct/manual runs)
+        if update_clip_state_sync(
+            environment=environment,
+            clip_id=clip_id,
+            new_state='processing_post_review',
+            expected_old_state=['post_review_initiated', 'review_approved']
+        ):
+            logger.info(f"Clip {clip_id} state transitioned to 'processing_post_review'.")
+            initial_state_updated = True
+        else:
+            # Fetch current state for better logging if update failed
+            current_state_on_fail = "unknown"
+            conn_check_fail = None
+            try:
+                conn_check_fail = get_db_connection(environment)
+                conn_check_fail.autocommit = True
+                with conn_check_fail.cursor() as cur_check_fail:
+                    cur_check_fail.execute("SELECT ingest_state FROM clips WHERE id = %s", (clip_id,))
+                    res = cur_check_fail.fetchone()
+                    if res: current_state_on_fail = res[0]
+            except Exception as e_log_state:
+                logger.warning(f"Could not fetch current state for clip {clip_id} on initial update failure: {e_log_state}")
+            finally:
+                if conn_check_fail: release_db_connection(conn_check_fail, environment)
+
+            logger.warning(
+                f"Failed to transition clip {clip_id} from ['post_review_initiated', 'review_approved'] to 'processing_post_review'. "
+                f"Actual current state: '{current_state_on_fail}'. Item may have been processed or state changed. Skipping further processing."
+            )
+            return # Gracefully exit if state transition fails
+    except Exception as e_state_update:
+        logger.error(f"Error transitioning clip {clip_id} state for post-review processing: {e_state_update}", exc_info=True)
+        return # Exit on error
+
     keyframe_task_succeeded_or_skipped = False
+    final_flow_status = "failed_keyframing" # Default to a failure state for tracking within the flow
 
     try:
         # --- 1. Keyframing ---
@@ -330,9 +368,15 @@ def process_clip_post_review(
             logger.info(f"Keyframing task for clip {clip_id} status '{keyframe_status}'. Assuming acceptable skip.")
             keyframe_task_succeeded_or_skipped = True
         elif keyframe_status in keyframe_failure_statuses:
-            raise RuntimeError(f"Keyframing task failed for clip {clip_id}. Status: {keyframe_status}")
+            logger.error(f"Keyframing task failed for clip {clip_id}. Status: {keyframe_status}. Post-review flow terminating.")
+            final_flow_status = "keyframing_task_failed"
+            raise RuntimeError(f"Keyframing task failed (status: {keyframe_status}) for clip {clip_id}")
         else: # Unknown status
-            raise RuntimeError(f"Keyframing task for clip {clip_id} returned an unknown status: {keyframe_status}")
+            logger.error(f"Keyframing task for clip {clip_id} returned an unknown status: {keyframe_status}. Post-review flow terminating.")
+            final_flow_status = "keyframing_task_unknown_status"
+            # Attempt to set a generic failure state if task didn't.
+            update_clip_state_sync(environment=environment, clip_id=clip_id, new_state='keyframe_extraction_failed', error_message=f"Flow: Unknown keyframe task status: {keyframe_status}")
+            raise RuntimeError(f"Keyframing task for clip {clip_id} returned unknown status: {keyframe_status}")
 
         # --- 2. Embedding ---
         if keyframe_task_succeeded_or_skipped:
@@ -352,20 +396,55 @@ def process_clip_post_review(
 
             if embed_status == "success":
                 logger.info(f"Embedding task OK for clip_id: {clip_id}.")
+                final_flow_status = "success"
             elif embed_status in embed_acceptable_skip_statuses:
                 logger.info(f"Embedding task for clip {clip_id} status '{embed_status}'. Assuming acceptable skip.")
+                final_flow_status = "success_embedding_skipped"
             elif embed_status in embed_failure_statuses:
-                raise RuntimeError(f"Embedding task failed for clip {clip_id}. Status: {embed_status}")
+                logger.error(f"Embedding task failed for clip {clip_id}. Status: {embed_status}. Post-review flow terminating.")
+                final_flow_status = "embedding_task_failed"
+                raise RuntimeError(f"Embedding task failed (status: {embed_status}) for clip {clip_id}")
             else: # Unknown status
-                raise RuntimeError(f"Embedding task for clip {clip_id} returned an unknown status: {embed_status}")
+                logger.error(f"Embedding task for clip {clip_id} returned an unknown status: {embed_status}. Post-review flow terminating.")
+                final_flow_status = "embedding_task_unknown_status"
+                update_clip_state_sync(environment=environment, clip_id=clip_id, new_state='embedding_failed', error_message=f"Flow: Unknown embedding task status: {embed_status}")
+                raise RuntimeError(f"Embedding task for clip {clip_id} returned unknown status: {embed_status}")
         else:
             logger.warning(f"Skipping embedding for clip {clip_id} due to prior keyframing outcome.")
+            final_flow_status = "keyframed_embedding_skipped" # Keyframing was ok/skipped, but embedding not run.
 
     except Exception as e:
-        stage = "embedding" if keyframe_task_succeeded_or_skipped else "keyframing"
-        logger.error(f"Error during post-review processing flow (stage: {stage}, env: {environment}) for clip_id {clip_id}: {e}", exc_info=True)
+        stage_failed = "embedding" if keyframe_task_succeeded_or_skipped and final_flow_status.startswith("embedding_") else "keyframing"
+        logger.error(f"Error during post-review processing flow (stage: {stage_failed}, env: {environment}) for clip_id {clip_id}: {e}", exc_info=True)
+        
+        if initial_state_updated: # Only try to set failure state if initial transition happened
+            conn_check = None
+            try:
+                conn_check = get_db_connection(environment)
+                conn_check.autocommit = True
+                with conn_check.cursor() as cur_check:
+                    cur_check.execute("SELECT ingest_state FROM clips WHERE id = %s", (clip_id,))
+                    current_db_state_on_error_row = cur_check.fetchone()
+                    current_db_state_on_error = current_db_state_on_error_row[0] if current_db_state_on_error_row else None
+                    
+                    # Set a general flow failure state only if a specific task failure state isn't already set
+                    if current_db_state_on_error == 'processing_post_review':
+                        update_clip_state_sync(
+                            environment=environment,
+                            clip_id=clip_id,
+                            new_state='post_review_processing_failed',
+                            error_message=f"Flow failed at {stage_failed} stage: {str(e)[:200]}"
+                        )
+                        logger.info(f"Set clip {clip_id} state to 'post_review_processing_failed' due to flow error.")
+                    else:
+                        logger.warning(f"Flow error for clip {clip_id}, but current state is '{current_db_state_on_error}', not 'processing_post_review'. Not overwriting with generic flow failure state.")
+            except Exception as e_final_update:
+                logger.error(f"Failed to update clip {clip_id} state on flow error: {e_final_update}")
+            finally:
+                if conn_check: release_db_connection(conn_check, environment)
         raise # Re-raise to mark the flow run as failed
-    logger.info(f"FLOW: Finished post-review processing flow for clip_id: {clip_id}, Env: {environment}")
+
+    logger.info(f"FLOW: Finished post-review processing flow for clip_id: {clip_id}, Env: {environment}. Final Status Hint: {final_flow_status}")
 
 
 @flow(name="Scheduled Ingest Initiator", log_prints=True)
@@ -400,7 +479,117 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
     except Exception as e_commit:
         logger.error(f"Error committing review actions in '{effective_env}': {e_commit}", exc_info=True)
 
-    # --- 2. Process Pending Merge Pairs (before general work to prioritize merges) ---
+    # --- 2. Process General Pending Work (Intake, Splice, Post-Review, Sprite Generation) ---
+    if submitted_this_cycle < MAX_NEW_SUBMISSIONS_PER_CYCLE:
+        logger.info(f"INITIATOR ('{effective_env}'): Checking for general pending work (intake, splice, sprite, post-review)...")
+        try:
+            items_to_process = get_all_pending_work(environment=effective_env, limit_per_stage=limit_per_stage)
+            logger.info(f"Found {len(items_to_process)} general pending work items in '{effective_env}'.")
+
+            if not items_to_process:
+                logger.info(f"No general pending work found across any stage in '{effective_env}'.")
+            else:
+                for item in items_to_process:
+                    if submitted_this_cycle >= MAX_NEW_SUBMISSIONS_PER_CYCLE:
+                        logger.info(f"Reached max submissions ({MAX_NEW_SUBMISSIONS_PER_CYCLE}), deferring further general tasks for '{effective_env}'.")
+                        break
+
+                    item_id = item.get('id')
+                    stage = item.get('stage')
+                    logger.info(f"Processing item ID: {item_id}, Stage: {stage} in '{effective_env}'")
+
+                    try:
+                        if stage == 'intake':
+                            logger.info(f"Attempting to set state to 'downloading' for source_video_id {item_id} in '{effective_env}' before submitting intake task.")
+                            # Initiator looks for 'new' or 'download_failed'
+                            if update_source_video_state_sync(environment=effective_env, source_video_id=item_id, new_state='downloading', expected_old_state='new') or \
+                               update_source_video_state_sync(environment=effective_env, source_video_id=item_id, new_state='downloading', expected_old_state='download_failed'):
+                                input_val = get_source_input_from_db(source_video_id=item_id, environment=effective_env)
+                                if input_val:
+                                    logger.info(f"State successfully set to 'downloading' for source_video_id {item_id}. Submitting intake_task with input '{input_val[:50]}...'.")
+                                    intake_task.submit(source_video_id=item_id, input_source=input_val, environment=effective_env)
+                                    submitted_this_cycle += 1
+                                else:
+                                    logger.warning(f"State set to 'downloading' for source_video_id {item_id}, but no input_source found in DB. Reverting state or marking as error might be needed.")
+                                    update_source_video_state_sync(environment=effective_env, source_video_id=item_id, new_state='download_failed', error_message='Missing input_source in DB after state transition for intake.')
+                            else:
+                                logger.warning(f"Failed to update state to 'downloading' for source_video_id {item_id} (expected 'new' or 'download_failed'). Skipping intake task submission. Current state might have been changed by another process.")
+
+                        elif stage == 'splice':
+                            logger.info(f"Attempting to set state to 'splicing' for source_video_id {item_id} in '{effective_env}' before submitting splice task.")
+                            if update_source_video_state_sync(environment=effective_env, source_video_id=item_id, new_state='splicing', expected_old_state='downloaded') or \
+                               update_source_video_state_sync(environment=effective_env, source_video_id=item_id, new_state='splicing', expected_old_state='splicing_failed'):
+                                logger.info(f"State successfully set to 'splicing' for source_video_id {item_id}. Submitting splice_video_task.")
+                                splice_video_task.submit(source_video_id=item_id, environment=effective_env)
+                                submitted_this_cycle += 1
+                            else:
+                                logger.warning(f"Failed to update state to 'splicing' for source_video_id {item_id} (expected 'downloaded' or 'splicing_failed'). Skipping splice task submission.")
+                        
+                        elif stage == 'pending_sprite_generation':
+                            logger.info(f"Attempting to set state to 'generating_sprite' for clip_id {item_id} in '{effective_env}' before submitting sprite task.")
+                            if update_clip_state_sync(environment=effective_env, clip_id=item_id, new_state='generating_sprite', expected_old_state='pending_sprite_generation'):
+                                logger.info(f"State successfully set to 'generating_sprite' for clip_id {item_id}. Submitting generate_sprite_sheet_task.")
+                                generate_sprite_sheet_task.submit(clip_id=item_id, environment=effective_env, overwrite_existing=False)
+                                submitted_this_cycle += 1
+                            else:
+                                logger.warning(f"Failed to update state to 'generating_sprite' for clip_id {item_id} (expected 'pending_sprite_generation'). Skipping sprite task submission.")
+
+                        elif stage == 'post_review':
+                            logger.info(f"Attempting to set state to 'post_review_initiated' for clip_id {item_id} (expected 'review_approved') in '{effective_env}'.")
+                            if update_clip_state_sync(
+                                environment=effective_env,
+                                clip_id=item_id,
+                                new_state='post_review_initiated',
+                                expected_old_state='review_approved'
+                            ):
+                                logger.info(f"State for clip {item_id} successfully set to 'post_review_initiated'. Submitting process_clip_post_review deployment.")
+                                run_deployment(
+                                    name="process-clip-post-review/process-clip-post-review-default",
+                                    parameters={
+                                        "clip_id": item_id,
+                                        "environment": effective_env
+                                    },
+                                    timeout=0 # Fire and forget
+                                )
+                                submitted_this_cycle += 1
+                            else:
+                                # Fetch current state for better logging if update failed
+                                current_state_on_fail_initiator = "unknown"
+                                conn_check_init_fail = None
+                                try:
+                                    conn_check_init_fail = get_db_connection(effective_env)
+                                    conn_check_init_fail.autocommit = True
+                                    with conn_check_init_fail.cursor() as cur_check_init_fail:
+                                        cur_check_init_fail.execute("SELECT ingest_state FROM clips WHERE id = %s", (item_id,))
+                                        res_init = cur_check_init_fail.fetchone()
+                                        if res_init: current_state_on_fail_initiator = res_init[0]
+                                except Exception as e_log_state_init:
+                                    logger.warning(f"Could not fetch current state for clip {item_id} on initiator update failure: {e_log_state_init}")
+                                finally:
+                                    if conn_check_init_fail: release_db_connection(conn_check_init_fail, effective_env)
+
+                                logger.warning(
+                                    f"Failed to update state for clip {item_id} from 'review_approved' to 'post_review_initiated'. "
+                                    f"Actual current state: '{current_state_on_fail_initiator}'. Skipping deployment. Another initiator might have claimed it."
+                                )
+                        else:
+                            logger.warning(f"Unknown stage '{stage}' for item_id {item_id} in general processing. Skipping.")
+
+                        time.sleep(TASK_SUBMIT_DELAY)
+
+                    except psycopg2.Error as db_err_item_processing:
+                        logger.error(f"Database error processing general item ID {item_id}, Stage {stage} in '{effective_env}': {db_err_item_processing}", exc_info=True)
+                    except Exception as e_item:
+                        logger.error(f"Error submitting task for general item ID {item_id}, Stage {stage} in '{effective_env}': {e_item}", exc_info=True)
+        
+        except psycopg2.Error as db_err_main_loop:
+            logger.error(f"Database error in general processing loop of initiator (env '{effective_env}'): {db_err_main_loop}", exc_info=True)
+            # Not raising here to allow merge/split to potentially run
+        except Exception as e_main:
+            logger.error(f"General error in general processing loop of initiator (env '{effective_env}'): {e_main}", exc_info=True)
+            # Not raising here
+
+    # --- 3. Process Pending Merge Pairs ---
     if submitted_this_cycle < MAX_NEW_SUBMISSIONS_PER_CYCLE:
         logger.info(f"INITIATOR ('{effective_env}'): Checking for pending merge pairs...")
         try:
@@ -412,10 +601,24 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
                         logger.info(f"Reached max submissions ({MAX_NEW_SUBMISSIONS_PER_CYCLE}), deferring further merge tasks for '{effective_env}'.")
                         break
                     try:
-                        logger.info(f"Submitting merge_clips_task for target {target_id}, source {source_id} in '{effective_env}'.")
-                        merge_clips_task.submit(clip_id_target=target_id, clip_id_source=source_id, environment=effective_env)
-                        submitted_this_cycle += 1
-                        time.sleep(TASK_SUBMIT_DELAY) # Small delay
+                        logger.info(f"Attempting state updates for merge: Target {target_id} ('pending_merge_target' -> 'merging_target'), Source {source_id} ('marked_for_merge_into_previous' -> 'merging_source')")
+                        target_updated = update_clip_state_sync(environment=effective_env, clip_id=target_id, new_state='merging_target', expected_old_state='pending_merge_target')
+                        source_updated = False # Initialize
+                        if target_updated:
+                            source_updated = update_clip_state_sync(environment=effective_env, clip_id=source_id, new_state='merging_source', expected_old_state='marked_for_merge_into_previous')
+                        
+                        if target_updated and source_updated:
+                            logger.info(f"States successfully updated for merge. Submitting merge_clips_task for target {target_id}, source {source_id} in '{effective_env}'.")
+                            merge_clips_task.submit(clip_id_target=target_id, clip_id_source=source_id, environment=effective_env)
+                            submitted_this_cycle += 1
+                            time.sleep(TASK_SUBMIT_DELAY) # Small delay
+                        else:
+                            logger.warning(f"Failed to update states for merge pair (Target: {target_id}, Source: {source_id}). Target update: {target_updated}, Source update: {source_updated}. Skipping submission.")
+                            if target_updated and not source_updated: # Rollback target if source failed
+                                logger.info(f"Rolling back target clip {target_id} state to 'pending_merge_target'.")
+                                update_clip_state_sync(environment=effective_env, clip_id=target_id, new_state='pending_merge_target', expected_old_state='merging_target')
+                            # If target_updated is false, source_updated wouldn't have been attempted or would be false.
+
                     except Exception as e_merge_submit:
                         logger.error(f"Failed to submit merge_clips_task for target {target_id}, source {source_id} in '{effective_env}': {e_merge_submit}", exc_info=True)
             else:
@@ -423,7 +626,7 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
         except Exception as e_get_merges:
             logger.error(f"Error fetching pending merge pairs in '{effective_env}': {e_get_merges}", exc_info=True)
 
-    # --- 3. Process Pending Split Jobs (before general work to prioritize splits) ---
+    # --- 4. Process Pending Split Jobs ---
     if submitted_this_cycle < MAX_NEW_SUBMISSIONS_PER_CYCLE:
         logger.info(f"INITIATOR ('{effective_env}'): Checking for pending split jobs...")
         try:
@@ -435,10 +638,14 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
                         logger.info(f"Reached max submissions ({MAX_NEW_SUBMISSIONS_PER_CYCLE}), deferring further split tasks for '{effective_env}'.")
                         break
                     try:
-                        logger.info(f"Submitting split_clip_task for original clip {original_clip_id} at frame {split_frame} in '{effective_env}'.")
-                        split_clip_task.submit(clip_id=original_clip_id, environment=effective_env)
-                        submitted_this_cycle += 1
-                        time.sleep(TASK_SUBMIT_DELAY)
+                        logger.info(f"Attempting state update for split: Clip {original_clip_id} ('pending_split' -> 'splitting')")
+                        if update_clip_state_sync(environment=effective_env, clip_id=original_clip_id, new_state='splitting', expected_old_state='pending_split'):
+                            logger.info(f"State updated to 'splitting' for clip {original_clip_id}. Submitting split_clip_task for frame {split_frame} in '{effective_env}'.")
+                            split_clip_task.submit(clip_id=original_clip_id, environment=effective_env)
+                            submitted_this_cycle += 1
+                            time.sleep(TASK_SUBMIT_DELAY)
+                        else:
+                            logger.warning(f"Failed to update state to 'splitting' for clip {original_clip_id} (expected 'pending_split'). Skipping submission.")
                     except Exception as e_split_submit:
                         logger.error(f"Failed to submit split_clip_task for clip {original_clip_id} in '{effective_env}': {e_split_submit}", exc_info=True)
             else:
@@ -446,69 +653,11 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
         except Exception as e_get_splits:
             logger.error(f"Error fetching pending split jobs in '{effective_env}': {e_get_splits}", exc_info=True)
 
-    # --- 4. Process General Pending Work (Intake, Splice, Post-Review) ---
-    logger.info(f"INITIATOR ('{effective_env}'): Checking for general pending work (intake, splice, post-review)...")
-    try:
-        items_to_process = get_all_pending_work(environment=effective_env, limit_per_stage=limit_per_stage)
-        logger.info(f"Found {len(items_to_process)} general pending work items in '{effective_env}'.")
-
-        if not items_to_process:
-            logger.info(f"No pending work found across any stage in '{effective_env}'.")
-        else:
-            for item in items_to_process:
-                if submitted_this_cycle >= MAX_NEW_SUBMISSIONS_PER_CYCLE:
-                    logger.info(f"Reached max submissions ({MAX_NEW_SUBMISSIONS_PER_CYCLE}), deferring further tasks for '{effective_env}'.")
-                    break
-
-                item_id = item.get('id')
-                stage = item.get('stage')
-                logger.info(f"Processing item ID: {item_id}, Stage: {stage} in '{effective_env}'")
-
-                try:
-                    if stage == 'intake':
-                        input_val = get_source_input_from_db(source_video_id=item_id, environment=effective_env)
-                        if input_val:
-                            logger.info(f"Submitting intake_task for source_video_id {item_id} with input '{input_val[:50]}...' in '{effective_env}'")
-                            intake_task.submit(source_video_id=item_id, input_source=input_val, environment=effective_env)
-                            submitted_this_cycle += 1
-                        else:
-                            logger.warning(f"Skipping intake for source_video_id {item_id}: No input_source found in DB (env: '{effective_env}').")
-                            update_source_video_state_sync(environment=effective_env, source_video_id=item_id, new_state='download_failed', error_message='Missing input_source in DB')
-
-                    elif stage == 'splice':
-                        logger.info(f"Submitting splice_video_task for source_video_id {item_id} in '{effective_env}'.")
-                        splice_video_task.submit(source_video_id=item_id, environment=effective_env)
-                        submitted_this_cycle += 1
-
-                    elif stage == 'sprite': # This was 'sprite' from get_all_pending_work, now interpreted as post-review
-                        logger.info(f"Submitting process_clip_post_review deployment for clip_id {item_id} in '{effective_env}'.")
-                        run_deployment(
-                            name="process-clip-post-review/process-clip-post-review-default",
-                            parameters={
-                                "clip_id": item_id,
-                                "environment": effective_env # Pass the determined environment
-                            },
-                            timeout=0 # Fire and forget
-                        )
-                        submitted_this_cycle += 1
-                    else:
-                        logger.warning(f"Unknown stage '{stage}' for item_id {item_id}. Skipping.")
-
-                    time.sleep(TASK_SUBMIT_DELAY) # Small delay after each submission
-
-                except psycopg2.Error as db_err_item_processing: # Catch DB errors specific to item processing
-                    logger.error(f"Database error processing item ID {item_id}, Stage {stage} in '{effective_env}': {db_err_item_processing}", exc_info=True)
-                    # Optionally update state to failed for this specific item if appropriate
-                except Exception as e_item:
-                    logger.error(f"Error submitting task for item ID {item_id}, Stage {stage} in '{effective_env}': {e_item}", exc_info=True)
-                    # Log and continue to next item
-
-    except psycopg2.Error as db_err_main_loop:
-        logger.error(f"Database error in main processing loop of initiator (env '{effective_env}'): {db_err_main_loop}", exc_info=True)
-        raise # Critical failure
-    except Exception as e_main:
-        logger.error(f"General error in scheduled_ingest_initiator (env '{effective_env}'): {e_main}", exc_info=True)
-        raise # Re-raise to make Prefect aware of the failure for the flow run
+    # --- Overall Flow Exception Handling ---
+    # This is tricky because individual sections have their own try-except.
+    # If any of the main fetching mechanisms (get_all_pending_work, get_pending_merge_pairs, get_pending_split_jobs)
+    # raise a critical DB error, we might want to fail the flow run.
+    # For now, errors in individual submissions are logged and skipped.
 
     logger.info(f"INITIATOR FLOW: Finished processing cycle in '{effective_env}'. Submitted {submitted_this_cycle} tasks/deployments.")
 
@@ -725,11 +874,65 @@ def intake_source_flow(
     overwrite_existing: bool = False,
     environment: str = "development"
 ):
-    # simply invoke the existing task
-    return intake_task(
-      source_video_id=source_video_id,
-      input_source=input_source,
-      re_encode_for_qt=re_encode_for_qt,
-      overwrite_existing=overwrite_existing,
-      environment=environment
-    )
+    logger = get_run_logger()
+    logger.info(f"FLOW 'Intake Source Video': Starting for source_video_id: {source_video_id}, Env: {environment}")
+
+    # Attempt to claim the source_video by transitioning its state
+    # Direct flow looks for 'new_direct_submission' or 'download_failed'
+    state_updated_by_flow = False
+    if update_source_video_state_sync(
+        environment=environment,
+        source_video_id=source_video_id,
+        new_state='downloading',
+        expected_old_state='new_direct_submission'
+    ):
+        state_updated_by_flow = True
+        logger.info(f"Successfully transitioned source_video_id {source_video_id} from 'new_direct_submission' to 'downloading'.")
+    elif update_source_video_state_sync(
+        environment=environment,
+        source_video_id=source_video_id,
+        new_state='downloading',
+        expected_old_state='download_failed'
+    ):
+        state_updated_by_flow = True
+        logger.info(f"Successfully transitioned source_video_id {source_video_id} from 'download_failed' to 'downloading' (retry).")
+    else:
+        # Fetch current state for better logging if update failed
+        current_state_on_fail = "unknown"
+        conn_check_flow_fail = None
+        try:
+            conn_check_flow_fail = get_db_connection(environment)
+            conn_check_flow_fail.autocommit = True
+            with conn_check_flow_fail.cursor() as cur_check_flow_fail:
+                cur_check_flow_fail.execute("SELECT ingest_state FROM source_videos WHERE id = %s", (source_video_id,))
+                res_flow = cur_check_flow_fail.fetchone()
+                if res_flow: current_state_on_fail = res_flow[0]
+        except Exception as e_log_state_flow:
+            logger.warning(f"Could not fetch current state for source_video_id {source_video_id} on flow update failure: {e_log_state_flow}")
+        finally:
+            if conn_check_flow_fail: release_db_connection(conn_check_flow_fail, environment)
+
+        logger.warning(
+            f"FLOW 'Intake Source Video': Failed to transition source_video_id {source_video_id} to 'downloading' "
+            f"(expected 'new_direct_submission' or 'download_failed'). Actual current state: '{current_state_on_fail}'. "
+            f"Skipping intake_task submission. Another process (e.g., scheduled initiator) may have already claimed it."
+        )
+        # Optionally, return a specific status or raise an error to indicate non-processing
+        return { "status": "skipped_state_claim", "source_video_id": source_video_id, "reason": f"State was '{current_state_on_fail}', expected new_direct_submission/download_failed" }
+
+    if state_updated_by_flow:
+        logger.info(f"Proceeding to call intake_task for source_video_id: {source_video_id}")
+        # Invoke the existing task
+        # The intake_task itself will handle further state changes (e.g., to 'downloaded' or 'download_failed')
+        # and has its own internal locking and overwrite logic.
+        return intake_task(
+            source_video_id=source_video_id,
+            input_source=input_source,
+            re_encode_for_qt=re_encode_for_qt,
+            overwrite_existing=overwrite_existing, # Pass this through to the task
+            environment=environment
+        )
+    else:
+        # This case should ideally not be reached if the above logic correctly returns/raises
+        logger.error(f"FLOW 'Intake Source Video': Logic error for source_video_id {source_video_id}. state_updated_by_flow is False but did not return early.")
+        return { "status": "error_flow_logic", "source_video_id": source_video_id }

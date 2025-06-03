@@ -156,12 +156,18 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False, e
                                    current_state == 'sprite_generation_failed'
 
                 if current_state == 'pending_review' and not overwrite_existing:
-                    logger.warning(f"Clip {clip_id} is already 'pending_review'. Skipping sprite generation.")
+                    logger.warning(f"Clip {clip_id} is already 'pending_review' and overwrite_existing=False. Skipping sprite generation as it implies completion.")
                     allow_processing = False
                     task_outcome = "skipped_already_done"
+                elif current_state == 'pending_sprite_generation' and not (current_state == expected_processing_state or current_state == 'sprite_generation_failed'):
+                    # This case implies the initiator might not have run or failed to update the state to 'generating_sprite'
+                    logger.error(f"CRITICAL: Clip {clip_id} is in '{current_state}'. Expected initiator to set it to '{expected_processing_state}'. Task should not proceed.")
+                    conn.rollback()
+                    # Do not return a simple skip, this is an unexpected state that should be investigated.
+                    raise RuntimeError(f"Task consistency error: Clip {clip_id} found in '{current_state}', expected '{expected_processing_state}' set by initiator.")
 
                 if not allow_processing:
-                    logger.warning(f"Skipping sprite task for clip {clip_id}. Current state: '{current_state}' (expected '{expected_processing_state}' or 'sprite_generation_failed').")
+                    logger.warning(f"Skipping sprite task for clip {clip_id}. Current state: '{current_state}' (expected '{expected_processing_state}' or 'sprite_generation_failed', or already 'pending_review' without overwrite).")
                     conn.rollback()
 
                     skip_reason = f"State '{current_state}' not runnable"
@@ -363,8 +369,8 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False, e
                      logger.info(f"Inserting/updating sprite artifact record for clip {clip_id}")
                      artifact_insert_sql = sql.SQL("""
                         INSERT INTO clip_artifacts (
-                            clip_id, artifact_type, strategy, tag, s3_key, metadata, created_at, updated_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+                            clip_id, artifact_type, strategy, tag, s3_key, metadata
+                        ) VALUES (%s, %s, %s, %s, %s, %s)
                         ON CONFLICT (clip_id, artifact_type, strategy, tag) DO UPDATE SET
                             s3_key = EXCLUDED.s3_key,
                             metadata = EXCLUDED.metadata,
@@ -390,7 +396,7 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False, e
                  clip_update_sql = sql.SQL("""
                      UPDATE clips
                      SET ingest_state = %s,
-                         updated_at = NOW(),
+                         -- updated_at = NOW(), -- Removed, trigger handles this
                          last_error = NULL
                      WHERE id = %s AND ingest_state = 'generating_sprite';
                  """)
@@ -458,7 +464,6 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False, e
             finally: # Nested finally to ensure release_db_connection is always called if conn exists
                 # release_db_connection(conn) # Old
                 release_db_connection(conn, environment) # New
-                logger.debug(f"DB connection released for clip {clip_id}.")
         if temp_dir_obj:
             try:
                 shutil.rmtree(temp_dir_obj.name, ignore_errors=True)
@@ -501,12 +506,13 @@ def _update_clip_state_on_error(clip_id, new_state, error_msg_for_db, logger, ar
                 UPDATE clips
                 SET ingest_state = %s,
                     last_error = %s,
-                    updated_at = NOW(),
-                    retry_count = COALESCE(retry_count, 0) + CASE WHEN %s = 'sprite_generation_failed' THEN 1 ELSE 0 END
+                    -- updated_at = NOW(), -- Removed, trigger handles this
+                    retry_count = COALESCE(retry_count, 0) + CASE WHEN %s THEN 1 ELSE 0 END
                 WHERE id = %s AND ingest_state != %s; -- Avoid overwriting a final success state like 'pending_review'
             """)
             # Avoid incrementing retry if it's just a skip or already processed
             is_failure_state = new_state == 'sprite_generation_failed' # Check specific failure state for retry increment
+            # When updating state on error, it's safer to allow update from 'generating_sprite' OR the specific failure state itself (in case of retries)
             cur.execute(query, (new_state, error_msg_for_db, is_failure_state, clip_id, 'pending_review'))
             if cur.rowcount > 0:
                 logger.info(f"[StateUpdateHelper] Updated clip {clip_id} state to '{new_state}' due to error: {error_msg_for_db}")

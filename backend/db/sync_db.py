@@ -2,6 +2,7 @@
 # Connects to the APPLICATION database.
 
 from __future__ import annotations
+import sys
 import os
 import time
 import logging
@@ -247,11 +248,11 @@ def get_all_pending_work(environment: str, limit_per_stage: int = 50) -> List[Di
                     UNION ALL
                     (SELECT id, 'splice'       AS stage FROM source_videos WHERE ingest_state = %s ORDER BY id LIMIT %s)
                     UNION ALL
-                    (SELECT id, 'sprite'       AS stage FROM clips         WHERE ingest_state = %s ORDER BY id LIMIT %s)
+                    (SELECT id, 'pending_sprite_generation' AS stage FROM clips WHERE ingest_state = %s ORDER BY id LIMIT %s)
                     UNION ALL
-                    (SELECT id, 'post_review'  AS stage FROM clips         WHERE ingest_state = %s ORDER BY id LIMIT %s)
+                    (SELECT id, 'post_review'  AS stage FROM clips WHERE ingest_state = %s ORDER BY id LIMIT %s)
                     UNION ALL
-                    (SELECT id, 'embedding'    AS stage FROM clips         WHERE ingest_state = %s ORDER BY id LIMIT %s)
+                    (SELECT id, 'embedding'    AS stage FROM clips WHERE ingest_state = %s ORDER BY id LIMIT %s)
                 """)
                 params = [
                     "new", limit_per_stage,
@@ -374,70 +375,129 @@ def get_pending_split_jobs(environment: str) -> List[Tuple[int, int]]:
 # These are used by tasks to update state *during* processing or on completion/failure.
 # IMPORTANT: These helpers now need the 'environment' parameter.
 
+def update_clip_state_sync(environment: str, clip_id: int, new_state: str, error_message: Optional[str] = None, expected_old_state: Optional[str] = None) -> bool:
+    """Updates the ingest_state for a specific clip in the specified environment's DB."""
+    processing_state = None # Define in-progress states for clips if needed for retry reset
+    return _update_state_sync(
+        environment=environment,
+        table_name='clips',
+        item_id=clip_id,
+        new_state=new_state,
+        error_message=error_message,
+        expected_old_state=expected_old_state # Pass through
+    )
+
+def update_source_video_state_sync(
+    environment: str,
+    source_video_id: int,
+    new_state: str,
+    error_message: Optional[str] = None,
+    expected_old_state: Optional[str | List[str]] = None # Allow list
+) -> bool:
+    """Updates the state of a source_video. Returns True if successful."""
+    return _update_state_sync(
+        environment=environment,
+        table_name='source_videos',
+        item_id=source_video_id,
+        new_state=new_state,
+        error_message=error_message,
+        expected_old_state=expected_old_state
+    )
+
+# --- Private Helper for State Updates ---
 def _update_state_sync(
-    environment: str, # Added environment parameter
-    table_name: str, item_id: int, new_state: str,
-    processing_state: Optional[str] = None,
-    error_message: Optional[str] = None
+    environment: str,
+    table_name: str,
+    item_id: int,
+    new_state: str,
+    error_message: Optional[str] = None,
+    expected_old_state: Optional[str | List[str]] = None
 ) -> bool:
     """
-    Internal helper to update ingest_state for an item in the specified environment's DB.
-    Returns True if update successful (1 row affected), False otherwise.
+    Internal helper to update the state of an item in a given table.
+    Handles expected_old_state as a string or a list of strings.
+    Returns True if the update was successful (rowcount > 0), False otherwise.
     """
     task_log = get_run_logger() or log
     conn: Optional[PgConnection] = None
-    updated = False
+    success = False
+
+    if table_name not in ['clips', 'source_videos']:
+        task_log.error(f"Invalid table name '{table_name}' for state update.")
+        return False
+
     try:
-        conn = get_db_connection(environment) # Use environment
-        with conn:
-            with conn.cursor() as cur:
-                set_clauses = [
-                    sql.SQL("ingest_state = %s"),
-                    sql.SQL("last_error = %s"),
-                    sql.SQL("updated_at = NOW()")
-                ]
-                params: list[Any] = [new_state, error_message]
+        conn = get_db_connection(environment)
+        conn.autocommit = True # Use autocommit for single updates
 
-                if processing_state and new_state == processing_state:
-                    set_clauses.append(sql.SQL("retry_count = 0"))
-                    task_log.debug(f"Resetting retry_count for {table_name} ID {item_id} (env: {environment}) moving to state '{new_state}'.")
+        with conn.cursor() as cur:
+            params = []
+            # Common fields for update
+            query_parts = [sql.SQL("UPDATE {}").format(sql.Identifier(table_name))]
+            query_parts.append(sql.SQL("SET ingest_state = %s"))
+            params.append(new_state)
 
-                if table_name == 'clips' and new_state not in ['approved_pending_deletion', 'archived_pending_deletion']:
-                    set_clauses.append(sql.SQL("action_committed_at = NULL"))
+            if error_message:
+                query_parts.append(sql.SQL(", last_error = %s"))
+                params.append(error_message)
+            else: # Clear error on successful state transition if no new error
+                query_parts.append(sql.SQL(", last_error = NULL"))
+            
+            # Add retry_count increment for failure states (conceptual, adjust specific states as needed)
+            # This is a placeholder, specific tasks might handle retry logic more granularly.
+            # if "failed" in new_state.lower() or "error" in new_state.lower():
+            # query_parts.append(sql.SQL(", retry_count = COALESCE(retry_count, 0) + 1"))
+            
+            # WHERE clause
+            query_parts.append(sql.SQL("WHERE id = %s"))
+            params.append(item_id)
 
-                query = sql.SQL("UPDATE {} SET {} WHERE id = %s").format(
-                    sql.Identifier(table_name),
-                    sql.SQL(", ").join(set_clauses)
-                )
-                params.append(item_id)
-
-                task_log.debug(f"Updating {table_name} ID {item_id} to state '{new_state}' (env: {environment}) (Error: {bool(error_message)})")
-                cur.execute(query, params)
-
-                if cur.rowcount == 1:
-                    task_log.info(f"Successfully updated {table_name} ID {item_id} to state '{new_state}' (env: {environment}).")
-                    updated = True
-                elif cur.rowcount == 0:
-                    task_log.warning(f"Update state for {table_name} ID {item_id} to '{new_state}' (env: {environment}) affected 0 rows.")
+            if expected_old_state:
+                if isinstance(expected_old_state, list):
+                    if not expected_old_state: # Empty list
+                         task_log.warning(f"Empty list provided for expected_old_state for {table_name} ID {item_id}. Update will not be conditional on old state.")
+                    else:
+                        query_parts.append(sql.SQL("AND ingest_state = ANY(%s::text[])")) # Use = ANY for array comparison
+                        params.append(expected_old_state)
+                elif isinstance(expected_old_state, str):
+                    query_parts.append(sql.SQL("AND ingest_state = %s"))
+                    params.append(expected_old_state)
                 else:
-                    task_log.error(f"Update state for {table_name} ID {item_id} to '{new_state}' (env: {environment}) affected {cur.rowcount} rows! Investigate.")
-                    updated = False
-    except (Exception, psycopg2.DatabaseError) as error:
-        task_log.error(f"DB error updating state for {table_name} ID {item_id} to '{new_state}' (env: {environment}): {error}", exc_info=True)
-        updated = False
+                    task_log.warning(f"Invalid type for expected_old_state: {type(expected_old_state)}. Update will not be conditional.")
+
+            base_query_str = sql.SQL(" ").join(query_parts)
+            task_log.debug(f"Executing state update: {base_query_str.as_string(conn)} with params: {params}")
+            
+            cur.execute(base_query_str, tuple(params))
+            
+            if cur.rowcount > 0:
+                success = True
+                task_log.info(
+                    f"Item {item_id} in '{table_name}' updated to state '{new_state}'. "
+                    f"Expected previous: '{expected_old_state if expected_old_state else 'any'}'. "
+                    f"Rowcount: {cur.rowcount}."
+                )
+            else:
+                # To provide better context on failure, let's see the current state
+                # This query is outside the main update logic, just for logging.
+                cur.execute(sql.SQL("SELECT ingest_state FROM {} WHERE id = %s").format(sql.Identifier(table_name)), (item_id,))
+                current_state_on_fail_row = cur.fetchone()
+                current_state_on_fail = current_state_on_fail_row[0] if current_state_on_fail_row else "NOT_FOUND"
+                task_log.warning(
+                    f"Failed to update item {item_id} in '{table_name}' to state '{new_state}'. Rowcount: {cur.rowcount}. "
+                    f"Expected previous state: '{expected_old_state if expected_old_state else 'any'}'. Actual current state: '{current_state_on_fail}'."
+                )
+                
+    except psycopg2.Error as db_err:
+        task_log.error(f"Error updating item {item_id} in '{table_name}' state to '{new_state}': {db_err}", exc_info=True)
+        success = False
+    except Exception as e:
+        task_log.error(f"Unexpected error during state update for {item_id} in '{table_name}': {e}", exc_info=True)
+        success = False
     finally:
         if conn:
-            release_db_connection(conn, environment) # Pass environment
-    return updated
-
-def update_clip_state_sync(environment: str, clip_id: int, new_state: str, error_message: Optional[str] = None) -> bool:
-    """Updates the ingest_state for a specific clip in the specified environment's DB."""
-    processing_state = None # Define in-progress states for clips if needed for retry reset
-    return _update_state_sync(environment, "clips", clip_id, new_state, processing_state, error_message)
-
-def update_source_video_state_sync(environment: str, source_video_id: int, new_state: str, error_message: Optional[str] = None) -> bool:
-    """Updates the ingest_state for a specific source_video in the specified environment's DB."""
-    processing_state = "downloading" # Example for retry reset on starting 'downloading'
-    return _update_state_sync(environment, "source_videos", source_video_id, new_state, processing_state, error_message)
+            release_db_connection(conn, environment)
+    
+    return success
 
 # Prefect can call these via deployment configuration or directly in flow definitions if needed.

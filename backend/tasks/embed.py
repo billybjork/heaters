@@ -200,13 +200,18 @@ def generate_embeddings_task(
                 logger.info(f"Clip {clip_id}: State='{current_state}', EmbeddingExists={embedding_exists}")
 
                 # 3. Determine if processing is needed
-                allow_processing_state = current_state in ['keyframed', 'embedding_failed'] or \
+                # This task is called by process_clip_post_review flow after keyframing.
+                # Expected entry state is 'keyframed' or 'embedding_failed' for retries.
+                expected_entry_state = 'keyframed'
+                allow_processing_state = current_state == expected_entry_state or \
+                                         current_state == 'embedding_failed' or \
                                          (overwrite and current_state == 'embedded')
+                
                 if not allow_processing_state:
-                    reason = f"state '{current_state}' is not eligible"
+                    reason = f"state '{current_state}' is not eligible (expected '{expected_entry_state}' or 'embedding_failed')"
                     if embedding_exists and not overwrite: reason = "embedding exists and overwrite=False"
                     logger.info(f"Skipping clip {clip_id}: {reason}.")
-                    final_status = "skipped_state" if not embedding_exists else "skipped_exists"
+                    final_status = "skipped_state"
                     needs_processing = False
                 elif embedding_exists and not overwrite:
                     logger.info(f"Skipping clip {clip_id}: Embedding exists and overwrite=False.")
@@ -220,7 +225,7 @@ def generate_embeddings_task(
                     else: action += "."
                     logger.info(f"{action} Clip {clip_id} state: {current_state}.")
 
-                # 4. Update state if processing
+                # 4. Update state to 'embedding' if processing
                 if needs_processing:
                     cur.execute(
                         "SELECT EXISTS (SELECT 1 FROM clip_artifacts WHERE clip_id = %s AND artifact_type = %s AND strategy = %s);",
@@ -230,9 +235,18 @@ def generate_embeddings_task(
                     if not keyframes_found: raise ValueError(f"Prerequisite keyframes missing for clip {clip_id}, strategy '{keyframe_strategy_name}'.")
                     logger.info(f"Verified prerequisite keyframes exist for '{keyframe_strategy_name}'.")
 
-                    cur.execute("UPDATE clips SET ingest_state = 'embedding', updated_at = NOW(), last_error = NULL WHERE id = %s;", (clip_id,))
-                    if cur.rowcount == 0: raise RuntimeError(f"Concurrency Error: Failed to set clip {clip_id} state to 'embedding'.")
-                    logger.info(f"Set clip {clip_id} state to 'embedding'")
+                    # Transition to 'embedding' state
+                    update_to_embedding_sql = sql.SQL("UPDATE clips SET ingest_state = 'embedding', updated_at = NOW(), last_error = NULL WHERE id = %s AND ingest_state IN (%s, %s);")
+                    cur.execute(update_to_embedding_sql, (clip_id, expected_entry_state, 'embedding_failed'))
+
+                    if cur.rowcount == 0: 
+                        # Check current state if update failed
+                        cur.execute("SELECT ingest_state FROM clips WHERE id = %s", (clip_id,))
+                        current_state_on_fail = cur.fetchone()
+                        actual_current_state = current_state_on_fail[0] if current_state_on_fail else "NOT_FOUND"
+                        logger.error(f"Concurrency Error: Failed to set clip {clip_id} state to 'embedding'. Expected '{expected_entry_state}' or 'embedding_failed', found '{actual_current_state}'.")
+                        raise RuntimeError(f"DB state transition to 'embedding' failed for {clip_id}. Current state: {actual_current_state}")
+                    logger.info(f"Set clip {clip_id} state to 'embedding' from '{current_state}'")
 
             conn.commit()
             logger.debug("Phase 1 DB transaction committed.")
@@ -363,7 +377,7 @@ def generate_embeddings_task(
 
                 # 3. Update clip status
                 update_clip_query = sql.SQL("""
-                    UPDATE clips SET ingest_state = 'embedded', embedded_at = NOW(), last_error = NULL, updated_at = NOW()
+                    UPDATE clips SET ingest_state = 'embedded', embedded_at = NOW(), last_error = NULL
                     WHERE id = %s AND ingest_state = 'embedding';
                 """)
                 cur.execute(update_clip_query, (clip_id,))
@@ -401,7 +415,7 @@ def generate_embeddings_task(
                 conn.rollback() # Ensure rollback happens before setting autocommit
                 conn.autocommit = True
                 with conn.cursor() as err_cur:
-                    fail_update_sql = sql.SQL("UPDATE clips SET ingest_state = 'embedding_failed', last_error = %s, retry_count = COALESCE(retry_count, 0) + 1, updated_at = NOW() WHERE id = %s AND ingest_state IN ('embedding', 'keyframed');")
+                    fail_update_sql = sql.SQL("UPDATE clips SET ingest_state = 'embedding_failed', last_error = %s, retry_count = COALESCE(retry_count, 0) + 1 WHERE id = %s AND ingest_state IN ('embedding', 'keyframed');")
                     err_cur.execute(fail_update_sql, (error_message_for_db, clip_id))
                 logger.info(f"Attempted state update to 'embedding_failed' for clip {clip_id}, env '{environment}'.")
             except Exception as db_fail_err:
@@ -421,7 +435,7 @@ def generate_embeddings_task(
          if conn and needs_processing:
              try:
                 conn.rollback(); conn.autocommit = True
-                with conn.cursor() as err_cur: err_cur.execute(sql.SQL("UPDATE clips SET ingest_state = 'embedding_failed', last_error = %s, retry_count = COALESCE(retry_count, 0) + 1, updated_at = NOW() WHERE id = %s AND ingest_state IN ('embedding', 'keyframed');"), (error_message_for_db, clip_id))
+                with conn.cursor() as err_cur: err_cur.execute(sql.SQL("UPDATE clips SET ingest_state = 'embedding_failed', last_error = %s, retry_count = COALESCE(retry_count, 0) + 1 WHERE id = %s AND ingest_state IN ('embedding', 'keyframed');"), (error_message_for_db, clip_id))
                 logger.info(f"Attempted state update to 'embedding_failed' after unexpected error (clip {clip_id}, env '{environment}').")
              except Exception as db_fail_err: logger.error(f"CRITICAL: Failed to update error state for clip {clip_id}, env '{environment}': {db_fail_err}")
              finally: # Ensure connection is released

@@ -269,29 +269,30 @@ def extract_keyframes_task(
                 raise ValueError(f"Clip {clip_id} is missing clip_filepath (S3 key for video).")
 
             # Determine if processing is needed
-            expected_processing_state = 'processing_keyframe' # Or a similar state
-            allow_processing = (current_state in ['review_approved', 'processing_post_review'] or 
-                                current_state == 'keyframe_extraction_failed' or 
-                                current_state == expected_processing_state) # Allow re-run on specific failure
+            # This task is called by process_clip_post_review flow, which should set state to 'processing_post_review'
+            expected_entry_state = 'processing_post_review'
+            allow_processing = (current_state == expected_entry_state or
+                                current_state == 'keyframe_extraction_failed') # Allow re-run on specific failure
 
             if keyframed_at_db and not overwrite:
                 logger.info(f"Clip {clip_id} already keyframed at {keyframed_at_db} and overwrite is False. Skipping.")
                 final_status = "skipped_exists"
                 needs_processing = False
             elif not allow_processing:
-                logger.warning(f"Clip {clip_id} state '{current_state}' is not runnable for keyframing. Skipping.")
+                logger.warning(f"Clip {clip_id} state '{current_state}' is not runnable for keyframing (expected '{expected_entry_state}' or 'keyframe_extraction_failed'). Skipping.")
                 final_status = "skipped_state"
                 needs_processing = False
             else:
-                # Update state to 'processing_keyframe' before starting long operations
-                cur.execute("UPDATE clips SET ingest_state = %s, updated_at = NOW(), last_error = NULL WHERE id = %s",
-                            (expected_processing_state, clip_id))
-                conn.commit() # Commit state change before proceeding
+                # State is already 'processing_post_review' (set by caller) or 'keyframe_extraction_failed'
+                logger.info(f"Clip {clip_id} is in expected state ('{current_state}') for keyframing. Proceeding.")
+                conn.commit() # Commit to release lock if any was held by FOR UPDATE, though not strictly necessary if only reading here.
                 needs_processing = True
                 final_status = "processing_started" # Tentative status
 
         if not needs_processing:
             if conn: conn.rollback() # Rollback if we only did checks and no processing needed
+            # Ensure expected_entry_state is defined for the return, even if skipping
+            expected_entry_state = 'processing_post_review' # Default or ensure it's set before this point
             return {"status": final_status, "clip_id": clip_id, "s3_keys": [], "s3_bucket_used": s3_bucket_name_for_task}
 
         # === Main Processing (if needs_processing is True) ===
@@ -370,11 +371,16 @@ def extract_keyframes_task(
                 s3_client_for_task.upload_file(frame_data['local_path'], s3_bucket_name_for_task, s3_key)
                 generated_artifact_s3_keys.append(s3_key)
                 processed_artifact_data_for_db.append((
-                    clip_id, ARTIFACT_TYPE_KEYFRAME, s3_key,
-                    frame_data['tag'], frame_data['width'], frame_data['height'],
-                    frame_data['frame_index'], frame_data['timestamp_sec'],
-                    datetime.now(tz=psycopg2.tz.FixedOffsetTimezone(offset=0, name=None)), # created_at (UTC)
-                    datetime.now(tz=psycopg2.tz.FixedOffsetTimezone(offset=0, name=None))  # updated_at (UTC)
+                    clip_id, ARTIFACT_TYPE_KEYFRAME,
+                    strategy, # This is the input 'strategy' to extract_keyframes_task
+                    s3_key,
+                    frame_data['tag'], # This is the specific tag like 'mid', '25pct'
+                    Json({
+                        'width': frame_data['width'],
+                        'height': frame_data['height'],
+                        'frame_index': frame_data['frame_index'],
+                        'timestamp_sec': frame_data['timestamp_sec']
+                    })
                 ))
             except ClientError as e:
                 task_exception = e
@@ -394,18 +400,42 @@ def extract_keyframes_task(
             with conn.cursor() as cur:
                 insert_query = """
                 INSERT INTO clip_artifacts
-                (clip_id, artifact_type, s3_key, tag, width, height, frame_index, timestamp_seconds, created_at, updated_at)
+                (clip_id, artifact_type, strategy, s3_key, tag, metadata)
                 VALUES %s RETURNING id;
                 """
-                execute_values(cur, insert_query, processed_artifact_data_for_db, page_size=100)
-                # artifact_ids = [row[0] for row in cur.fetchall()] # If you need the new IDs
-                logger.info(f"Successfully inserted {len(processed_artifact_data_for_db)} keyframe artifact records into DB.")
+                try:
+                    # execute_values handles mapping tuples to the INSERT query
+                    execute_values(cur, insert_query, processed_artifact_data_for_db, page_size=100)
+                    # Fetch all returned IDs if needed, though just rowcount is often enough to confirm
+                    # inserted_ids = [row[0] for row in cur.fetchall()] # If RETURNING id is used and you need the IDs
+                    # if len(inserted_ids) != len(processed_artifact_data_for_db):
+                    #    logger.warning(f"Number of inserted artifact IDs ({len(inserted_ids)}) does not match data supplied ({len(processed_artifact_data_for_db)}).")
+                    logger.info(f"Successfully inserted {len(processed_artifact_data_for_db)} keyframe artifact records into DB.")
+
+                except psycopg2.Error as db_insert_err:
+                    task_exception = db_insert_err
+                    error_message_for_db = f"Database error: {str(db_insert_err)[:200]}"
+                    final_status = "failed_db_operation"
+                    logger.error(f"Database error during keyframe task for clip {clip_id}: {db_insert_err}", exc_info=True)
+                    if conn and not conn.closed: conn.rollback()
+                finally:
+                    if conn and not conn.closed: conn.commit()
+
                 # Update clip state to success
-                cur.execute("UPDATE clips SET ingest_state = %s, keyframed_at = NOW(), updated_at = NOW(), last_error = NULL WHERE id = %s",
-                            ("keyframed", clip_id))
-                conn.commit()
-                final_status = "success"
-                logger.info(f"Clip {clip_id} successfully keyframed. State set to 'keyframed'.")
+                cur.execute("UPDATE clips SET ingest_state = %s, keyframed_at = NOW(), last_error = NULL WHERE id = %s AND ingest_state = %s",
+                            ("keyframed", clip_id, expected_entry_state)) # Conditional update
+                if cur.rowcount == 0:
+                    logger.error(f"Failed to update clip {clip_id} to 'keyframed'. Current state might not have been '{expected_entry_state}'.")
+                    # This is a critical error, implies state changed unexpectedly
+                    conn.rollback()
+                    final_status = "failed_db_state_mismatch"
+                    error_message_for_db = f"DB state mismatch: expected '{expected_entry_state}' for final update."
+                    # Raise an error to ensure it's handled by the main try/except/finally
+                    raise RuntimeError(error_message_for_db)
+                else:
+                    conn.commit()
+                    final_status = "success"
+                    logger.info(f"Clip {clip_id} successfully keyframed. State set to 'keyframed'.")
         elif final_status == "processing_started": # No new artifacts but processing started
             # This case implies no frames were extracted or an issue occurred before artifact creation
             # If final_status is already failed_extraction or success_no_frames_strategy_none, it will be handled by that logic.
@@ -419,7 +449,7 @@ def extract_keyframes_task(
             conn.rollback() # Rollback if no DB changes were made for artifacts
         elif final_status == "success_no_frames_strategy_none":
             with conn.cursor() as cur: # Still need to update the clip state
-                cur.execute("UPDATE clips SET ingest_state = %s, keyframed_at = NOW(), updated_at = NOW(), last_error = NULL WHERE id = %s",
+                cur.execute("UPDATE clips SET ingest_state = %s, keyframed_at = NOW(), last_error = NULL WHERE id = %s",
                             ("keyframed", clip_id))
                 conn.commit()
             logger.info(f"Clip {clip_id} keyframing skipped by strategy, state set to 'keyframed'.")
@@ -467,6 +497,9 @@ def extract_keyframes_task(
         if task_exception and final_status not in ["success", "skipped_exists", "skipped_state", "success_no_frames_strategy_none"]:
             logger.warning(f"An error occurred ({final_status}). Updating clip {clip_id} state and error message in DB for env '{environment}'.")
             error_conn = None
+            # Define expected_entry_state here again for clarity in the finally block scope, 
+            # or pass it down if this block were a separate function.
+            expected_entry_state_for_error = 'processing_post_review' 
             try:
                 error_conn = get_db_connection(environment)
                 if not error_conn: raise ConnectionError(f"Failed to get DB connection for error update for env '{environment}'.")
@@ -476,10 +509,10 @@ def extract_keyframes_task(
                     # Ensure we don't overwrite a state that implies later successful processing.
                     failure_db_state = 'keyframe_extraction_failed'
                     err_cur.execute(
-                        """UPDATE clips SET ingest_state = %s, last_error = %s, updated_at = NOW(),
+                        """UPDATE clips SET ingest_state = %s, last_error = %s, 
                            retry_count = COALESCE(retry_count, 0) + 1
-                           WHERE id = %s AND ingest_state NOT IN (%s, %s)""",
-                        (failure_db_state, error_message_for_db, clip_id, 'keyframed', 'embedding') # Don't overwrite 'keyframed' or 'embedding'
+                           WHERE id = %s AND ingest_state = %s""", # Only update if it was in the active processing state
+                        (failure_db_state, error_message_for_db, clip_id, expected_entry_state_for_error) 
                     )
                     logger.info(f"Updated clip {clip_id} to '{failure_db_state}' with error: {error_message_for_db}")
             except Exception as db_upd_err:

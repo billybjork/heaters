@@ -49,7 +49,7 @@ defmodule Frontend.Intake do
 
     fields = %{
       title: title,
-      ingest_state: "new",
+      ingest_state: "new_direct_submission",
       original_url: if(is_http?, do: url, else: nil),
       web_scraped: is_http?,
       inserted_at: now,
@@ -96,8 +96,8 @@ defmodule Frontend.Intake do
 
       String.contains?(deployment_ref, "/") ->
         [flow_name, deployment_name] = String.split(deployment_ref, "/", parts: 2)
-        encoded_flow_name = URI.encode_www_form(flow_name)
-        encoded_deployment_name = URI.encode_www_form(deployment_name)
+        encoded_flow_name = URI.encode(flow_name)
+        encoded_deployment_name = URI.encode(deployment_name)
         url = "#{api_url}/deployments/name/#{encoded_flow_name}/#{encoded_deployment_name}"
 
         Logger.debug("Resolving deployment ID for slug: #{deployment_ref} via URL: #{url}")

@@ -233,26 +233,73 @@ def intake_task(source_video_id: int,
             logger.info(f"Current DB state for {source_video_id}: '{current_state}'")
 
             expected_processing_state = 'downloading' if is_url else 'processing_local'
+            initial_state_before_potential_transition = current_state # Save for state transition logic
 
-            allow_processing = current_state == expected_processing_state or \
-                               current_state == 'download_failed' or \
-                               (current_state in ('new', None) and overwrite_existing)
+            # Determine if processing is allowed based on current state and flags
+            if is_url:
+                allow_processing = current_state in ('new', 'downloading', 'download_failed') or \
+                                   (current_state == 'downloaded' and overwrite_existing)
+            else: # local file
+                allow_processing = current_state in ('processing_local', 'download_failed') or \
+                                   (current_state in ('new', None) and overwrite_existing) or \
+                                   (current_state == 'downloaded' and overwrite_existing)
 
-            if current_state == 'downloaded' and not overwrite_existing:
-                logger.info(f"Source video {source_video_id} is already 'downloaded' and overwrite=False. Skipping.") # Changed to INFO
-                allow_processing = False
+            # Specific check for 'downloaded' state when not overwriting (takes precedence)
+            if initial_state_before_potential_transition == 'downloaded' and not overwrite_existing:
+                logger.info(f"Source video {source_video_id} is already 'downloaded' and overwrite=False. Skipping.")
+                allow_processing = False # Override previous decision
                 task_outcome = "skipped_already_done"
 
             if not allow_processing:
-                reason = "Already downloaded" if task_outcome == "skipped_already_done" else f"State '{current_state}' not runnable (expected '{expected_processing_state}' or 'download_failed' with Overwrite={overwrite_existing})"
-                logger.warning(f"Skipping intake task for source video {source_video_id}. Reason: {reason}.")
+                # Build a more accurate reason message for skipping
+                expected_conditions_msg_parts = []
+                if is_url:
+                    expected_conditions_msg_parts.extend(["'new'", "'downloading'", "'download_failed'"])
+                    if overwrite_existing: expected_conditions_msg_parts.append("'downloaded' (with Overwrite=True)")
+                else: # local file
+                    if overwrite_existing: expected_conditions_msg_parts.append("'new'/'None' (with Overwrite=True)")
+                    expected_conditions_msg_parts.append("'processing_local'")
+                    # Consider if 'download_failed' is truly expected for local files or if it implies a prior URL attempt
+                    expected_conditions_msg_parts.append("'download_failed'")
+                    if overwrite_existing: expected_conditions_msg_parts.append("'downloaded' (with Overwrite=True)")
+                
+                # Remove duplicates and join for a clean message
+                reason_detail = f"expected one of {', '.join(sorted(list(set(expected_conditions_msg_parts))))}"
+                
+                final_reason_str = f"State '{current_state}' not runnable ({reason_detail} for Overwrite={overwrite_existing})"
+                if task_outcome == "skipped_already_done": # This reason is more specific
+                    final_reason_str = "Already downloaded and overwrite=False"
+
+                logger.warning(f"Skipping intake task for source video {source_video_id}. Reason: {final_reason_str}.")
                 conn.rollback() # Release lock/transaction
 
-                return {"status": "skipped_state", "reason": reason, "s3_key": existing_filepath, "source_video_id": source_video_id}
+                return {"status": "skipped_already_done" if task_outcome == "skipped_already_done" else "skipped_state",
+                        "reason": final_reason_str, "s3_key": existing_filepath, "source_video_id": source_video_id}
 
+            # If processing is allowed, and current_state needs to be updated to expected_processing_state
+            # This transition is necessary if starting from 'new', 'download_failed',
+            # or 'downloaded' (if overwriting), and current_state is not already expected_processing_state.
+            needs_transition_to_active_state = \
+                initial_state_before_potential_transition != expected_processing_state and \
+                (initial_state_before_potential_transition in ('new', None, 'download_failed', 'processing_failed') or
+                 (initial_state_before_potential_transition == 'downloaded' and overwrite_existing))
+
+            if needs_transition_to_active_state:
+                logger.info(f"Transitioning state for {source_video_id} from '{initial_state_before_potential_transition}' to '{expected_processing_state}' before I/O (Overwrite={overwrite_existing}).")
+                cur.execute(
+                    "UPDATE source_videos SET ingest_state = %s, last_error = NULL WHERE id = %s AND ingest_state = %s",
+                    (expected_processing_state, source_video_id, initial_state_before_potential_transition)
+                )
+                if cur.rowcount == 0:
+                    # This implies the state changed between SELECT FOR UPDATE and this UPDATE.
+                    # Should be rare due to row lock, but a critical check.
+                    logger.error(f"CRITICAL: Failed to transition state from '{initial_state_before_potential_transition}' to '{expected_processing_state}' for ID {source_video_id}. State may have changed concurrently. Aborting.")
+                    conn.rollback()
+                    raise RuntimeError(f"DB state transition failed for {source_video_id} due to concurrent modification or unexpected state.")
+            
             # If processing allowed, commit to release row lock before long I/O
             conn.commit()
-            logger.info(f"Verified state '{current_state}'. Proceeding with intake processing for ID {source_video_id}...")
+            logger.info(f"Verified state. Proceeding with intake processing for ID {source_video_id} (DB state should now be '{expected_processing_state}' for final concurrency check)...")
             # Advisory lock is also released by commit.
 
         # === Core Processing in Temporary Directory ===
@@ -476,26 +523,44 @@ def intake_task(source_video_id: int,
                     SET ingest_state = 'downloaded', filepath = %s, title = COALESCE(%s, title),
                         duration_seconds = %s, width = %s, height = %s, fps = %s,
                         original_url = COALESCE(%s, original_url), published_date = %s,
-                        downloaded_at = NOW(), updated_at = NOW(), last_error = NULL
-                    WHERE id = %s AND ingest_state = %s -- Concurrency check using the state we started with
+                        downloaded_at = NOW(), last_error = NULL
+                    WHERE id = %s AND ingest_state = %s -- Concurrency check using the state we started with (which should now be expected_processing_state)
                     RETURNING id;
                     """,
                     (s3_object_key, db_title, db_duration, db_width, db_height, db_fps,
-                     db_original_url, db_published_date, source_video_id, expected_processing_state) # Check against the state we expected at the start
+                     db_original_url, db_published_date, source_video_id, expected_processing_state) # Check against expected_processing_state
                 )
                 updated_id_result = cur_final.fetchone() # Fetch the result
                 if updated_id_result is None:
+                     # The UPDATE statement did not find a row matching (id = %s AND ingest_state = %s)
+                     # This could be because the state was changed by another process, or the ID doesn't exist (less likely here).
                      cur_final.execute("SELECT ingest_state FROM source_videos WHERE id = %s", (source_video_id,))
-                     current_state_on_fail = cur_final.fetchone()
-                     state_str = current_state_on_fail[0] if current_state_on_fail else "NOT FOUND"
-                     fail_msg = (f"Final DB update failed for ID {source_video_id}. "
-                                 f"Concurrency check failed: Expected state '{expected_processing_state}', but found '{state_str}'. "
-                                 f"Upload to S3 ({s3_object_key}) likely succeeded, but DB state is inconsistent.")
-                     logger.error(fail_msg)
-                     conn_final.rollback() # Rollback the failed update attempt
-                     error_message = f"DB final update state mismatch: expected {expected_processing_state}, got {state_str}"
-                     raise RuntimeError(fail_msg) # Raise a specific error
+                     current_state_on_fail_check = cur_final.fetchone()
+                     actual_current_state = current_state_on_fail_check[0] if current_state_on_fail_check else "NOT_FOUND"
+
+                     if actual_current_state == 'downloaded':
+                         # If it's already 'downloaded', another concurrent run likely completed this step.
+                         # This is not an error for the current task run; the desired state is achieved.
+                         logger.warning(
+                             f"Final DB update for ID {source_video_id}: Concurrency check showed state was already 'downloaded' "
+                             f"(expected to transition from '{expected_processing_state}'). Assuming success due to concurrent completion."
+                         )
+                         conn_final.commit() # Commit the transaction (which did nothing in this UPDATE but releases lock)
+                         logger.info(f"✅ Final DB state confirmed as 'downloaded' for ID {source_video_id} (likely by concurrent run). Update by this task run skipped.")
+                         task_outcome = "success" # Mark as success
+                     else:
+                         # If it's some other state, then it's a genuine problem.
+                         fail_msg = (
+                             f"Final DB update failed for ID {source_video_id}. "
+                             f"Concurrency check failed: Expected to update from state '{expected_processing_state}', but current state is '{actual_current_state}'. "
+                             f"Upload to S3 ({s3_object_key}) likely succeeded, but DB state is inconsistent."
+                         )
+                         logger.error(fail_msg)
+                         conn_final.rollback() # Rollback the failed update attempt
+                         error_message = f"DB final update state mismatch: expected to update from {expected_processing_state}, but found {actual_current_state}"
+                         raise RuntimeError(fail_msg) # Raise a specific error
                 else:
+                    # The UPDATE was successful and returned the ID.
                     conn_final.commit()
                     logger.info(f"✅ Final DB update committed successfully. State set to 'downloaded'.")
                     task_outcome = "success"
@@ -543,7 +608,7 @@ def intake_task(source_video_id: int,
                     """
                     UPDATE source_videos
                     SET ingest_state = 'download_failed', last_error = %s,
-                        retry_count = COALESCE(retry_count, 0) + 1, updated_at = NOW()
+                        retry_count = COALESCE(retry_count, 0) + 1
                     WHERE id = %s AND ingest_state != 'downloaded'; -- Avoid overwriting success
                     """,
                     (error_message, source_video_id)
