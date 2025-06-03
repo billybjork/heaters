@@ -32,7 +32,7 @@ deployments:
 
   - name: scheduled-clip-cleanup-dev
     description: Periodically cleans up sprites for approved/archived clips in DEV.
-    entrypoint: flows/cleanup_flows.py:cleanup_reviewed_clips_flow # Relative to /app
+    entrypoint: flows/cleanup_flows.py:cleanup_reviewed_clips # Relative to /app
     work_pool:
       name: default-agent-pool
       work_queue_name: default
@@ -45,7 +45,7 @@ deployments:
 
   - name: scheduled-clip-cleanup-prod
     description: Periodically cleans up sprites for approved/archived clips in PROD.
-    entrypoint: flows/cleanup_flows.py:cleanup_reviewed_clips_flow # Relative to /app
+    entrypoint: flows/cleanup_flows.py:cleanup_reviewed_clips # Relative to /app
     work_pool:
       name: default-agent-pool
       work_queue_name: default

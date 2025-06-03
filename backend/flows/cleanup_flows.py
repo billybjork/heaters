@@ -47,7 +47,7 @@ CLIP_CLEANUP_DELAY_MINUTES = int(os.getenv("CLIP_CLEANUP_DELAY_MINUTES", 30))
 ARTIFACT_TYPE_SPRITE_SHEET = "sprite_sheet"
 
 @flow(log_prints=True)
-async def cleanup_reviewed_clips_flow(
+async def cleanup_reviewed_clips(
     cleanup_delay_minutes: int = CLIP_CLEANUP_DELAY_MINUTES,
     environment: str = "development"
 ):
