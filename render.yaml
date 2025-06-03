@@ -63,10 +63,10 @@ services:
       # needs to communicate with it.
       # If you deploy Prefect to Render in the future, this would be an internal service URL.
       # For now, this might be a placeholder or point to a ngrok tunnel for local testing if needed.
-      - key: PREFECT_API_URL
-        value: "YOUR_EXTERNALLY_ACCESSIBLE_PREFECT_API_URL" # e.g., ngrok URL for local Prefect, or future Render Prefect service URL
-      - key: INTAKE_DEPLOYMENT_SLUG
-        value: "Intake Source Video/intake-default"
+      # - key: PREFECT_API_URL  # No longer needed for intake submission from Phoenix.
+      #   value: "YOUR_EXTERNALLY_ACCESSIBLE_PREFECT_API_URL" # Phoenix frontend no longer directly calls Prefect API for intake.
+      #                                                       # The scheduled Prefect initiator handles new DB entries.
+      #                                                       # This variable might be needed if other frontend features interact with Prefect.
 
     autoDeploy: true
     branch: main

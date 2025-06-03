@@ -19,8 +19,7 @@ defmodule Frontend.Intake do
 
   @spec submit(String.t()) :: :ok | {:error, String.t()}
   def submit(url) when is_binary(url) do
-    with {:ok, id} <- insert_source_video(url),
-         :ok <- create_prefect_run(id, url) do
+    with {:ok, _id} <- insert_source_video(url) do
       :ok
     # Propagate specific error messages
     else
@@ -49,7 +48,7 @@ defmodule Frontend.Intake do
 
     fields = %{
       title: title,
-      ingest_state: "new_direct_submission",
+      ingest_state: "new",
       original_url: if(is_http?, do: url, else: nil),
       web_scraped: is_http?,
       inserted_at: now,
