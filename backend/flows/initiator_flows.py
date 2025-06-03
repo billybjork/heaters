@@ -37,16 +37,9 @@ from db.sync_db import (
 )
 
 # --- Configuration ---
-DEFAULT_KEYFRAME_STRATEGY = os.getenv("DEFAULT_KEYFRAME_STRATEGY", "midpoint")
-DEFAULT_EMBEDDING_MODEL = os.getenv("DEFAULT_EMBEDDING_MODEL", "openai/clip-vit-base-patch32")
-DEFAULT_EMBEDDING_STRATEGY_LABEL = f"keyframe_{DEFAULT_KEYFRAME_STRATEGY}"
 TASK_SUBMIT_DELAY = float(os.getenv("TASK_SUBMIT_DELAY", 0.1)) # Delay between task submissions
-KEYFRAME_TIMEOUT = int(os.getenv("KEYFRAME_TIMEOUT", 600)) # Timeout for keyframe task result
-EMBEDDING_TIMEOUT = int(os.getenv("EMBEDDING_TIMEOUT", 900)) # Timeout for embedding task result
 ACTION_COMMIT_GRACE_PERIOD_SECONDS = int(os.getenv("ACTION_COMMIT_GRACE_PERIOD_SECONDS", 10))
-
-# Configuration for limiting submissions per initiator cycle
-MAX_NEW_SUBMISSIONS_PER_CYCLE = int(os.getenv("MAX_NEW_SUBMISSIONS_PER_CYCLE", 15))
+MAX_NEW_SUBMISSIONS_PER_CYCLE = int(os.getenv("MAX_NEW_SUBMISSIONS_PER_CYCLE", 10)) # Limit submissions per initiator cycle
 
 # =============================================================================
 # ===                        COMMIT WORKER LOGIC                            ===
@@ -81,7 +74,7 @@ def _commit_pending_review_actions(environment: str, grace_period_seconds: int):
                   SELECT  ce.clip_id,
                           ce.action,
                           ce.created_at,
-                          ce.event_data, -- Ensure event_data is selected
+                          ce.event_data,
                           ROW_NUMBER() OVER (PARTITION BY ce.clip_id
                                              ORDER BY ce.created_at DESC) AS rn
                   FROM    clip_events ce
@@ -90,7 +83,7 @@ def _commit_pending_review_actions(environment: str, grace_period_seconds: int):
                 )
                 SELECT  l.clip_id,
                         l.action,
-                        l.event_data, -- Ensure event_data is selected
+                        l.event_data,
                         l.created_at AS action_time
                 FROM    latest l
                 JOIN    clips  c ON c.id = l.clip_id
@@ -144,7 +137,6 @@ def _commit_pending_review_actions(environment: str, grace_period_seconds: int):
                         if split_at_frame_val is not None:
                             try:
                                 frame_to_split = int(split_at_frame_val)
-                                # The split_clip_task expects "split_request_at_frame"
                                 processing_metadata_update_payload = psycopg2.extras.Json({
                                     "split_request_at_frame": frame_to_split
                                 })
@@ -264,7 +256,7 @@ def _commit_pending_review_actions(environment: str, grace_period_seconds: int):
 # ===                        PROCESSING FLOWS                               ===
 # =============================================================================
 
-@flow(name="Scheduled Ingest Initiator", log_prints=True)
+@flow(log_prints=True)
 def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | None = None):
     """
     Main Prefect flow to periodically check for pending work across various ingest stages.

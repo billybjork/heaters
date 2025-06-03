@@ -6,11 +6,9 @@ from pathlib import Path
 from prefect import flow, get_run_logger
 
 # --- Project Root Setup ---
-# Ensures that 'tasks' and 'db' can be imported directly
 project_root_inside_container = Path(__file__).resolve().parent.parent
 if str(project_root_inside_container) not in sys.path:
     sys.path.insert(0, str(project_root_inside_container))
-    # print(f"DEBUG: Added to sys.path in post_review_flows.py: {str(project_root_inside_container)}")
 
 # --- Local Module Imports (relative to project root /app) ---
 from tasks.keyframe import extract_keyframes_task
@@ -24,10 +22,10 @@ from db.sync_db import (
 # --- Configuration ---
 DEFAULT_KEYFRAME_STRATEGY = os.getenv("DEFAULT_KEYFRAME_STRATEGY", "midpoint")
 DEFAULT_EMBEDDING_MODEL = os.getenv("DEFAULT_EMBEDDING_MODEL", "openai/clip-vit-base-patch32")
-KEYFRAME_TIMEOUT = int(os.getenv("KEYFRAME_TIMEOUT", 600)) # Timeout for keyframe task result
-EMBEDDING_TIMEOUT = int(os.getenv("EMBEDDING_TIMEOUT", 900)) # Timeout for embedding task result
+KEYFRAME_TIMEOUT = int(os.getenv("KEYFRAME_TIMEOUT", 600))
+EMBEDDING_TIMEOUT = int(os.getenv("EMBEDDING_TIMEOUT", 900))
 
-@flow(log_prints=True) # The name of the flow comes from the function name by default or can be set here
+@flow(log_prints=True)
 def process_clip_post_review(
     clip_id: int,
     keyframe_strategy: str = DEFAULT_KEYFRAME_STRATEGY,

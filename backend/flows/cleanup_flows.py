@@ -16,7 +16,7 @@ if str(project_root_inside_container) not in sys.path:
 from config import get_s3_resources
 
 # --- Async DB Setup ---
-_flow_bootstrap_logger = logging.getLogger(__name__) # Optional: for logging import errors
+_flow_bootstrap_logger = logging.getLogger(__name__)
 try:
     from db.async_db import get_db_connection as get_async_db_connection
     ASYNC_DB_CONFIGURED = True
@@ -32,7 +32,7 @@ except ImportError as e:
 # --- S3 ClientError Setup ---
 try:
     from botocore.exceptions import ClientError
-    S3_CONFIGURED = True # Indicates botocore is available
+    S3_CONFIGURED = True
 except ImportError:
     _flow_bootstrap_logger.warning(
         "botocore.exceptions.ClientError could not be imported. S3 operations might fail if botocore is missing."
@@ -46,7 +46,7 @@ CLIP_CLEANUP_DELAY_MINUTES = int(os.getenv("CLIP_CLEANUP_DELAY_MINUTES", 30))
 # --- Constants ---
 ARTIFACT_TYPE_SPRITE_SHEET = "sprite_sheet"
 
-@flow(name="Scheduled Clip Cleanup", log_prints=True)
+@flow(log_prints=True)
 async def cleanup_reviewed_clips_flow(
     cleanup_delay_minutes: int = CLIP_CLEANUP_DELAY_MINUTES,
     environment: str = "development"
