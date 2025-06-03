@@ -277,6 +277,8 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
     worker_app_env_actual = os.getenv("APP_ENV", "<APP_ENV not set>") # Store for logging
     logger.info(f"INITIATOR FLOW: Running in environment: '{effective_env}'. Provided param: '{environment}', Worker actual APP_ENV: '{worker_app_env_actual}'.")
 
+    submitted_futures = [] # List to store futures of submitted tasks
+
     # Initialize DB pool for the determined environment *once* per flow run if not already done
     try:
         logger.info(f"Initializing DB pool for environment: '{effective_env}' in initiator flow...")
@@ -324,7 +326,8 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
                                 input_val = get_source_input_from_db(source_video_id=item_id, environment=effective_env)
                                 if input_val:
                                     logger.info(f"State successfully set to 'downloading' for source_video_id {item_id}. Submitting intake_task with input '{input_val[:50]}...'.")
-                                    intake_task.submit(source_video_id=item_id, input_source=input_val, environment=effective_env)
+                                    future = intake_task.submit(source_video_id=item_id, input_source=input_val, environment=effective_env)
+                                    submitted_futures.append(future)
                                     submitted_this_cycle += 1
                                 else:
                                     logger.warning(f"State set to 'downloading' for source_video_id {item_id}, but no input_source found in DB. Reverting state or marking as error might be needed.")
@@ -337,7 +340,8 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
                             if update_source_video_state_sync(environment=effective_env, source_video_id=item_id, new_state='splicing', expected_old_state='downloaded') or \
                                update_source_video_state_sync(environment=effective_env, source_video_id=item_id, new_state='splicing', expected_old_state='splicing_failed'):
                                 logger.info(f"State successfully set to 'splicing' for source_video_id {item_id}. Submitting splice_video_task.")
-                                splice_video_task.submit(source_video_id=item_id, environment=effective_env)
+                                future = splice_video_task.submit(source_video_id=item_id, environment=effective_env)
+                                submitted_futures.append(future)
                                 submitted_this_cycle += 1
                             else:
                                 logger.warning(f"Failed to update state to 'splicing' for source_video_id {item_id} (expected 'downloaded' or 'splicing_failed'). Skipping splice task submission.")
@@ -346,7 +350,8 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
                             logger.info(f"Attempting to set state to 'generating_sprite' for clip_id {item_id} in '{effective_env}' before submitting sprite task.")
                             if update_clip_state_sync(environment=effective_env, clip_id=item_id, new_state='generating_sprite', expected_old_state='pending_sprite_generation'):
                                 logger.info(f"State successfully set to 'generating_sprite' for clip_id {item_id}. Submitting generate_sprite_sheet_task.")
-                                generate_sprite_sheet_task.submit(clip_id=item_id, environment=effective_env, overwrite_existing=False)
+                                future = generate_sprite_sheet_task.submit(clip_id=item_id, environment=effective_env, overwrite_existing=False)
+                                submitted_futures.append(future)
                                 submitted_this_cycle += 1
                             else:
                                 logger.warning(f"Failed to update state to 'generating_sprite' for clip_id {item_id} (expected 'pending_sprite_generation'). Skipping sprite task submission.")
@@ -424,7 +429,8 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
                         
                         if target_updated and source_updated:
                             logger.info(f"States successfully updated for merge. Submitting merge_clips_task for target {target_id}, source {source_id} in '{effective_env}'.")
-                            merge_clips_task.submit(clip_id_target=target_id, clip_id_source=source_id, environment=effective_env)
+                            future = merge_clips_task.submit(clip_id_target=target_id, clip_id_source=source_id, environment=effective_env)
+                            submitted_futures.append(future)
                             submitted_this_cycle += 1
                             time.sleep(TASK_SUBMIT_DELAY) # Small delay
                         else:
@@ -456,7 +462,8 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
                         logger.info(f"Attempting state update for split: Clip {original_clip_id} ('pending_split' -> 'splitting')")
                         if update_clip_state_sync(environment=effective_env, clip_id=original_clip_id, new_state='splitting', expected_old_state='pending_split'):
                             logger.info(f"State updated to 'splitting' for clip {original_clip_id}. Submitting split_clip_task for frame {split_frame} in '{effective_env}'.")
-                            split_clip_task.submit(clip_id=original_clip_id, environment=effective_env)
+                            future = split_clip_task.submit(clip_id=original_clip_id, environment=effective_env)
+                            submitted_futures.append(future)
                             submitted_this_cycle += 1
                             time.sleep(TASK_SUBMIT_DELAY)
                         else:
@@ -468,10 +475,21 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
         except Exception as e_get_splits:
             logger.error(f"Error fetching pending split jobs in '{effective_env}': {e_get_splits}", exc_info=True)
 
-    # --- Overall Flow Exception Handling ---
-    # This is tricky because individual sections have their own try-except.
-    # If any of the main fetching mechanisms (get_all_pending_work, get_pending_merge_pairs, get_pending_split_jobs)
-    # raise a critical DB error, we might want to fail the flow run.
-    # For now, errors in individual submissions are logged and skipped.
+    # --- Wait for all submitted task futures to complete ---
+    if submitted_futures:
+        logger.info(f"INITIATOR FLOW: Waiting for {len(submitted_futures)} submitted tasks to complete or fail...")
+        for i, task_future in enumerate(submitted_futures):
+            try:
+                # Wait indefinitely for this specific task to finish
+                logger.info(f"Waiting for task future {i+1}/{len(submitted_futures)} (Task: {task_future.task_run.name if hasattr(task_future, 'task_run') else 'Unknown'})...")
+                task_future.result(timeout=None) 
+                logger.info(f"Task future {i+1}/{len(submitted_futures)} completed (result collected).")
+            except Exception as e_wait:
+                # This will catch task failures if .result() re-raises them,
+                # or other errors during waiting.
+                logger.error(f"Error or task failure while waiting for future {i+1}/{len(submitted_futures)}: {type(e_wait).__name__} - {str(e_wait)[:500]}", exc_info=False)
+        logger.info(f"INITIATOR FLOW: All {len(submitted_futures)} submitted tasks have been waited upon.")
+    else:
+        logger.info("INITIATOR FLOW: No tasks were submitted in this cycle to wait for.")
 
     logger.info(f"INITIATOR FLOW: Finished processing cycle in '{effective_env}'. Submitted {submitted_this_cycle} tasks/deployments.") 
