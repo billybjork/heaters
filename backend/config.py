@@ -27,12 +27,11 @@ config_logger.setLevel(logging.INFO)
 
 
 # --- Configuration Values ---
-# DATABASE_URL = os.getenv("DATABASE_URL") # This will be replaced by dynamic getter
 DEFAULT_MODEL_NAME = os.getenv("DEFAULT_MODEL_NAME", "openai/clip-vit-base-patch32")
 DEFAULT_GENERATION_STRATEGY = os.getenv("DEFAULT_GENERATION_STRATEGY", "keyframe_midpoint")
 NUM_RESULTS = int(os.getenv("NUM_RESULTS", 10))
 
-# Database URLs (New)
+# Database URLs
 DEV_DATABASE_URL = os.getenv("DEV_DATABASE_URL")
 PROD_DATABASE_URL = os.getenv("PROD_DATABASE_URL")
 
@@ -41,31 +40,18 @@ S3_DEV_BUCKET_NAME = os.getenv("S3_DEV_BUCKET_NAME")
 S3_PROD_BUCKET_NAME = os.getenv("S3_PROD_BUCKET_NAME")
 AWS_REGION = os.getenv("AWS_REGION", "us-west-1") # Default if not set
 
-# CloudFront - kept for compatibility, ensure it's set if used elsewhere
-# CLOUDFRONT_DOMAIN = os.getenv("CLOUDFRONT_DOMAIN") # Will be replaced by dynamic getter
-
 # CloudFront Domains (New)
 CLOUDFRONT_DEV_DOMAIN = os.getenv("CLOUDFRONT_DEV_DOMAIN")
 CLOUDFRONT_PROD_DOMAIN = os.getenv("CLOUDFRONT_PROD_DOMAIN")
 
 
 # --- Input Validation (for critical startup configs) ---
-# if not DATABASE_URL: # Old check, will be handled by get_database_url
-#     config_logger.critical("FATAL: DATABASE_URL not found. Application core functionality will fail.")
-#     raise ValueError("DATABASE_URL not found in environment variables.")
 
 if not DEV_DATABASE_URL:
     config_logger.warning("DEV_DATABASE_URL is not set. 'development' database operations will fail if not overridden or if it's the default.")
 if not PROD_DATABASE_URL:
     config_logger.warning("PROD_DATABASE_URL is not set. 'production' database operations will fail.")
 
-
-# CLOUDFRONT_DOMAIN validation can remain if it's critical for other parts of app startup
-# if not CLOUDFRONT_DOMAIN: # Old validation, will be handled by get_cloudfront_domain
-#     config_logger.critical("FATAL: CLOUDFRONT_DOMAIN not found. Relevant functionalities will fail.")
-#     raise ValueError("CLOUDFRONT_DOMAIN not found in environment variables.")
-
-# New validation for environment-specific CloudFront domains
 if not CLOUDFRONT_DEV_DOMAIN:
     config_logger.warning("CLOUDFRONT_DEV_DOMAIN is not set. 'development' CloudFront URLs may be incorrect.")
 if not CLOUDFRONT_PROD_DOMAIN:
@@ -215,13 +201,11 @@ def get_cloudfront_domain(environment: str, logger: logging.Logger = None) -> st
 
 # --- Log Loaded Configuration ---
 config_logger.info("--- Backend Configuration Loaded ---")
-# config_logger.info(f"DATABASE_URL (first 15 chars): {DATABASE_URL[:15]}...") # Removed
 config_logger.info(f"DEV_DATABASE_URL (first 15 chars): {DEV_DATABASE_URL[:15] if DEV_DATABASE_URL else 'Not Set'}...")
 config_logger.info(f"PROD_DATABASE_URL (first 15 chars): {PROD_DATABASE_URL[:15] if PROD_DATABASE_URL else 'Not Set'}...")
 config_logger.info(f"S3_DEV_BUCKET_NAME: {S3_DEV_BUCKET_NAME}")
 config_logger.info(f"S3_PROD_BUCKET_NAME: {S3_PROD_BUCKET_NAME}")
 config_logger.info(f"AWS_REGION: {AWS_REGION}")
-# config_logger.info(f"CLOUDFRONT_DOMAIN: {CLOUDFRONT_DOMAIN}") # Old logging
 config_logger.info(f"CLOUDFRONT_DEV_DOMAIN: {CLOUDFRONT_DEV_DOMAIN}")
 config_logger.info(f"CLOUDFRONT_PROD_DOMAIN: {CLOUDFRONT_PROD_DOMAIN}")
 config_logger.info(f"Default Model: {DEFAULT_MODEL_NAME}")

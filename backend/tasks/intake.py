@@ -18,7 +18,7 @@ import yt_dlp
 # --- Local Imports ---
 try:
     from db.sync_db import get_db_connection, release_db_connection
-    from config import get_s3_resources # Import the new utility function
+    from config import get_s3_resources
 except ImportError:
     # Standard fallback logic
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -48,13 +48,6 @@ FFMPEG_ARGS = [
     "-c:v:1", "copy",  # Attempt to copy 2nd video stream (e.g., thumbnail)
     "-movflags", "+faststart",
 ]
-
-# Module-level APP_ENV can be used for general worker context if needed outside tasks
-# APP_ENV = os.getenv("APP_ENV", "development")
-
-# AWS_REGION is still needed by the S3TransferProgress if used by other tasks directly,
-# but get_s3_resources will handle region for the client itself.
-# AWS_REGION = os.getenv("AWS_REGION", "us-west-1")
 
 # --- Helper Function for External Commands ---
 def run_external_command(cmd_list, step_name="Command", cwd=None):
@@ -181,14 +174,6 @@ def intake_task(source_video_id: int,
     temp_dir_obj = None
     task_outcome = "failed" # Default outcome
     error_message = None # Store error message for DB update if needed
-
-    # --- Dependency Check ---
-    # S3 client is now initialized above, this check is less direct but implicit by s3_client_for_task
-    # if not s3_client_for_task: # This was s3_client before
-    #     logger.error("S3 client is not available (failed during initialization). Cannot proceed.")
-    #     error_message = "S3 client failed to initialize. Check credentials/config."
-    #     # Raise the error here to fail the task immediately
-    #     raise RuntimeError(error_message)
 
     is_url = input_source.lower().startswith(('http://', 'https://'))
     if re_encode_for_qt or not is_url: # Check ffmpeg only if needed

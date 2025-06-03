@@ -20,7 +20,13 @@ defmodule Frontend.Repo.Migrations.CreateClips do
       add :embedded_at, :naive_datetime
       add :processing_metadata, :jsonb
       # Corrected on_delete to :nilify_all
-      add :grouped_with_clip_id, references(:clips, name: :fk_clips_grouped_with_clip_id, on_delete: :nilify_all, type: :integer)
+      add :grouped_with_clip_id,
+          references(:clips,
+            name: :fk_clips_grouped_with_clip_id,
+            on_delete: :nilify_all,
+            type: :integer
+          )
+
       add :action_committed_at, :naive_datetime
 
       timestamps(type: :timestamptz, default: fragment("now()"))
@@ -29,12 +35,24 @@ defmodule Frontend.Repo.Migrations.CreateClips do
     create unique_index(:clips, [:clip_filepath], name: :clips_clip_filepath_key)
     create unique_index(:clips, [:clip_identifier], name: :clips_clip_identifier_key)
 
-    create index(:clips, [:action_committed_at], name: :clips_action_committed_at_idx, where: "action_committed_at IS NOT NULL")
-    create index(:clips, [:ingest_state, :reviewed_at, :updated_at, :id], name: :clips_review_queue_idx)
+    create index(:clips, [:action_committed_at],
+             name: :clips_action_committed_at_idx,
+             where: "action_committed_at IS NOT NULL"
+           )
+
+    create index(:clips, [:ingest_state, :reviewed_at, :updated_at, :id],
+             name: :clips_review_queue_idx
+           )
+
     create index(:clips, [:ingest_state, :updated_at], name: :idx_clips_cleanup)
     create index(:clips, [:grouped_with_clip_id], name: :idx_clips_grouped_with_clip_id)
     create index(:clips, [:ingest_state], name: :idx_clips_ingest_state)
-    create index(:clips, [:ingest_state, :updated_at, :id], name: :idx_clips_ingest_state_updated_at_id, where: "ingest_state = 'pending_review'::text")
+
+    create index(:clips, [:ingest_state, :updated_at, :id],
+             name: :idx_clips_ingest_state_updated_at_id,
+             where: "ingest_state = 'pending_review'::text"
+           )
+
     create index(:clips, [:source_video_id], name: :idx_clips_source_video_id)
 
     execute """

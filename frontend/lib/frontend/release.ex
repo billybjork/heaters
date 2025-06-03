@@ -1,5 +1,6 @@
 defmodule Frontend.Release do
-  @app :frontend # This should match your OTP app name in mix.exs
+  # This should match your OTP app name in mix.exs
+  @app :frontend
 
   defp repos, do: Application.fetch_env!(@app, :ecto_repos)
 
@@ -15,6 +16,7 @@ defmodule Frontend.Release do
     for repo <- repos() do
       {:ok, _, _} = Ecto.Migrator.with_repo(repo, &Ecto.Migrator.run(&1, :up, all: true))
     end
+
     IO.puts("Ecto migrations complete for production.")
   end
 

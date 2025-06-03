@@ -39,7 +39,6 @@ defmodule FrontendWeb.SpritePlayer do
 
     ~H"""
     <div class="clip-display-container" style={"width: #{@meta["tile_width"]}px;"}>
-
       <div
         id={"viewer-#{@clip.id}"}
         phx-hook="SpritePlayer"

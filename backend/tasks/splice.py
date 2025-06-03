@@ -31,12 +31,6 @@ except ImportError:
         def release_db_connection(conn, environment: str): raise NotImplementedError("Dummy release_db_connection") # Add environment
         def get_s3_resources(env, logger=None): raise NotImplementedError("Dummy get_s3_resources")
 
-# Module-level APP_ENV can be used for general worker context if needed outside tasks
-# APP_ENV = os.getenv("APP_ENV", "production")
-
-# AWS_REGION for S3 client will be handled by get_s3_resources
-# S3_BUCKET_NAME will be handled by get_s3_resources
-
 # --- Task Configuration ---
 CLIP_S3_PREFIX = "clips/"
 # Scene Detection Config

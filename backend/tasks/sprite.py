@@ -150,7 +150,7 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False, e
                 if not clip_data['clip_filepath']:
                      raise ValueError(f"Clip {clip_id} is missing required 'clip_filepath'.")
 
-                # --- UPDATED State Checking Logic ---
+                # --- State Checking Logic ---
                 expected_processing_state = 'generating_sprite'
                 allow_processing = current_state == expected_processing_state or \
                                    current_state == 'sprite_generation_failed'

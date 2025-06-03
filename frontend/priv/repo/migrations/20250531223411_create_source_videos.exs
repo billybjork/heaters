@@ -11,6 +11,7 @@ defmodule Frontend.Repo.Migrations.CreateSourceVideos do
       add :height, :integer
       add :published_date, :date
       add :web_scraped, :boolean, default: false
+
       # created_at and updated_at are handled by timestamps below, matching the schema's timestamptz and defaults
       add :title, :text, null: false
       add :ingest_state, :text, null: false, default: "new"
@@ -20,12 +21,15 @@ defmodule Frontend.Repo.Migrations.CreateSourceVideos do
       add :spliced_at, :timestamptz
       add :original_url, :text
 
-      timestamps(type: :timestamptz, default: fragment("now()")) # For created_at and updated_at
+      # For created_at and updated_at
+      timestamps(type: :timestamptz, default: fragment("now()"))
     end
 
     create unique_index(:source_videos, [:filepath], name: :source_videos_filepath_key)
-    create index(:source_videos, [:title], name: :idx_source_videos_identifier) # Standard index for title
+    # Standard index for title
+    create index(:source_videos, [:title], name: :idx_source_videos_identifier)
     create index(:source_videos, [:ingest_state], name: :idx_source_videos_ingest_state)
+
     # For text_pattern_ops, raw SQL is needed as Ecto's index builder doesn't directly support operator classes.
     execute """
     CREATE INDEX idx_source_videos_title_pattern_ops ON public.source_videos USING btree (title text_pattern_ops);

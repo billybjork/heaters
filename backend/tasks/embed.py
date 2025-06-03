@@ -38,20 +38,6 @@ except ImportError as e:
     def initialize_db_pool(environment: str): pass
     def get_s3_resources(environment: str, logger=None): raise NotImplementedError("S3 resource getter not loaded")
 
-# --- Environment Configuration ---
-# APP_ENV = os.getenv("APP_ENV", "development") # Removed, task uses 'environment' param
-
-# --- S3 Configuration ---
-# AWS_REGION = os.getenv("AWS_REGION", "us-west-1") # Removed
-
-# S3_BUCKET_NAME selection logic removed, get_s3_resources handles this
-# env_log_msg_suffix logic removed
-
-# --- Initialize S3 Client ---
-# s3_client = None # Removed global client initialization
-# Logic for initializing s3_client based on APP_ENV removed.
-# The task will use get_s3_resources(environment, logger)
-
 # --- Constants ---
 ARTIFACT_TYPE_KEYFRAME = "keyframe"
 
@@ -127,7 +113,7 @@ def generate_embeddings_task(
     model_name: str,
     generation_strategy: str,
     overwrite: bool = False,
-    environment: str = "development" # Added environment parameter
+    environment: str = "development"
     ):
     """
     Generates embeddings for a clip based on specified keyframe artifacts.

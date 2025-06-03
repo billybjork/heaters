@@ -20,7 +20,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 try:
     from db.sync_db import get_db_connection, release_db_connection, initialize_db_pool
-    from config import get_s3_resources # Import the new S3 utility function
+    from config import get_s3_resources
 except ImportError as e:
     print(f"Error importing DB utils or config in keyframe.py: {e}")
     def get_db_connection(environment: str, cursor_factory=None): raise NotImplementedError("DB Utils not loaded")
@@ -30,21 +30,7 @@ except ImportError as e:
 
 # --- Configuration ---
 KEYFRAMES_S3_PREFIX = os.getenv("KEYFRAMES_S3_PREFIX", "clip_artifacts/keyframes/")
-ARTIFACT_TYPE_KEYFRAME = "keyframe" # Constant for artifact type
-
-# --- Environment Configuration ---
-# APP_ENV = os.getenv("APP_ENV", "development") # Removed, task uses 'environment' param
-
-# --- S3 Configuration ---
-# AWS_REGION = os.getenv("AWS_REGION", "us-west-1") # Removed
-
-# S3_BUCKET_NAME selection logic removed, get_s3_resources handles this
-# env_log_msg_suffix logic removed
-
-# --- Initialize S3 Client ---
-# s3_client = None # Removed global client initialization
-# Logic for initializing s3_client based on APP_ENV removed.
-# The task will use get_s3_resources(environment, logger)
+ARTIFACT_TYPE_KEYFRAME = "keyframe"
 
 # --- Core Frame Extraction Logic ---
 def _extract_and_save_frames_internal(

@@ -4,15 +4,17 @@ defmodule Frontend.Intake do
   """
 
   alias Frontend.Repo
-  require Logger # For more detailed error logging
+  # For more detailed error logging
+  require Logger
 
-  @source_videos "source_videos" # Ecto.Repo.insert_all takes table name as string
+  # Ecto.Repo.insert_all takes table name as string
+  @source_videos "source_videos"
 
   @spec submit(String.t()) :: :ok | {:error, String.t()}
   def submit(url) when is_binary(url) do
     with {:ok, _id} <- insert_source_video(url) do
       :ok
-    # Propagate specific error messages
+      # Propagate specific error messages
     else
       {:error, reason} -> {:error, reason}
     end
@@ -55,12 +57,14 @@ defmodule Frontend.Intake do
         Logger.error(
           "DB insert_all returned 0 inserted rows for source_videos with fields: #{inspect(fields)}"
         )
+
         {:error, "DB insert failed: No rows inserted."}
 
       {_, error_info_list} ->
         Logger.error(
           "DB insert_all failed for source_videos with fields: #{inspect(fields)}. Error info: #{inspect(error_info_list)}"
         )
+
         {:error, "DB insert failed with errors."}
     end
   rescue
@@ -70,12 +74,15 @@ defmodule Frontend.Intake do
       Logger.error(
         "Postgrex DB error during source_video insert for URL '#{url}'. Error: #{Exception.message(e)}#{query_details}"
       )
+
       {:error, "DB error: #{Exception.message(e)}"}
 
     e ->
       Logger.error(
-        "Generic error during source_video insert for URL '#{url}'. Error: #{Exception.message(e)} Trace: #{inspect(__STACKTRACE__)}" # Corrected Here
+        # Corrected Here
+        "Generic error during source_video insert for URL '#{url}'. Error: #{Exception.message(e)} Trace: #{inspect(__STACKTRACE__)}"
       )
+
       {:error, "DB error: #{Exception.message(e)}"}
   end
 end

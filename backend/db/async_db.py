@@ -8,11 +8,11 @@ from typing import AsyncGenerator, Optional, Dict
 from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
-import sys # For sys.path modification in fallback
+import sys
 
 import asyncpg
 
-# --- Local Imports ---\n# Attempt to import get_database_url from config
+# --- Local Imports ---
 try:
     from config import get_database_url
 except ImportError:
@@ -39,15 +39,9 @@ except ImportError:
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)  # Adjust level as needed
 
-# Load .env from project root (less critical now, but kept for potential direct use)
-# project_root_env_load = Path(__file__).resolve().parents[2] # heaters/src/backend/db/async_db.py
-# load_dotenv(project_root_env_load / ".env")
-
-# DATABASE_URL = os.getenv("DATABASE_URL") # This is now dynamic
-
-# Define pool size constants (can also get from os.getenv if preferred)
-MIN_POOL_SIZE = int(os.getenv("MIN_ASYNC_POOL_SIZE", 1)) # Renamed for clarity
-MAX_POOL_SIZE = int(os.getenv("MAX_ASYNC_POOL_SIZE", 10)) # Renamed for clarity
+# Define pool size constants
+MIN_POOL_SIZE = int(os.getenv("MIN_ASYNC_POOL_SIZE", 1)) # TODO: Add to .env?
+MAX_POOL_SIZE = int(os.getenv("MAX_ASYNC_POOL_SIZE", 10)) # TODO: Add to .env?
 
 # --- Internal State for Environment-Specific Pools ---
 _env_async_pools: Dict[str, asyncpg.Pool] = {}
@@ -186,10 +180,10 @@ async def close_all_db_pools():
 
     log.info(f"Finished closing asyncpg pools. Closed {closed_count} pool(s) out of {len(all_environments)} tracked.")
     _env_async_pools.clear()
-    _env_pool_locks.clear() # Clear locks as well
+    _env_pool_locks.clear()
 
 
-# --- Context Manager for Connections (now requires environment) ---
+# --- Context Manager for Connections ---
 @asynccontextmanager
 async def get_db_connection(environment: str) -> AsyncGenerator[asyncpg.Connection, None]:
     """
@@ -223,37 +217,3 @@ async def get_db_connection(environment: str) -> AsyncGenerator[asyncpg.Connecti
             except Exception as release_err:
                  # Log error if releasing fails, but don't obscure the original error (if any)
                  task_log.error(f"Error releasing DB connection {id(connection)} (env: {environment}): {release_err}", exc_info=True)
-
-# --- Example Usage (needs to be updated to pass environment) ---
-async def _test_connection_for_env(test_env: str):
-    print(f"Testing asyncpg connection for environment: '{test_env}'...")
-    try:
-        # Make sure DEV_DATABASE_URL or PROD_DATABASE_URL is set in .env or environment for test
-        # Example: export DEV_DATABASE_URL='postgresql://user:pass@host:port/dev_db'
-        # Example: export PROD_DATABASE_URL='postgresql://user:pass@host:port/prod_db'
-        db_url_to_check = os.getenv("DEV_DATABASE_URL") if test_env == "development" else os.getenv("PROD_DATABASE_URL")
-        if not db_url_to_check:
-            print(f"DATABASE_URL for '{test_env}' (DEV_DATABASE_URL or PROD_DATABASE_URL) not set. Skipping test for this env.")
-            return
-
-        async with get_db_connection(environment=test_env) as conn:
-            result = await conn.fetchval("SELECT 1 + 1;")
-            print(f"Test query (1+1) result for '{test_env}': {result}")
-            json_result = await conn.fetchrow("SELECT '{\\\"key\\\": \\\"value\\\"}'::jsonb as data;")
-            print(f"Test JSONB fetch for '{test_env}': {json_result} (type: {type(json_result['data'])})")
-        print(f"Connection test for '{test_env}' successful.")
-    except Exception as e:
-        print(f"Connection test for '{test_env}' failed: {e}", exc_info=True)
-    # No individual pool close here, use close_all_db_pools() after all tests
-
-async def main_test_routine():
-    # Test both environments if configured
-    await _test_connection_for_env("development")
-    await _test_connection_for_env("production")
-    await close_all_db_pools()
-
-if __name__ == "__main__":
-    # This allows running python backend/db/async_db.py to test connections
-    # Ensure relevant DEV_DATABASE_URL and/or PROD_DATABASE_URL are set in your environment or .env
-    print("Running async_db.py direct test...")
-    asyncio.run(main_test_routine())

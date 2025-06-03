@@ -12,7 +12,7 @@ from datetime import datetime
 from prefect import task, get_run_logger
 import psycopg2
 from psycopg2 import sql, extras
-from botocore.exceptions import ClientError, NoCredentialsError # Keep for S3 error handling
+from botocore.exceptions import ClientError, NoCredentialsError
 
 # --- Project Root Setup & Utility Imports ---
 try:

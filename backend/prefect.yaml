@@ -1,11 +1,8 @@
-# Generic project metadata
 name: heaters-ingest
 prefect-version: 3
 
-# Define how deployments are built (using `prefect deploy --all`)
 build: null
 
-# Define deployments
 deployments:
   - name: scheduled-ingest-dispatcher-dev
     description: Periodically checks DEV DB for new ingest work and triggers tasks/flows.

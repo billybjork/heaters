@@ -19,7 +19,7 @@ from prefect import get_run_logger
 
 # --- Local Imports ---
 try:
-    from config import get_database_url # Import the new utility
+    from config import get_database_url
 except ImportError:
     # Fallback for local testing if config.py is not directly in sys.path
     # This assumes a certain project structure.
@@ -41,14 +41,7 @@ except ImportError:
 
 # --- Configuration ---
 log = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO) # General logging for this module
-
-# Load .env from project root (this helps if this module is run directly, though less common now)
-# project_root_env = Path(__file__).resolve().parents[2] # Assuming heaters/src/backend/db/sync_db.py
-# load_dotenv(project_root_env / ".env") # Keep this for standalone module use if any
-
-# DATABASE_URL = os.getenv("DATABASE_URL") # This is now dynamic
-# logging.getLogger().info(f"[sync_db] env DATABASE_URL = {DATABASE_URL!r}") # Old log
+logging.basicConfig(level=logging.INFO)
 
 
 # --- Pool Configuration ---
@@ -99,7 +92,7 @@ def initialize_db_pool(environment: str) -> None:
                 MIN_POOL_CONN,
                 MAX_POOL_CONN,
                 dsn=database_url_for_env,
-                application_name=f"prefect_worker_{environment}" # Add environment to app name
+                application_name=f"prefect_worker_{environment}"
             )
             
             # Test connection
@@ -228,7 +221,6 @@ def close_all_db_pools() -> None:
 
 # ─────────────────────────────────── Application Helper Functions ────────────────────────────────────
 # These functions interact with the application schema (source_videos, clips) using the sync pool.
-# IMPORTANT: These helpers now need the 'environment' parameter passed to them.
 
 def get_all_pending_work(environment: str, limit_per_stage: int = 50) -> List[Dict[str, Any]]:
     """
@@ -373,7 +365,6 @@ def get_pending_split_jobs(environment: str) -> List[Tuple[int, int]]:
 
 # ─────────────────────────────────── Immediate State Update Helpers ────────────────────────────────────
 # These are used by tasks to update state *during* processing or on completion/failure.
-# IMPORTANT: These helpers now need the 'environment' parameter.
 
 def update_clip_state_sync(environment: str, clip_id: int, new_state: str, error_message: Optional[str] = None, expected_old_state: Optional[str] = None) -> bool:
     """Updates the ingest_state for a specific clip in the specified environment's DB."""
@@ -499,5 +490,3 @@ def _update_state_sync(
             release_db_connection(conn, environment)
     
     return success
-
-# Prefect can call these via deployment configuration or directly in flow definitions if needed.

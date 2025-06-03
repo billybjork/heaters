@@ -9,13 +9,17 @@ import Config
 config :frontend, Frontend.Repo,
   username: "dev_user",
   password: "dev_password",
-  hostname: "app-db-dev",  # Service name from docker-compose.yaml
-  database: "frontend_dev_db", # Matches POSTGRES_DB in app-db-dev service
-  port: 5432,             # Port inside the Docker network for app-db-dev
+  # Service name from docker-compose.yaml
+  hostname: "app-db-dev",
+  # Matches POSTGRES_DB in app-db-dev service
+  database: "frontend_dev_db",
+  # Port inside the Docker network for app-db-dev
+  port: 5432,
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
   pool_size: 10,
-  ssl: false # Typically SSL is not used for local Docker network connections
+  # Typically SSL is not used for local Docker network connections
+  ssl: false
 
 # ───────────────────────────────────────────
 #  Phoenix endpoint
@@ -25,7 +29,8 @@ config :frontend, FrontendWeb.Endpoint,
   check_origin: false,
   code_reloader: true,
   debug_errors: true,
-  secret_key_base: "1yyvat8bVNahXZFsX5tOvQ2sc75yXYCOC8dTG6pzDpBR4w32TTFftWpI+suyC1jc", # Replace if sensitive or keep for dev
+  # Replace if sensitive or keep for dev
+  secret_key_base: "1yyvat8bVNahXZFsX5tOvQ2sc75yXYCOC8dTG6pzDpBR4w32TTFftWpI+suyC1jc",
   watchers: [
     # Watch JS for changes
     npm: [
@@ -45,13 +50,15 @@ config :frontend, FrontendWeb.Endpoint,
 config :frontend, FrontendWeb.Endpoint,
   live_reload: [
     patterns: [
-      ~r"priv/static/assets/.*(js|css|png|jpeg|jpg|gif|svg)$", # Ensure this matches output dir
+      # Ensure this matches output dir
+      ~r"priv/static/assets/.*(js|css|png|jpeg|jpg|gif|svg)$",
       ~r"priv/gettext/.*(po)$",
       ~r"lib/frontend_web/(controllers|live|components)/.*(ex|heex)$"
     ]
   ]
 
-config :frontend, dev_routes: true # Enable development-specific routes if you have them
+# Enable development-specific routes if you have them
+config :frontend, dev_routes: true
 config :logger, :console, format: "[$level] $message\n"
 config :phoenix, :stacktrace_depth, 20
 config :phoenix, :plug_init_mode, :runtime

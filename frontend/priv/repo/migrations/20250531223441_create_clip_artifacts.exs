@@ -16,12 +16,25 @@ defmodule Frontend.Repo.Migrations.CreateClipArtifacts do
     end
 
     create unique_index(:clip_artifacts, [:s3_key], name: :clip_artifacts_s3_key_key)
-    create unique_index(:clip_artifacts, [:clip_id, :artifact_type, :strategy, :tag], name: :uq_clip_artifact_identity)
+
+    create unique_index(:clip_artifacts, [:clip_id, :artifact_type, :strategy, :tag],
+             name: :uq_clip_artifact_identity
+           )
 
     create index(:clip_artifacts, [:clip_id], name: :idx_clip_artifacts_clip_id)
-    create index(:clip_artifacts, [:clip_id, :artifact_type], name: :idx_clip_artifacts_clip_id_type)
-    create index(:clip_artifacts, [:clip_id, :artifact_type, :tag], name: :idx_clip_artifacts_representative_tag, where: "tag = 'representative'::text")
-    create index(:clip_artifacts, [:clip_id, :artifact_type, :strategy], name: :idx_clip_artifacts_type_strategy)
+
+    create index(:clip_artifacts, [:clip_id, :artifact_type],
+             name: :idx_clip_artifacts_clip_id_type
+           )
+
+    create index(:clip_artifacts, [:clip_id, :artifact_type, :tag],
+             name: :idx_clip_artifacts_representative_tag,
+             where: "tag = 'representative'::text"
+           )
+
+    create index(:clip_artifacts, [:clip_id, :artifact_type, :strategy],
+             name: :idx_clip_artifacts_type_strategy
+           )
   end
 
   def down do
@@ -30,7 +43,10 @@ defmodule Frontend.Repo.Migrations.CreateClipArtifacts do
     drop index(:clip_artifacts, name: :idx_clip_artifacts_clip_id_type)
     drop index(:clip_artifacts, name: :idx_clip_artifacts_clip_id)
 
-    drop unique_index(:clip_artifacts, [:clip_id, :artifact_type, :strategy, :tag], name: :uq_clip_artifact_identity)
+    drop unique_index(:clip_artifacts, [:clip_id, :artifact_type, :strategy, :tag],
+           name: :uq_clip_artifact_identity
+         )
+
     drop unique_index(:clip_artifacts, [:s3_key], name: :clip_artifacts_s3_key_key)
 
     drop table(:clip_artifacts)

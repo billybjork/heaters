@@ -53,6 +53,7 @@ defmodule Frontend.Clips.Embedding do
     |> cast(attrs, @required_fields ++ @optional_fields)
     |> validate_required(@required_fields)
     |> foreign_key_constraint(:clip_id)
+
     # Potentially include a cast_embed/validate_embed here
     # e.g., |> Pgvector.Ecto.cast_embed(:embedding)
   end
