@@ -9,7 +9,7 @@ build: null
 deployments:
   - name: scheduled-ingest-dispatcher-dev
     description: Periodically checks DEV DB for new ingest work and triggers tasks/flows.
-    entrypoint: flows/ingest_flows.py:scheduled_ingest_initiator # Relative to /app inside container
+    entrypoint: flows/initiator_flows.py:scheduled_ingest_initiator # Relative to /app inside container
     work_pool:
       name: default-agent-pool
       work_queue_name: default
@@ -22,7 +22,7 @@ deployments:
 
   - name: scheduled-ingest-dispatcher-prod
     description: Periodically checks PROD DB for new ingest work and triggers tasks/flows.
-    entrypoint: flows/ingest_flows.py:scheduled_ingest_initiator # Relative to /app inside container
+    entrypoint: flows/initiator_flows.py:scheduled_ingest_initiator # Relative to /app inside container
     work_pool:
       name: default-agent-pool
       work_queue_name: default
@@ -35,7 +35,7 @@ deployments:
 
   - name: scheduled-clip-cleanup-dev
     description: Periodically cleans up sprites for approved/archived clips in DEV.
-    entrypoint: flows/ingest_flows.py:cleanup_reviewed_clips_flow # Relative to /app
+    entrypoint: flows/cleanup_flows.py:cleanup_reviewed_clips_flow # Relative to /app
     work_pool:
       name: default-agent-pool
       work_queue_name: default
@@ -48,7 +48,7 @@ deployments:
 
   - name: scheduled-clip-cleanup-prod
     description: Periodically cleans up sprites for approved/archived clips in PROD.
-    entrypoint: flows/ingest_flows.py:cleanup_reviewed_clips_flow # Relative to /app
+    entrypoint: flows/cleanup_flows.py:cleanup_reviewed_clips_flow # Relative to /app
     work_pool:
       name: default-agent-pool
       work_queue_name: default
@@ -62,7 +62,7 @@ deployments:
   - name: process-clip-post-review-default
     flow_name: process-clip-post-review
     description: Processes a single clip after review (keyframing, embedding). Triggered by ingest dispatcher.
-    entrypoint: flows/ingest_flows.py:process_clip_post_review # Relative to /app
+    entrypoint: flows/post_review_flows.py:process_clip_post_review # Relative to /app
     work_pool:
       name: default-agent-pool
       work_queue_name: default

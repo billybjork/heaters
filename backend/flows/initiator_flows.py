@@ -1,12 +1,9 @@
 import sys
 import os
 from pathlib import Path
-import traceback
 import time
 import psycopg2
 import psycopg2.extras
-from datetime import timedelta, timezone
-import logging
 
 # --- Project Root Setup ---
 # Path(__file__).parent.parent is /app (This is our project root inside the Docker container)
@@ -17,19 +14,15 @@ if str(project_root_inside_container) not in sys.path:
     print(f"DEBUG: Current sys.path: {sys.path}")
 
 # --- Prefect Imports ---
-from prefect import flow, get_run_logger, task
+from prefect import flow, get_run_logger
 from prefect.deployments import run_deployment
 
 # --- Local Module Imports (relative to /app) ---
 from tasks.intake import intake_task
 from tasks.splice import splice_video_task
 from tasks.sprite import generate_sprite_sheet_task
-from tasks.keyframe import extract_keyframes_task
-from tasks.embed import generate_embeddings_task
 from tasks.merge import merge_clips_task
 from tasks.split import split_clip_task
-
-from config import get_s3_resources
 
 from db.sync_db import (
     get_all_pending_work,
@@ -43,26 +36,6 @@ from db.sync_db import (
     release_db_connection
 )
 
-_flow_bootstrap_logger = logging.getLogger(__name__) # For logging import errors
-try:
-    from db.async_db import get_db_connection as get_async_db_connection, get_db_pool, close_all_db_pools
-    ASYNC_DB_CONFIGURED = True
-except ImportError as e:
-    _flow_bootstrap_logger.error(
-        f"CRITICAL: Failed to import async DB utilities from db.async_db: {e}. "
-        "Async cleanup flow will not function.",
-        exc_info=True
-    )
-    ASYNC_DB_CONFIGURED = False
-    get_async_db_connection, get_db_pool, close_all_db_pools = None, None, None
-
-try:
-    from botocore.exceptions import ClientError
-    S3_CONFIGURED = True
-except ImportError:
-     S3_CONFIGURED = False
-     ClientError = Exception
-
 # --- Configuration ---
 DEFAULT_KEYFRAME_STRATEGY = os.getenv("DEFAULT_KEYFRAME_STRATEGY", "midpoint")
 DEFAULT_EMBEDDING_MODEL = os.getenv("DEFAULT_EMBEDDING_MODEL", "openai/clip-vit-base-patch32")
@@ -70,15 +43,10 @@ DEFAULT_EMBEDDING_STRATEGY_LABEL = f"keyframe_{DEFAULT_KEYFRAME_STRATEGY}"
 TASK_SUBMIT_DELAY = float(os.getenv("TASK_SUBMIT_DELAY", 0.1)) # Delay between task submissions
 KEYFRAME_TIMEOUT = int(os.getenv("KEYFRAME_TIMEOUT", 600)) # Timeout for keyframe task result
 EMBEDDING_TIMEOUT = int(os.getenv("EMBEDDING_TIMEOUT", 900)) # Timeout for embedding task result
-CLIP_CLEANUP_DELAY_MINUTES = int(os.getenv("CLIP_CLEANUP_DELAY_MINUTES", 30))
 ACTION_COMMIT_GRACE_PERIOD_SECONDS = int(os.getenv("ACTION_COMMIT_GRACE_PERIOD_SECONDS", 10))
 
 # Configuration for limiting submissions per initiator cycle
 MAX_NEW_SUBMISSIONS_PER_CYCLE = int(os.getenv("MAX_NEW_SUBMISSIONS_PER_CYCLE", 15))
-
-# --- Constants ---
-ARTIFACT_TYPE_SPRITE_SHEET = "sprite_sheet"
-
 
 # =============================================================================
 # ===                        COMMIT WORKER LOGIC                            ===
@@ -217,8 +185,7 @@ def _commit_pending_review_actions(environment: str, grace_period_seconds: int):
                                     FROM   clip_events
                                     WHERE  clip_id = %s AND action  = 'selected_group_source'
                                     ORDER  BY created_at DESC LIMIT  1;
-                                    """, (clip_id,)
-                                )
+                                    """, (clip_id,))
                                 res = cur.fetchone()
                                 if res and res[0]: # res[0] is the value of event_data ->> 'group_with_clip_id'
                                     try:
@@ -296,156 +263,6 @@ def _commit_pending_review_actions(environment: str, grace_period_seconds: int):
 # =============================================================================
 # ===                        PROCESSING FLOWS                               ===
 # =============================================================================
-
-@flow(log_prints=True)
-def process_clip_post_review(
-    clip_id: int,
-    keyframe_strategy: str = DEFAULT_KEYFRAME_STRATEGY,
-    model_name: str = DEFAULT_EMBEDDING_MODEL,
-    environment: str = "development"
-    ):
-    logger = get_run_logger()
-    logger.info(f"FLOW: Starting post-review processing for clip_id: {clip_id}, Env: {environment}")
-
-    initial_state_updated = False
-    try:
-        # Expect 'post_review_initiated' (from initiator) or 'review_approved' (for direct/manual runs)
-        if update_clip_state_sync(
-            environment=environment,
-            clip_id=clip_id,
-            new_state='processing_post_review',
-            expected_old_state=['post_review_initiated', 'review_approved']
-        ):
-            logger.info(f"Clip {clip_id} state transitioned to 'processing_post_review'.")
-            initial_state_updated = True
-        else:
-            # Fetch current state for better logging if update failed
-            current_state_on_fail = "unknown"
-            conn_check_fail = None
-            try:
-                conn_check_fail = get_db_connection(environment)
-                conn_check_fail.autocommit = True
-                with conn_check_fail.cursor() as cur_check_fail:
-                    cur_check_fail.execute("SELECT ingest_state FROM clips WHERE id = %s", (clip_id,))
-                    res = cur_check_fail.fetchone()
-                    if res: current_state_on_fail = res[0]
-            except Exception as e_log_state:
-                logger.warning(f"Could not fetch current state for clip {clip_id} on initial update failure: {e_log_state}")
-            finally:
-                if conn_check_fail: release_db_connection(conn_check_fail, environment)
-
-            logger.warning(
-                f"Failed to transition clip {clip_id} from ['post_review_initiated', 'review_approved'] to 'processing_post_review'. "
-                f"Actual current state: '{current_state_on_fail}'. Item may have been processed or state changed. Skipping further processing."
-            )
-            return # Gracefully exit if state transition fails
-    except Exception as e_state_update:
-        logger.error(f"Error transitioning clip {clip_id} state for post-review processing: {e_state_update}", exc_info=True)
-        return # Exit on error
-
-    keyframe_task_succeeded_or_skipped = False
-    final_flow_status = "failed_keyframing" # Default to a failure state for tracking within the flow
-
-    try:
-        # --- 1. Keyframing ---
-        logger.info(f"Submitting keyframe task for clip_id: {clip_id} with strategy: {keyframe_strategy}, Env: {environment}")
-        keyframe_job = extract_keyframes_task.submit(clip_id=clip_id, strategy=keyframe_strategy, overwrite=False, environment=environment)
-        logger.info(f"Waiting for keyframe task result for clip {clip_id} (timeout: {KEYFRAME_TIMEOUT}s)")
-        keyframe_result = keyframe_job.result(timeout=KEYFRAME_TIMEOUT) # Wait for result
-
-        keyframe_status = None
-        if isinstance(keyframe_result, dict): keyframe_status = keyframe_result.get("status")
-        elif keyframe_result is None: keyframe_status = "skipped_or_success" # Treat None as acceptable skip/success
-        else: keyframe_status = "failed_unexpected_result"
-
-        keyframe_failure_statuses = ["failed", "failed_db_phase1", "failed_processing", "failed_state_update", "failed_db_update", "failed_unexpected", "failed_unexpected_result"]
-        keyframe_acceptable_skip_statuses = ["skipped_exists", "skipped_state", "skipped_logic", "skipped_or_success"]
-
-        if keyframe_status == "success":
-            logger.info(f"Keyframing task OK for clip_id: {clip_id}.")
-            keyframe_task_succeeded_or_skipped = True
-        elif keyframe_status in keyframe_acceptable_skip_statuses:
-            logger.info(f"Keyframing task for clip {clip_id} status '{keyframe_status}'. Assuming acceptable skip.")
-            keyframe_task_succeeded_or_skipped = True
-        elif keyframe_status in keyframe_failure_statuses:
-            logger.error(f"Keyframing task failed for clip {clip_id}. Status: {keyframe_status}. Post-review flow terminating.")
-            final_flow_status = "keyframing_task_failed"
-            raise RuntimeError(f"Keyframing task failed (status: {keyframe_status}) for clip {clip_id}")
-        else: # Unknown status
-            logger.error(f"Keyframing task for clip {clip_id} returned an unknown status: {keyframe_status}. Post-review flow terminating.")
-            final_flow_status = "keyframing_task_unknown_status"
-            # Attempt to set a generic failure state if task didn't.
-            update_clip_state_sync(environment=environment, clip_id=clip_id, new_state='keyframe_extraction_failed', error_message=f"Flow: Unknown keyframe task status: {keyframe_status}")
-            raise RuntimeError(f"Keyframing task for clip {clip_id} returned unknown status: {keyframe_status}")
-
-        # --- 2. Embedding ---
-        if keyframe_task_succeeded_or_skipped:
-            embedding_strategy_label = f"keyframe_{keyframe_strategy}_avg" if keyframe_strategy == "multi" else f"keyframe_{keyframe_strategy}"
-            logger.info(f"Submitting embedding task for clip_id: {clip_id}, model: {model_name}, strategy: {embedding_strategy_label}, Env: {environment}")
-            embedding_job = generate_embeddings_task.submit(clip_id=clip_id, model_name=model_name, generation_strategy=embedding_strategy_label, overwrite=False, environment=environment)
-            logger.info(f"Waiting for embedding task result for clip {clip_id} (timeout: {EMBEDDING_TIMEOUT}s)")
-            embed_result = embedding_job.result(timeout=EMBEDDING_TIMEOUT) # Wait for result
-
-            embed_status = None
-            if isinstance(embed_result, dict): embed_status = embed_result.get("status")
-            elif embed_result is None: embed_status = "skipped_or_success" # Treat None as acceptable skip/success
-            else: embed_status = "failed_unexpected_result"
-
-            embed_failure_statuses = ["failed", "failed_db_phase1", "failed_processing", "failed_state_update", "failed_db_update", "failed_unexpected", "failed_unexpected_result"]
-            embed_acceptable_skip_statuses = ["skipped_exists", "skipped_state", "skipped_or_success"]
-
-            if embed_status == "success":
-                logger.info(f"Embedding task OK for clip_id: {clip_id}.")
-                final_flow_status = "success"
-            elif embed_status in embed_acceptable_skip_statuses:
-                logger.info(f"Embedding task for clip {clip_id} status '{embed_status}'. Assuming acceptable skip.")
-                final_flow_status = "success_embedding_skipped"
-            elif embed_status in embed_failure_statuses:
-                logger.error(f"Embedding task failed for clip {clip_id}. Status: {embed_status}. Post-review flow terminating.")
-                final_flow_status = "embedding_task_failed"
-                raise RuntimeError(f"Embedding task failed (status: {embed_status}) for clip {clip_id}")
-            else: # Unknown status
-                logger.error(f"Embedding task for clip {clip_id} returned an unknown status: {embed_status}. Post-review flow terminating.")
-                final_flow_status = "embedding_task_unknown_status"
-                update_clip_state_sync(environment=environment, clip_id=clip_id, new_state='embedding_failed', error_message=f"Flow: Unknown embedding task status: {embed_status}")
-                raise RuntimeError(f"Embedding task for clip {clip_id} returned unknown status: {embed_status}")
-        else:
-            logger.warning(f"Skipping embedding for clip {clip_id} due to prior keyframing outcome.")
-            final_flow_status = "keyframed_embedding_skipped" # Keyframing was ok/skipped, but embedding not run.
-
-    except Exception as e:
-        stage_failed = "embedding" if keyframe_task_succeeded_or_skipped and final_flow_status.startswith("embedding_") else "keyframing"
-        logger.error(f"Error during post-review processing flow (stage: {stage_failed}, env: {environment}) for clip_id {clip_id}: {e}", exc_info=True)
-        
-        if initial_state_updated: # Only try to set failure state if initial transition happened
-            conn_check = None
-            try:
-                conn_check = get_db_connection(environment)
-                conn_check.autocommit = True
-                with conn_check.cursor() as cur_check:
-                    cur_check.execute("SELECT ingest_state FROM clips WHERE id = %s", (clip_id,))
-                    current_db_state_on_error_row = cur_check.fetchone()
-                    current_db_state_on_error = current_db_state_on_error_row[0] if current_db_state_on_error_row else None
-                    
-                    # Set a general flow failure state only if a specific task failure state isn't already set
-                    if current_db_state_on_error == 'processing_post_review':
-                        update_clip_state_sync(
-                            environment=environment,
-                            clip_id=clip_id,
-                            new_state='post_review_processing_failed',
-                            error_message=f"Flow failed at {stage_failed} stage: {str(e)[:200]}"
-                        )
-                        logger.info(f"Set clip {clip_id} state to 'post_review_processing_failed' due to flow error.")
-                    else:
-                        logger.warning(f"Flow error for clip {clip_id}, but current state is '{current_db_state_on_error}', not 'processing_post_review'. Not overwriting with generic flow failure state.")
-            except Exception as e_final_update:
-                logger.error(f"Failed to update clip {clip_id} state on flow error: {e_final_update}")
-            finally:
-                if conn_check: release_db_connection(conn_check, environment)
-        raise # Re-raise to mark the flow run as failed
-
-    logger.info(f"FLOW: Finished post-review processing flow for clip_id: {clip_id}, Env: {environment}. Final Status Hint: {final_flow_status}")
-
 
 @flow(name="Scheduled Ingest Initiator", log_prints=True)
 def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | None = None):
@@ -575,8 +392,6 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
                         else:
                             logger.warning(f"Unknown stage '{stage}' for item_id {item_id} in general processing. Skipping.")
 
-                        time.sleep(TASK_SUBMIT_DELAY)
-
                     except psycopg2.Error as db_err_item_processing:
                         logger.error(f"Database error processing general item ID {item_id}, Stage {stage} in '{effective_env}': {db_err_item_processing}", exc_info=True)
                     except Exception as e_item:
@@ -659,209 +474,4 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
     # raise a critical DB error, we might want to fail the flow run.
     # For now, errors in individual submissions are logged and skipped.
 
-    logger.info(f"INITIATOR FLOW: Finished processing cycle in '{effective_env}'. Submitted {submitted_this_cycle} tasks/deployments.")
-
-
-# =============================================================================
-# ===                  CLEANUP FLOW                                         ===
-# =============================================================================
-
-@flow(name="Scheduled Clip Cleanup", log_prints=True)
-async def cleanup_reviewed_clips_flow(
-    cleanup_delay_minutes: int = CLIP_CLEANUP_DELAY_MINUTES,
-    environment: str = "development"
-):
-    """
-    Cleans up reviewed clips by deleting associated S3 artifacts (sprite sheets)
-    and updating their database state. Uses asyncpg for DB operations.
-    """
-    logger = get_run_logger()
-    logger.info(
-        f"FLOW: Running Scheduled Clip Cleanup (Delay: {cleanup_delay_minutes} mins, Env: {environment})..."
-    )
-
-    # Get S3 resources for this flow run
-    s3_client_for_flow, s3_bucket_name_for_flow = get_s3_resources(environment, logger=logger)
-
-    # Check if S3 client was successfully obtained (get_s3_resources raises error on failure, but defensive check)
-    if not s3_client_for_flow or not s3_bucket_name_for_flow:
-        logger.error("S3 Client/Bucket Name not available from get_s3_resources. Exiting cleanup flow.")
-        return # S3_CONFIGURED check is implicitly handled by get_s3_resources
-
-    if not ASYNC_DB_CONFIGURED or not get_async_db_connection:
-        logger.error("Async DB not configured or get_async_db_connection function unavailable. Exiting cleanup flow.")
-        return
-
-    processed_count = 0
-    s3_deleted_count = 0
-    db_artifact_deleted_count = 0
-    db_clip_updated_count = 0
-    error_count = 0
-
-    try:
-        async with get_async_db_connection(environment) as conn:
-            logger.info("Acquired asyncpg connection via context manager for cleanup flow.")
-
-            delay_interval = timedelta(minutes=cleanup_delay_minutes)
-            pending_states = [
-                "approved_pending_deletion",
-                "archived_pending_deletion",
-            ]
-            query_clips = """
-            SELECT id, ingest_state
-              FROM clips
-             WHERE ingest_state = ANY($1::text[])
-               AND action_committed_at IS NOT NULL
-               AND action_committed_at < (NOW() - $2::INTERVAL)
-             ORDER BY id ASC;
-            """
-
-            clips_to_cleanup = await conn.fetch(
-                query_clips, pending_states, delay_interval
-            )
-            processed_count = len(clips_to_cleanup)
-            logger.info(f"Found {processed_count} clips ready for S3 artifact cleanup.")
-
-            if not clips_to_cleanup:
-                logger.info("No clips require S3 artifact cleanup at this time.")
-                return # Exit early if no work
-
-            for clip_record in clips_to_cleanup:
-                clip_id = clip_record["id"]
-                current_state = clip_record["ingest_state"]
-                log_prefix = f"[Cleanup Clip {clip_id}, Env {environment}]"
-                log_prefix = f"[Cleanup Clip {clip_id}]"
-                logger.info(f"{log_prefix} Processing for state: {current_state}")
-
-                sprite_artifact_s3_key = None
-                s3_deletion_successful = False # Assume failure until success
-
-                try:
-                    # 1. Retrieve sprite artifact S3 key
-                    artifact_query = """
-                    SELECT s3_key FROM clip_artifacts
-                     WHERE clip_id = $1 AND artifact_type = $2 LIMIT 1;
-                    """
-                    artifact_record = await conn.fetchrow(
-                        artifact_query, clip_id, ARTIFACT_TYPE_SPRITE_SHEET
-                    )
-
-                    if artifact_record and artifact_record["s3_key"]:
-                        sprite_artifact_s3_key = artifact_record["s3_key"]
-                    else:
-                        logger.warning(f"{log_prefix} No sprite sheet artifact found in DB. Assuming S3 deletion step can be skipped.")
-                        s3_deletion_successful = True # No S3 key to delete, so "success" for this step
-
-                    # 2. Delete from S3 if key exists
-                    if sprite_artifact_s3_key:
-                        # Use s3_bucket_name_for_flow obtained from get_s3_resources
-                        if not s3_bucket_name_for_flow:
-                            logger.error(f"{log_prefix} S3_BUCKET_NAME_FOR_FLOW is not configured (should not happen if get_s3_resources worked). Cannot delete artifact.")
-                            error_count += 1
-                            s3_deletion_successful = False
-                        else:
-                            try:
-                                logger.info(f"{log_prefix} Deleting S3 object: s3://{s3_bucket_name_for_flow}/{sprite_artifact_s3_key}")
-                                # Use s3_client_for_flow obtained from get_s3_resources
-                                # Note: s3_client.delete_object is synchronous. For a fully async flow with many S3 ops,
-                                # an async S3 client (e.g. aioboto3) would be better, but for a few deletions this is okay.
-                                s3_client_for_flow.delete_object(
-                                    Bucket=s3_bucket_name_for_flow,
-                                    Key=sprite_artifact_s3_key,
-                                )
-                                logger.info(f"{log_prefix} Successfully deleted S3 object.")
-                                s3_deletion_successful = True
-                                s3_deleted_count += 1
-                            except ClientError as e:
-                                error_code = e.response.get("Error", {}).get("Code", "Unknown")
-                                if error_code == "NoSuchKey":
-                                    logger.warning(f"{log_prefix} S3 object s3://{s3_bucket_name_for_flow}/{sprite_artifact_s3_key} not found (NoSuchKey). Assuming already deleted.")
-                                    s3_deletion_successful = True # Treat as success for workflow progression
-                                else:
-                                    logger.error(f"{log_prefix} Failed to delete S3 object s3://{s3_bucket_name_for_flow}/{sprite_artifact_s3_key}. Code: {error_code}, Error: {e}")
-                                    s3_deletion_successful = False
-                                    error_count += 1
-                            except Exception as e_s3: # Catch other unexpected S3 errors
-                                logger.error(f"{log_prefix} Unexpected error during S3 deletion: {e_s3}", exc_info=True)
-                                s3_deletion_successful = False
-                                error_count += 1
-
-                    # 3. Proceed with DB updates ONLY if S3 deletion was successful (or skipped appropriately)
-                    if s3_deletion_successful:
-                        final_state_map = {
-                            "approved_pending_deletion": "review_approved",
-                            "archived_pending_deletion": "archived",
-                        }
-                        final_clip_state = final_state_map.get(current_state)
-
-                        if not final_clip_state:
-                            logger.error(f"{log_prefix} Logic error: No final state mapping for current state '{current_state}'.")
-                            error_count += 1
-                            continue # Skip to next clip
-
-                        # Start a DB transaction for artifact deletion and clip state update
-                        async with conn.transaction():
-                            logger.debug(f"{log_prefix} Starting DB transaction for final updates.")
-                            # Delete artifact record from DB if it existed
-                            if sprite_artifact_s3_key: # Only delete if we had a key
-                                delete_artifact_sql = """
-                                DELETE FROM clip_artifacts WHERE clip_id = $1 AND artifact_type = $2;
-                                """
-                                del_res_str = await conn.execute(
-                                    delete_artifact_sql, clip_id, ARTIFACT_TYPE_SPRITE_SHEET
-                                )
-                                # Parse "DELETE N" string
-                                deleted_artifact_rows = int(del_res_str.split()[-1]) if del_res_str and del_res_str.startswith("DELETE") else 0
-                                if deleted_artifact_rows > 0:
-                                    logger.info(f"{log_prefix} Deleted {deleted_artifact_rows} artifact record(s) from DB.")
-                                    db_artifact_deleted_count += deleted_artifact_rows
-                                else:
-                                    logger.warning(f"{log_prefix} No clip_artifact record found/deleted for S3 key {sprite_artifact_s3_key}. This might be okay if S3 key was stale.")
-
-
-                            # Update clip state and clear action_committed_at
-                            update_clip_sql = """
-                            UPDATE clips
-                               SET ingest_state = $1,
-                                   updated_at = NOW(),
-                                   action_committed_at = NULL, -- Clear this as action is now complete
-                                   last_error = NULL           -- Clear any previous errors
-                             WHERE id = $2 AND ingest_state = $3; -- Ensure current state matches
-                            """
-                            upd_res_str = await conn.execute(
-                                update_clip_sql, final_clip_state, clip_id, current_state
-                            )
-                            # Parse "UPDATE N" string
-                            updated_clip_rows = int(upd_res_str.split()[-1]) if upd_res_str and upd_res_str.startswith("UPDATE") else 0
-
-                            if updated_clip_rows == 1:
-                                logger.info(f"{log_prefix} Successfully updated clip state to '{final_clip_state}'.")
-                                db_clip_updated_count += 1
-                            else:
-                                # This could happen if the state was changed by another process after fetching clips_to_cleanup
-                                logger.warning(
-                                    f"{log_prefix} Clip state update to '{final_clip_state}' affected {updated_clip_rows} rows "
-                                    f"(expected 1). State might have changed concurrently from '{current_state}'. Transaction will rollback."
-                                )
-                                # Raise an error to ensure transaction rollback for this clip
-                                raise RuntimeError(f"Concurrent state change detected for clip {clip_id}")
-                        logger.debug(f"{log_prefix} DB transaction committed.")
-                    else:
-                        logger.warning(f"{log_prefix} Skipping DB updates for clip {clip_id} due to S3 deletion failure or configuration issue.")
-
-                except Exception as inner_err: # Catch errors within the loop for a single clip
-                    logger.error(f"{log_prefix} Error processing clip for cleanup: {inner_err}", exc_info=True)
-                    error_count += 1
-                    # Continue to the next clip
-
-    except Exception as outer_err: # Catch errors related to DB connection or the overall flow
-        logger.error(f"FATAL Error during scheduled clip cleanup flow: {outer_err}", exc_info=True)
-        error_count += 1
-    # No explicit pool or connection management needed here, context manager handles it.
-
-    logger.info(
-        f"FLOW: Scheduled Clip Cleanup complete. "
-        f"Clips Found: {processed_count}, S3 Objects Deleted: {s3_deleted_count}, "
-        f"DB Artifacts Deleted: {db_artifact_deleted_count}, DB Clips Updated: {db_clip_updated_count}, "
-        f"Env: {environment}, Bucket Used: {s3_bucket_name_for_flow if s3_client_for_flow else 'N/A'}, Errors: {error_count}"
-    )
+    logger.info(f"INITIATOR FLOW: Finished processing cycle in '{effective_env}'. Submitted {submitted_this_cycle} tasks/deployments.") 
