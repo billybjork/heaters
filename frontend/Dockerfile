@@ -40,6 +40,7 @@ COPY lib       ./lib
 COPY config    ./config
 COPY priv/repo ./priv/repo
 RUN mix compile \
+ && mix phx.digest \
  && mix release --overwrite
 
 # -----------------------
