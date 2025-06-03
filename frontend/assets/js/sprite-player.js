@@ -227,7 +227,7 @@ export const ThumbHoverPlayer = {
 };
 
 /* ────────────────────────────────────────────────────────────────────────── */
-/*  Minimal sprite-sheet “video” player (used by main panel)                */
+/*  Minimal sprite-sheet "video" player (used by main panel)                */
 /* ────────────────────────────────────────────────────────────────────────── */
 
 class SpritePlayer {
@@ -251,7 +251,17 @@ class SpritePlayer {
 
     /* playback speeds */
     this.speeds = [1, 1.5, 2];
-    this.speedIndex = 0;
+    this.speedIndex = 0; // Default speed index
+
+    // Load speed from localStorage
+    const savedSpeed = localStorage.getItem("spritePlayerSpeed");
+    if (savedSpeed) {
+      const parsedSpeed = parseFloat(savedSpeed);
+      const savedSpeedIndex = this.speeds.indexOf(parsedSpeed);
+      if (savedSpeedIndex !== -1) {
+        this.speedIndex = savedSpeedIndex;
+      }
+    }
 
     /* preload sprite PNG */
     this.spriteImage = new Image();
@@ -359,6 +369,9 @@ class SpritePlayer {
     this.speedIndex = (this.speedIndex + 1) % this.speeds.length;
     const rate = this.speeds[this.speedIndex];
     this.speedBtn.textContent = `${rate}×`;
+
+    // Save speed to localStorage
+    localStorage.setItem("spritePlayerSpeed", rate.toString());
 
     if (this.isPlaying) {
       this.pause();
