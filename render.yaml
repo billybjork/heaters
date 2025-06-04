@@ -1,22 +1,32 @@
 envVarGroups:
-  - name: app-secrets
+  - name: app-secrets          # (already empty – will hold shared secrets later)
     envVars: []
 
+# ---------------------------------------------------------------------------
+#  DATABASES
+# ---------------------------------------------------------------------------
 databases:
-  - name: app-db # Main application database
+  # Main Phoenix application DB
+  - name: app-db
     plan: basic-1gb
     postgresMajorVersion: 16
     ipAllowList:
       - source: "50.1.246.139/32"
         description: "El Segundo House"
-  - name: prefect-db # Prefect metadata database
+
+  # Prefect metadata DB
+  - name: prefect-db
     plan: basic-1gb
     postgresMajorVersion: 16
-    # ipAllowList can be configured if direct access is needed,
-    # but typically the Prefect server will connect internally on Render.
+    # ipAllowList: []  # optional – Prefect server connects internally
 
+# ---------------------------------------------------------------------------
+#  SERVICES
+# ---------------------------------------------------------------------------
 services:
-  # --- Phoenix LiveView Web Service ---
+  # -------------------------------------------------------------------------
+  #  1) Phoenix LiveView Web
+  # -------------------------------------------------------------------------
   - name: phoenix-web
     type: web
     env: docker
@@ -25,11 +35,9 @@ services:
     dockerfilePath: Dockerfile
     healthCheckPath: /
     envVars:
-      # --- Application Environment ---
+      # --- App / Phoenix ---
       - key: APP_ENV
         value: "production"
-
-      # --- Phoenix Specific ---
       - key: MIX_ENV
         value: "prod"
       - key: PHX_SERVER
@@ -39,44 +47,48 @@ services:
       - key: PORT
         value: "4000"
 
-      # --- Database Connection (for Phoenix/Ecto) ---
+      # --- DB connection ---
       - key: DATABASE_URL
         fromDatabase:
           name: app-db
           property: connectionString
-      - key: PROD_DATABASE_URL # runtime.exs might prioritize this
+      - key: PROD_DATABASE_URL
         fromDatabase:
           name: app-db
           property: connectionString
 
-      # --- Secrets & AWS Configuration ---
+      # --- Secrets / AWS ---
       - key: SECRET_KEY_BASE
-        generateValue: true   # Render will generate a secure value
+        generateValue: true
       - fromGroup: app-secrets
 
     autoDeploy: true
     branch: main
 
-  # --- Prefect Server ---
- - name: prefect-server
+  # -------------------------------------------------------------------------
+  #  2) Prefect Server (API + UI)
+  # -------------------------------------------------------------------------
+  - name: prefect-server
     type: web
     env: docker
     plan: starter
     dockerfilePath: ./backend/Dockerfile.prefect-server
-    healthCheckPath: /api/health
-    # new: override CMD so Prefect uses the port Render assigns
+
+    # Render sets $PORT (default 10000).  We bind Prefect to it.
     startCommand: >
       bash -c "prefect server start --host 0.0.0.0 --port $PORT"
+
+    healthCheckPath: /api/health
+
     envVars:
+      # Prefect's metadata database
       - key: PREFECT_API_DATABASE_CONNECTION_URL
         fromDatabase:
           name: prefect-db
           property: connectionString
-      # PREFECT_UI_API_URL will likely need to be the public URL of this service once deployed
-      # e.g., https://prefect-server-xxxx.onrender.com/api
-      # This might need to be manually set in Render UI or dynamically discovered if possible.
-      # For now, we'll let Prefect Server's default behavior for UI discovery work,
-      # or you can set it explicitly in the Render dashboard after the first deploy.
-      - fromGroup: app-secrets # If Prefect server needs any shared secrets
-    autoDeploy: true # Or false if you prefer manual deploys for Prefect server
-    branch: main # Or whichever branch you use for deployments
+
+      # Shared secrets if Prefect ever needs them
+      - fromGroup: app-secrets
+
+    autoDeploy: true     # change to false if you prefer manual deploys
+    branch: main
