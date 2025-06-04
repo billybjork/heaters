@@ -70,6 +70,4 @@ services:
     healthCheckPath: /api/health
     envVars:
       - key: PREFECT_API_DATABASE_CONNECTION_URL
-        fromDatabase:
-          name: prefect-db
-          property: connectionString
+        value: "postgresql+asyncpg://prefect_db_dg8s_user:3xxhOI6aYeJx5CQvbK3g7r28h7zkabXc@dpg-d10cemq4d50c73alie7g-a.oregon-postgres.render.com/prefect_db_dg8s"

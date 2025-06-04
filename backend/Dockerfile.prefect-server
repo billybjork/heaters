@@ -5,8 +5,6 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
     \
-    && pip install --no-cache-dir psycopg2-binary \
-    \
     # prep the UI static build output dir
     && mkdir -p /usr/local/lib/python3.11/site-packages/prefect/server/ui_build \
     && chmod -R a+rwx /usr/local/lib/python3.11/site-packages/prefect/server/ui_build \
