@@ -1,12 +1,11 @@
 envVarGroups:
-  - name: app-secrets          # (already empty – will hold shared secrets later)
+  - name: app-secrets
     envVars: []
 
 # ---------------------------------------------------------------------------
 #  DATABASES
 # ---------------------------------------------------------------------------
 databases:
-  # Main Phoenix application DB
   - name: app-db
     plan: basic-1gb
     postgresMajorVersion: 16
@@ -14,11 +13,9 @@ databases:
       - source: "50.1.246.139/32"
         description: "El Segundo House"
 
-  # Prefect metadata DB
   - name: prefect-db
     plan: basic-1gb
     postgresMajorVersion: 16
-    # ipAllowList: []  # optional – Prefect server connects internally
 
 # ---------------------------------------------------------------------------
 #  SERVICES
@@ -35,7 +32,6 @@ services:
     dockerfilePath: Dockerfile
     healthCheckPath: /
     envVars:
-      # --- App / Phoenix ---
       - key: APP_ENV
         value: "production"
       - key: MIX_ENV
@@ -47,7 +43,6 @@ services:
       - key: PORT
         value: "4000"
 
-      # --- DB connection ---
       - key: DATABASE_URL
         fromDatabase:
           name: app-db
@@ -57,7 +52,6 @@ services:
           name: app-db
           property: connectionString
 
-      # --- Secrets / AWS ---
       - key: SECRET_KEY_BASE
         generateValue: true
       - fromGroup: app-secrets
@@ -74,21 +68,21 @@ services:
     plan: starter
     dockerfilePath: ./backend/Dockerfile.prefect-server
 
-    # Render sets $PORT (default 10000).  We bind Prefect to it.
-    startCommand: >
-      bash -c "prefect server start --host 0.0.0.0 --port $PORT"
-
+    internalPort: 4200          # Render health-check uses 4200 now
     healthCheckPath: /api/health
 
     envVars:
-      # Prefect's metadata database
+      # Make Prefect listen on every interface (the Dockerfile’s CMD already
+      # starts on port 4200 by default).
+      - key: PREFECT_SERVER_API_HOST
+        value: 0.0.0.0
+
       - key: PREFECT_API_DATABASE_CONNECTION_URL
         fromDatabase:
           name: prefect-db
           property: connectionString
 
-      # Shared secrets if Prefect ever needs them
-      - fromGroup: app-secrets
+      - fromGroup: app-secrets    # optional shared secrets
 
-    autoDeploy: true     # change to false if you prefer manual deploys
+    autoDeploy: true
     branch: main
