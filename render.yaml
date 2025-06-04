@@ -68,21 +68,18 @@ services:
     plan: starter
     dockerfilePath: ./backend/Dockerfile.prefect-server
 
-    internalPort: 4200          # Render health-check uses 4200 now
+    # Override the container CMD so Prefect listens on the port Render assigns.
+    dockerCommand: >
+      bash -c "prefect server start --host 0.0.0.0 --port $PORT"
+
     healthCheckPath: /api/health
 
     envVars:
-      # Make Prefect listen on every interface (the Dockerfile’s CMD already
-      # starts on port 4200 by default).
-      - key: PREFECT_SERVER_API_HOST
-        value: 0.0.0.0
-
       - key: PREFECT_API_DATABASE_CONNECTION_URL
         fromDatabase:
           name: prefect-db
           property: connectionString
-
-      - fromGroup: app-secrets    # optional shared secrets
+      - fromGroup: app-secrets
 
     autoDeploy: true
     branch: main
