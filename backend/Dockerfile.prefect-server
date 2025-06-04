@@ -15,3 +15,9 @@ RUN apt-get update \
 
 # drop back to the Prefect user
 USER 1000
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Add this CMD so Prefect uses Render’s PORT (default 10000). Locally it
+# will fall back to 4200 if $PORT isn’t set.
+# ─────────────────────────────────────────────────────────────────────────────
+CMD ["sh", "-c", "prefect server start --host 0.0.0.0 --port ${PORT:-4200}"]
