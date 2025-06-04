@@ -20,14 +20,22 @@ try:
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
-    from db.sync_db import get_db_connection, release_db_connection
-    from config import get_s3_resources # Import the new S3 utility function
+    from db.sync_db import get_db_connection, release_db_connection, initialize_db_pool
+    from config import get_s3_resources
+    from utils.process_utils import run_ffmpeg_command, run_ffprobe_command
 except ImportError as e:
     # Fallback for db_utils and config - critical for task operation
-    print(f"ERROR: Cannot import db_utils or config in sprite.py. {e}", file=sys.stderr)
+    print(f"ERROR: Cannot import db_utils, config or process_utils in sprite.py. {e}", file=sys.stderr)
     def get_db_connection(environment: str, cursor_factory=None): raise NotImplementedError("Dummy DB getter")
     def release_db_connection(conn, environment: str): pass
+    def initialize_db_pool(environment: str): raise NotImplementedError("Dummy initialize_db_pool")
     def get_s3_resources(environment: str, logger=None): raise NotImplementedError("Dummy S3 resource getter")
+    # Fallback for run_ffmpeg_command
+    def run_ffmpeg_command(cmd_list, step_name="ffmpeg command", cwd=None, ffmpeg_executable=None):
+        raise NotImplementedError("Dummy run_ffmpeg_command from sprite.py fallback")
+    # Fallback for run_ffprobe_command
+    def run_ffprobe_command(cmd_list, step_name="ffprobe command", cwd=None, ffprobe_executable=None):
+        raise NotImplementedError("Dummy run_ffprobe_command from sprite.py fallback")
 
 # FFMPEG_PATH can remain a module-level constant if it's universally applicable
 FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
@@ -83,6 +91,15 @@ def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False, e
     """
     logger = get_run_logger()
     logger.info(f"TASK [SpriteGen]: Starting for clip_id: {clip_id}, Env: {environment}")
+
+    # --- Initialize DB Pool for this task's environment ---    
+    try:
+        initialize_db_pool(environment)
+        logger.info(f"DB pool for '{environment}' initialized or verified by generate_sprite_sheet_task.")
+    except Exception as pool_init_err:
+        logger.error(f"CRITICAL: Failed to initialize DB pool for '{environment}' in generate_sprite_sheet_task: {pool_init_err}", exc_info=True)
+        _update_clip_state_on_error(clip_id, "db_pool_failed", f"DB Pool init failed: {pool_init_err}", logger, environment=environment)
+        raise RuntimeError(f"DB Pool initialization failed in generate_sprite_sheet_task for env '{environment}'") from pool_init_err
 
     # --- Resource Management & State ---
     conn = None

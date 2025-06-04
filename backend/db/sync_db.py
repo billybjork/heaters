@@ -222,49 +222,93 @@ def close_all_db_pools() -> None:
 # ─────────────────────────────────── Application Helper Functions ────────────────────────────────────
 # These functions interact with the application schema (source_videos, clips) using the sync pool.
 
-def get_all_pending_work(environment: str, limit_per_stage: int = 50) -> List[Dict[str, Any]]:
+def get_all_pending_work(environment: str, limit_per_stage: int = 50, max_retries: int = 3) -> List[Dict[str, Any]]:
     """
-    Consolidated work list for the Prefect initiator.
-    Queries based on FINALIZED ingest_state (set by Commit Worker).
-    Requires 'environment' to connect to the correct database.
+    Fetches all pending work items from the database for a given environment,
+    respecting a limit per stage and a maximum retry count.
+
+    Args:
+        environment: The database environment ('development' or 'production').
+        limit_per_stage: Maximum number of items to fetch for each stage.
+        max_retries: Maximum number of retries an item can have before being ignored.
+
+    Returns:
+        A list of dictionaries, each representing a work item with 'id' and 'stage'.
     """
-    task_log = get_run_logger() or log
-    conn: Optional[PgConnection] = None
-    items = []
+    logger = get_run_logger() or log
+    all_work_items = []
+    conn = None
+
+    # Define stages and their corresponding queries
+    # Each query now includes a check for retry_count
+    stages_config = {
+        "intake": {
+            "table": "source_videos",
+            "states": "('new', 'download_failed')",
+            "order_by": "updated_at ASC",
+            "id_col": "id"
+        },
+        "splice": {
+            "table": "source_videos",
+            "states": "('downloaded', 'splicing_failed')",
+            "order_by": "updated_at ASC",
+            "id_col": "id"
+        },
+        "pending_sprite_generation": {
+            "table": "clips",
+            "states": "('pending_sprite_generation')",
+            "order_by": "inserted_at ASC",
+            "id_col": "id"
+        },
+        "post_review": {
+            "table": "clips",
+            "states": "('review_approved')",
+            "order_by": "action_committed_at ASC", # Ensure clips.action_committed_at is used
+            "id_col": "id"
+        }
+    }
+
     try:
-        conn = get_db_connection(environment, cursor_factory=RealDictCursor)
-        with conn:
-            with conn.cursor() as cur:
-                query = sql.SQL("""
-                    (SELECT id, 'intake'       AS stage FROM source_videos WHERE ingest_state = %s ORDER BY id LIMIT %s)
-                    UNION ALL
-                    (SELECT id, 'splice'       AS stage FROM source_videos WHERE ingest_state = %s ORDER BY id LIMIT %s)
-                    UNION ALL
-                    (SELECT id, 'pending_sprite_generation' AS stage FROM clips WHERE ingest_state = %s ORDER BY id LIMIT %s)
-                    UNION ALL
-                    (SELECT id, 'post_review'  AS stage FROM clips WHERE ingest_state = %s ORDER BY id LIMIT %s)
-                    UNION ALL
-                    (SELECT id, 'embedding'    AS stage FROM clips WHERE ingest_state = %s ORDER BY id LIMIT %s)
-                """)
-                params = [
-                    "new", limit_per_stage,
-                    "downloaded", limit_per_stage,
-                    "pending_sprite_generation", limit_per_stage,
-                    "review_approved", limit_per_stage,
-                    "keyframed", limit_per_stage,
-                ]
-                task_log.debug(f"Executing get_all_pending_work (env: {environment}) query with limit {limit_per_stage}")
-                cur.execute(query, params)
-                items = cur.fetchall()
-                task_log.info(f"Found {len(items)} pending work items across stages (env: {environment}).")
-    except (Exception, psycopg2.DatabaseError) as error:
-        task_log.error(f"DB error fetching pending work (env: {environment}): {error}", exc_info=True)
-        raise
+        conn = get_db_connection(environment)
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            for stage_name, config in stages_config.items():
+                # Constructing the query dynamically but safely using sql.SQL and sql.Identifier
+                query_str = sql.SQL("""
+                    SELECT {id_col} as id, %s AS stage
+                    FROM {table}
+                    WHERE ingest_state IN {states}
+                      AND COALESCE(retry_count, 0) < %s
+                    ORDER BY {order_by}
+                    LIMIT %s;
+                """).format(
+                    id_col=sql.Identifier(config["id_col"]),
+                    table=sql.Identifier(config["table"]),
+                    states=sql.SQL(config["states"]), # states string includes parentheses
+                    order_by=sql.SQL(config["order_by"])
+                )
+                
+                try:
+                    cur.execute(query_str, (stage_name, max_retries, limit_per_stage))
+                    items = cur.fetchall()
+                    if items:
+                        logger.info(f"Found {len(items)} items for stage '{stage_name}' in '{environment}' (max_retries={max_retries}).")
+                        all_work_items.extend([dict(item) for item in items]) # Convert DictRow to dict
+                except psycopg2.Error as e:
+                    logger.error(f"DB error fetching stage '{stage_name}' in '{environment}': {e}")
+                    # Optionally, re-raise or handle to continue fetching other stages
+                    # For now, log and continue
+
+    except psycopg2.Error as e:
+        logger.error(f"Database connection error in get_all_pending_work for '{environment}': {e}")
+        # conn will be None or the connection that failed, release_db_connection handles None
+    except Exception as e:
+        logger.error(f"Unexpected error in get_all_pending_work for '{environment}': {e}")
     finally:
         if conn:
             release_db_connection(conn, environment)
-    task_log.debug(f"Pending work items found (env: {environment}): {len(items)}")
-    return items
+    
+    logger.debug(f"get_all_pending_work for '{environment}' returning {len(all_work_items)} items total.")
+    return all_work_items
 
 def get_source_input_from_db(source_video_id: int, environment: str) -> str | None:
     """Fetches the original_url for a given source_video ID from the specified environment's DB."""
@@ -291,77 +335,112 @@ def get_source_input_from_db(source_video_id: int, environment: str) -> str | No
             release_db_connection(conn, environment)
     return input_source
 
-def get_pending_merge_pairs(environment: str) -> List[Tuple[int, int]]:
+def get_pending_merge_pairs(environment: str, max_retries: int = 3) -> List[Tuple[int, int]]:
     """
-    Returns list of (target_id, source_id) ready for backward merge from the specified environment's DB.
-    Queries based on FINALIZED ingest_state (set by Commit Worker).
+    Finds pairs of clips ready for merging.
+    - A 'target' clip in 'pending_merge_target' state.
+    - An immediately preceding 'source' clip (by clip_identifier) from the same source_videoid
+      that is in 'marked_for_merge_into_previous' state.
+    - Both clips must have retry_count < max_retries.
     """
-    task_log = get_run_logger() or log
-    conn: Optional[PgConnection] = None
-    pairs: List[Tuple[int, int]] = []
+    logger = get_run_logger() or log
+    merge_pairs = []
+    conn = None
+    query = """
+        SELECT
+            c_target.id AS target_clip_id,
+            c_source.id AS source_clip_id
+        FROM
+            clips c_target
+        JOIN
+            clips c_source ON c_target.source_video_id = c_source.source_video_id
+                        AND c_source.clip_identifier < c_target.clip_identifier -- Source must come before target
+        WHERE
+            c_target.ingest_state = 'pending_merge_target'
+            AND COALESCE(c_target.retry_count, 0) < %s
+            AND c_source.ingest_state = 'marked_for_merge_into_previous'
+            AND COALESCE(c_source.retry_count, 0) < %s
+            -- Ensure c_source is the DIRECTLY preceding clip intended for merge with c_target
+            -- This assumes clip_identifiers are sortable and adjacent for merges.
+            -- If clip_identifier structure is complex, this might need a more robust check
+            -- (e.g., based on event data or a linking ID if that exists)
+            AND NOT EXISTS (
+                SELECT 1
+                FROM clips c_intermediate
+                WHERE c_intermediate.source_video_id = c_target.source_video_id
+                  AND c_intermediate.clip_identifier > c_source.clip_identifier
+                  AND c_intermediate.clip_identifier < c_target.clip_identifier
+            )
+        ORDER BY
+            c_target.action_committed_at ASC, c_target.id ASC; -- Process oldest committed actions first
+    """
     try:
-        conn = get_db_connection(environment, cursor_factory=RealDictCursor)
-        with conn:
-            with conn.cursor() as cur:
-                query = sql.SQL("""
-                    SELECT
-                        t.id AS target_id,
-                        (t.processing_metadata ->> 'merge_source_clip_id')::int AS source_id
-                    FROM clips t
-                    JOIN clips s ON s.id = (t.processing_metadata ->> 'merge_source_clip_id')::int
-                    WHERE t.ingest_state = 'pending_merge_target'
-                      AND s.ingest_state = 'marked_for_merge_into_previous';
-                """)
-                task_log.debug(f"Fetching pending merge pairs (env: {environment})...")
-                cur.execute(query)
-                pairs = [(row["target_id"], row["source_id"]) for row in cur.fetchall()]
-                task_log.info(f"Found {len(pairs)} pending merge pairs (env: {environment}).")
-    except (Exception, psycopg2.DatabaseError) as error:
-        task_log.error(f"DB error fetching pending merge pairs (env: {environment}): {error}", exc_info=True)
+        conn = get_db_connection(environment)
+        with conn.cursor() as cur:
+            cur.execute(query, (max_retries, max_retries))
+            pairs = cur.fetchall()
+            if pairs:
+                logger.info(f"Found {len(pairs)} pending merge pairs in '{environment}' (max_retries={max_retries}).")
+                merge_pairs = [(pair[0], pair[1]) for pair in pairs]
+    except psycopg2.Error as e:
+        logger.error(f"Database error fetching pending merge pairs for '{environment}': {e}")
     finally:
         if conn:
             release_db_connection(conn, environment)
-    task_log.debug(f"Merge pairs ready (env: {environment}): {pairs}")
-    return pairs
+    return merge_pairs
 
-def get_pending_split_jobs(environment: str) -> List[Tuple[int, int]]:
+def get_pending_split_jobs(environment: str, max_retries: int = 3) -> List[Tuple[int, int]]:
     """
-    Returns list of (clip_id, split_frame) from the specified environment's DB.
-    Queries based on FINALIZED ingest_state (set by Commit Worker).
-    Ensures 'split_request_at_frame' key exists in processing_metadata.
+    Fetches clips that are pending a split operation.
+    Returns a list of (clip_id, split_at_frame) tuples.
+    Filters by retry_count.
     """
-    task_log = get_run_logger() or log
-    conn: Optional[PgConnection] = None
-    jobs: List[Tuple[int, int]] = []
+    logger = get_run_logger() or log
+    split_jobs = []
+    conn = None
+    # Ensure processing_metadata is treated as JSONB for the ->> operator
+    query = """
+        SELECT
+            c.id AS clip_id,
+            (c.processing_metadata->>'split_at_frame')::integer AS split_at_frame
+        FROM
+            clips c
+        WHERE
+            c.ingest_state = 'pending_split'
+            AND COALESCE(c.retry_count, 0) < %s
+            AND c.processing_metadata IS NOT NULL
+            AND c.processing_metadata->>'split_at_frame' IS NOT NULL
+            -- Add a check to ensure split_at_frame is a valid integer if not done by ::integer cast
+        ORDER BY
+            c.action_committed_at ASC, c.id ASC; -- Process oldest committed actions first
+    """
     try:
-        conn = get_db_connection(environment, cursor_factory=RealDictCursor)
-        with conn:
-            with conn.cursor() as cur:
-                query = sql.SQL("""
-                    SELECT id,
-                           (processing_metadata ->> 'split_request_at_frame')::int AS split_frame
-                    FROM clips
-                    WHERE ingest_state = 'pending_split'
-                      AND processing_metadata ? 'split_request_at_frame';
-                """)
-                task_log.debug(f"Fetching pending split jobs (env: {environment})...")
-                cur.execute(query)
-                fetched_rows = cur.fetchall()
-                jobs = []
-                for row in fetched_rows:
-                    if row["id"] is not None and row["split_frame"] is not None:
-                        jobs.append((row["id"], row["split_frame"]))
+        conn = get_db_connection(environment)
+        with conn.cursor() as cur:
+            cur.execute(query, (max_retries,))
+            jobs = cur.fetchall()
+            if jobs:
+                valid_jobs = []
+                for job_row in jobs:
+                    clip_id, split_frame = job_row[0], job_row[1]
+                    if split_frame is not None: # Ensure split_frame is not NULL after cast
+                        valid_jobs.append((clip_id, split_frame))
                     else:
-                        task_log.warning(f"Skipping malformed split job data (env: {environment}): {row}")
-                task_log.info(f"Found {len(jobs)} pending split jobs (env: {environment}).")
-    except (Exception, psycopg2.DatabaseError) as error:
-        task_log.error(f"DB error fetching pending split jobs (env: {environment}): {error}", exc_info=True)
-        raise
+                        logger.warning(f"Clip ID {clip_id} found in 'pending_split' but 'split_at_frame' is NULL or invalid in metadata. Skipping.")
+                
+                if valid_jobs:
+                    logger.info(f"Found {len(valid_jobs)} pending split jobs in '{environment}' (max_retries={max_retries}).")
+                    split_jobs = valid_jobs
+
+    except psycopg2.Error as e:
+        logger.error(f"Database error fetching pending split jobs for '{environment}': {e}")
+        # Consider re-raising or specific error handling if this is critical
+    except Exception as e_unexp:
+        logger.error(f"Unexpected error fetching pending split jobs for '{environment}': {e_unexp}")
     finally:
         if conn:
             release_db_connection(conn, environment)
-    task_log.debug(f"Split jobs ready (env: {environment}): {jobs}")
-    return jobs
+    return split_jobs
 
 # ─────────────────────────────────── Immediate State Update Helpers ────────────────────────────────────
 # These are used by tasks to update state *during* processing or on completion/failure.

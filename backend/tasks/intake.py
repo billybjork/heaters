@@ -17,24 +17,30 @@ import yt_dlp
 
 # --- Local Imports ---
 try:
-    from db.sync_db import get_db_connection, release_db_connection
+    from db.sync_db import get_db_connection, release_db_connection, initialize_db_pool
     from config import get_s3_resources
+    from utils.process_utils import run_ffmpeg_command
 except ImportError:
     # Standard fallback logic
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
     try:
-        from db.sync_db import get_db_connection, release_db_connection
-        from config import get_s3_resources # Import again in fallback
+        from db.sync_db import get_db_connection, release_db_connection, initialize_db_pool
+        from config import get_s3_resources
+        from utils.process_utils import run_ffmpeg_command
     except ImportError as e:
-        print(f"ERROR importing db_utils or config in intake.py: {e}")
+        print(f"ERROR importing db_utils, config or process_utils in intake.py: {e}")
         def get_db_connection(environment: str, cursor_factory=None):
             raise NotImplementedError("Dummy get_db_connection")
         def release_db_connection(conn, environment: str):
             raise NotImplementedError("Dummy release_db_connection")
+        def initialize_db_pool(environment: str):
+            raise NotImplementedError("Dummy initialize_db_pool")
         def get_s3_resources(env, logger=None):
             raise NotImplementedError("Dummy get_s3_resources")
+        def run_ffmpeg_command(cmd_list, step_name="ffmpeg command", cwd=None, ffmpeg_executable=None):
+            raise NotImplementedError("Dummy run_ffmpeg_command")
 
 
 # --- Task Configuration ---
@@ -161,6 +167,15 @@ def intake_task(source_video_id: int,
     """
     logger = get_run_logger()
     logger.info(f"TASK [Intake]: Starting for source_video_id: {source_video_id}, Input: '{input_source}', Environment: {environment}")
+
+    # --- Initialize DB Pool for this task's environment ---    
+    try:
+        initialize_db_pool(environment)
+        logger.info(f"DB pool for '{environment}' initialized or verified by intake_task.")
+    except Exception as pool_init_err:
+        logger.error(f"CRITICAL: Failed to initialize DB pool for '{environment}' in intake_task: {pool_init_err}", exc_info=True)
+        # Depending on policy, could raise here to fail fast, or let it fail at get_db_connection
+        raise RuntimeError(f"DB Pool initialization failed in intake_task for env '{environment}'") from pool_init_err
 
     # --- Get S3 Resources using the utility function ---
     s3_client_for_task, s3_bucket_name_for_task = get_s3_resources(environment, logger=logger)
@@ -527,7 +542,7 @@ def intake_task(source_video_id: int,
             encoded_temp_path = temp_dir / final_filename_for_db
             ffmpeg_cmd = ["ffmpeg", "-y", "-i", str(initial_temp_filepath)] + FFMPEG_ARGS + [str(encoded_temp_path)]
             try:
-                run_external_command(ffmpeg_cmd, "ffmpeg Re-encoding")
+                run_ffmpeg_command(ffmpeg_cmd, "ffmpeg Re-encoding")
                 logger.info(f"Re-encoding successful: {encoded_temp_path.name}")
                 file_to_upload = encoded_temp_path
             except Exception as encode_err:

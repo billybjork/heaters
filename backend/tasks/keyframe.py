@@ -223,9 +223,12 @@ def extract_keyframes_task(
     # Explicitly initialize DB pool if needed (safer in task context)
     try:
         initialize_db_pool(environment)
+        logger.info(f"DB pool for '{environment}' initialized or verified by extract_keyframes_task.") # Consistent logging
     except Exception as pool_err:
-        logger.error(f"Failed to initialize DB pool at task start for env '{environment}': {pool_err}")
-        raise RuntimeError(f"DB pool initialization failed for env '{environment}'") from pool_err
+        logger.error(f"CRITICAL: Failed to initialize DB pool for '{environment}' in extract_keyframes_task: {pool_err}", exc_info=True) # Consistent logging & exc_info
+        # Update task state to reflect failure before raising, if possible/desired, or ensure this is handled by a generic task error handler
+        # For now, matching pattern of raising directly to fail the task run.
+        raise RuntimeError(f"DB Pool initialization failed in extract_keyframes_task for env '{environment}'") from pool_err
 
     try:
         # === Phase 1: Initial DB Check and State Update ===

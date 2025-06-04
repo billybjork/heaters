@@ -17,13 +17,14 @@ from botocore.exceptions import ClientError, NoCredentialsError
 try:
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if project_root not in sys.path: sys.path.insert(0, project_root)
-    from db.sync_db import get_db_connection, release_db_connection, update_clip_state_sync
-    from config import get_s3_resources # Import the new S3 utility function
+    from db.sync_db import get_db_connection, release_db_connection, update_clip_state_sync, initialize_db_pool
+    from config import get_s3_resources
 except ImportError as e:
     print(f"ERROR importing db_utils or config in merge.py: {e}")
     def get_db_connection(environment: str, cursor_factory=None): raise NotImplementedError("Dummy DB connection")
     def release_db_connection(conn, environment: str): pass
     def update_clip_state_sync(environment: str, clip_id: int, new_state: str, error_message: str | None = None): pass
+    def initialize_db_pool(environment: str): raise NotImplementedError("Dummy initialize_db_pool")
     def get_s3_resources(environment: str, logger=None): raise NotImplementedError("Dummy S3 resource getter")
 
 # Module-level constants that are not S3 client/bucket specific
@@ -119,6 +120,15 @@ def merge_clips_task(clip_id_target: int, clip_id_source: int, environment: str 
     """
     logger = get_run_logger()
     logger.info(f"TASK [Merge Backward]: Starting merge of Source Clip {clip_id_source} into Target Clip {clip_id_target}")
+
+    # --- Initialize DB Pool for this task's environment ---    
+    try:
+        initialize_db_pool(environment)
+        logger.info(f"DB pool for '{environment}' initialized or verified by merge_clips_task.")
+    except Exception as pool_init_err:
+        logger.error(f"CRITICAL: Failed to initialize DB pool for '{environment}' in merge_clips_task: {pool_init_err}", exc_info=True)
+        # This task has complex error handling, raising directly to let the main try/except handle state updates.
+        raise RuntimeError(f"DB Pool initialization failed in merge_clips_task for env '{environment}'") from pool_init_err
 
     # --- Resource & State Variables ---
     conn = None

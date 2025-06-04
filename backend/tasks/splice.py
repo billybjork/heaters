@@ -14,22 +14,28 @@ import psycopg2
 from psycopg2 import sql
 import sys # Added for sys.path manipulation in fallback
 
+# --- Local Imports ---
 try:
-    from db.sync_db import get_db_connection, release_db_connection # Added release_db_connection
-    from config import get_s3_resources # Import the new utility function
+    from db.sync_db import get_db_connection, release_db_connection, initialize_db_pool
+    from config import get_s3_resources
+    from utils.process_utils import run_ffmpeg_command # Import for ffmpeg
 except ImportError:
-    # sys = __import__('sys') # Not needed, import sys directly
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
     try:
-        from db.sync_db import get_db_connection, release_db_connection # Added release_db_connection
-        from config import get_s3_resources # Import again in fallback
+        from db.sync_db import get_db_connection, release_db_connection, initialize_db_pool
+        from config import get_s3_resources
+        from utils.process_utils import run_ffmpeg_command # Import for ffmpeg
     except ImportError as e:
-        print(f"Failed to import db_utils or config in splice.py: {e}")
-        def get_db_connection(environment: str, cursor_factory=None): raise NotImplementedError("Dummy get_db_connection") # Add environment
-        def release_db_connection(conn, environment: str): raise NotImplementedError("Dummy release_db_connection") # Add environment
+        print(f"Failed to import db_utils, config or process_utils in splice.py: {e}")
+        def get_db_connection(environment: str, cursor_factory=None): raise NotImplementedError("Dummy get_db_connection")
+        def release_db_connection(conn, environment: str): raise NotImplementedError("Dummy release_db_connection")
+        def initialize_db_pool(environment: str): raise NotImplementedError("Dummy initialize_db_pool")
         def get_s3_resources(env, logger=None): raise NotImplementedError("Dummy get_s3_resources")
+        # Fallback for run_ffmpeg_command
+        def run_ffmpeg_command(cmd_list, step_name="ffmpeg command", cwd=None, ffmpeg_executable=None):
+            raise NotImplementedError("Dummy run_ffmpeg_command from splice.py fallback")
 
 # --- Task Configuration ---
 CLIP_S3_PREFIX = "clips/"
@@ -216,6 +222,14 @@ def splice_video_task(source_video_id: int, environment: str = "development"):
     """
     logger = get_run_logger()
     logger.info(f"TASK [Splice]: Starting for source_video_id: {source_video_id}, Environment: {environment}")
+
+    # --- Initialize DB Pool for this task's environment ---    
+    try:
+        initialize_db_pool(environment)
+        logger.info(f"DB pool for '{environment}' initialized or verified by splice_video_task.")
+    except Exception as pool_init_err:
+        logger.error(f"CRITICAL: Failed to initialize DB pool for '{environment}' in splice_video_task: {pool_init_err}", exc_info=True)
+        raise RuntimeError(f"DB Pool initialization failed in splice_video_task for env '{environment}'") from pool_init_err
 
     # --- Get S3 Resources using the utility function ---
     s3_client_for_task, s3_bucket_name_for_task = get_s3_resources(environment, logger=logger)

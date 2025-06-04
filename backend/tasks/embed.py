@@ -152,14 +152,18 @@ def generate_embeddings_task(
         logger.info(f"Parsed strategy: keyframe_type='{keyframe_strategy_name}', aggregation='{aggregation_method}'")
     except ValueError as e:
         logger.error(str(e))
+        # No DB update for this type of error, it's a configuration/call issue.
         raise e
 
     # Explicitly initialize DB pool if needed
     try:
         initialize_db_pool(environment)
+        logger.info(f"DB pool for '{environment}' initialized or verified by generate_embeddings_task.") # Consistent logging
     except Exception as pool_err:
-        logger.error(f"Failed to initialize DB pool at task start for env '{environment}': {pool_err}")
-        raise RuntimeError(f"DB pool initialization failed for env '{environment}'") from pool_err
+        logger.error(f"CRITICAL: Failed to initialize DB pool for '{environment}' in generate_embeddings_task: {pool_err}", exc_info=True) # Consistent logging & exc_info
+        # No specific DB state update here for pool failure, as the task might not have claimed the item yet.
+        # Raising RuntimeError will fail the Prefect task run.
+        raise RuntimeError(f"DB Pool initialization failed in generate_embeddings_task for env '{environment}'") from pool_err
 
     try:
         # === Phase 1: Initial DB Check and State Update ===

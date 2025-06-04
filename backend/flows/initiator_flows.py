@@ -40,6 +40,7 @@ from db.sync_db import (
 TASK_SUBMIT_DELAY = float(os.getenv("TASK_SUBMIT_DELAY", 0.1)) # Delay between task submissions
 ACTION_COMMIT_GRACE_PERIOD_SECONDS = int(os.getenv("ACTION_COMMIT_GRACE_PERIOD_SECONDS", 10))
 MAX_NEW_SUBMISSIONS_PER_CYCLE = int(os.getenv("MAX_NEW_SUBMISSIONS_PER_CYCLE", 10)) # Limit submissions per initiator cycle
+MAX_TASK_RETRIES = int(os.getenv("MAX_TASK_RETRIES", 3)) # Max retries for a task before it's not picked up by initiator
 
 # =============================================================================
 # ===                        COMMIT WORKER LOGIC                            ===
@@ -292,9 +293,9 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
 
     # --- 2. Process General Pending Work (Intake, Splice, Post-Review, Sprite Generation) ---
     if submitted_this_cycle < MAX_NEW_SUBMISSIONS_PER_CYCLE:
-        logger.info(f"INITIATOR ('{effective_env}'): Checking for general pending work (intake, splice, sprite, post-review)...")
+        logger.info(f"INITIATOR ('{effective_env}'): Checking for general pending work (intake, splice, sprite, post-review)... Max retries for tasks: {MAX_TASK_RETRIES}")
         try:
-            items_to_process = get_all_pending_work(environment=effective_env, limit_per_stage=limit_per_stage)
+            items_to_process = get_all_pending_work(environment=effective_env, limit_per_stage=limit_per_stage, max_retries=MAX_TASK_RETRIES)
             logger.info(f"Found {len(items_to_process)} general pending work items in '{effective_env}'.")
 
             if not items_to_process:
@@ -403,9 +404,9 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
 
     # --- 3. Process Pending Merge Pairs ---
     if submitted_this_cycle < MAX_NEW_SUBMISSIONS_PER_CYCLE:
-        logger.info(f"INITIATOR ('{effective_env}'): Checking for pending merge pairs...")
+        logger.info(f"INITIATOR ('{effective_env}'): Checking for pending merge pairs... Max retries for tasks: {MAX_TASK_RETRIES}")
         try:
-            pending_merges = get_pending_merge_pairs(environment=effective_env)
+            pending_merges = get_pending_merge_pairs(environment=effective_env, max_retries=MAX_TASK_RETRIES)
             if pending_merges:
                 logger.info(f"Found {len(pending_merges)} merge pairs to process in '{effective_env}'.")
                 for target_id, source_id in pending_merges:
@@ -441,9 +442,9 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
 
     # --- 4. Process Pending Split Jobs ---
     if submitted_this_cycle < MAX_NEW_SUBMISSIONS_PER_CYCLE:
-        logger.info(f"INITIATOR ('{effective_env}'): Checking for pending split jobs...")
+        logger.info(f"INITIATOR ('{effective_env}'): Checking for pending split jobs... Max retries for tasks: {MAX_TASK_RETRIES}")
         try:
-            pending_splits = get_pending_split_jobs(environment=effective_env) # Pass environment
+            pending_splits = get_pending_split_jobs(environment=effective_env, max_retries=MAX_TASK_RETRIES) # Pass environment and max_retries
             if pending_splits:
                 logger.info(f"Found {len(pending_splits)} split jobs to process in '{effective_env}'.")
                 for original_clip_id, split_frame in pending_splits: # Assuming get_pending_split_jobs returns this tuple
