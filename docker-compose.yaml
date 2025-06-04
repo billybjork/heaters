@@ -104,12 +104,8 @@ services:
       APP_ENV: ${APP_ENV:-development}
 
       # --- Prefect Config ---
-      # PREFECT_API_URL: ${PREFECT_API_URL:-http://prefect-server:4200/api} # Old local URL
-      PREFECT_API_URL: ${PREFECT_API_URL:-https://prefect-server-16db.onrender.com/api} # New Render URL
+      PREFECT_API_URL: ${PREFECT_API_URL:-http://prefect-server:4200/api} # Defaults to local Prefect server
       PREFECT_WORKER_CONCURRENCY_LIMIT: "3"
-
-      # --- S3/CloudFront for Local Worker (uses DEV resources) ---
-      # S3_PROD_BUCKET_NAME and CLOUDFRONT_PROD_DOMAIN are also available from .env if Python needs to choose
 
       # --- AWS Credentials (already in .env, but explicit pass-through is fine) ---
       AWS_REGION: ${AWS_REGION}
@@ -120,14 +116,22 @@ services:
       - ./backend:/app
     command: >
       sh -c "
-        echo 'Backend service: Waiting for Prefect Server API at $${PREFECT_API_URL}...' &&
-        until curl -fsS $${PREFECT_API_URL}/health; do echo 'Prefect server not ready yet, sleeping...'; sleep 5; done &&
+        echo 'Backend service: Waiting for Prefect Server API at $${PREFECT_API_URL:-http://prefect-server:4200/api}...' &&
+        until curl -fsS $${PREFECT_API_URL:-http://prefect-server:4200/api}/health; do echo 'Prefect server not ready yet, sleeping...'; sleep 5; done &&
         echo 'Backend service: Prefect Server is ready.' &&
         echo 'Backend service: Waiting for App Dev DB (app-db-dev)...' &&
         until pg_isready -h app-db-dev -p 5432 -U dev_user -d frontend_dev_db; do echo 'Backend waiting for app-db-dev...'; sleep 2; done &&
         echo 'Backend service: App Dev DB (app-db-dev) is ready.' &&
-        echo 'Backend service: Deploying Prefect flows from /app/prefect.yaml...' &&
-        prefect deploy --all &&
+
+        DEPLOY_FILE='prefect.dev.yaml' &&
+        TARGET_ENV='DEV' &&
+        if [ \"$PREFECT_API_URL\" = \"https://prefect-server-16db.onrender.com/api\" ]; then
+          DEPLOY_FILE='prefect.prod.yaml';
+          TARGET_ENV='PROD';
+        fi &&
+        echo \"Backend service: Targeting $${TARGET_ENV} environment. Deploying Prefect flows from /app/$${DEPLOY_FILE}...\" &&
+        prefect deploy --prefect-file \"/app/$${DEPLOY_FILE}\" --all &&
+
         echo 'Backend service: Prefect flows deployment attempt complete.' &&
         echo 'Backend service: Starting Prefect worker...' &&
         exec prefect worker start --pool default-agent-pool --name local-dev-worker
