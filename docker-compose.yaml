@@ -104,7 +104,8 @@ services:
       APP_ENV: ${APP_ENV:-development}
 
       # --- Prefect Config ---
-      PREFECT_API_URL: ${PREFECT_API_URL:-http://prefect-server:4200/api}
+      # PREFECT_API_URL: ${PREFECT_API_URL:-http://prefect-server:4200/api} # Old local URL
+      PREFECT_API_URL: ${PREFECT_API_URL:-https://YOUR_RENDER_PREFECT_APP_URL_HERE/api} # New Render URL
       PREFECT_WORKER_CONCURRENCY_LIMIT: "3"
 
       # --- S3/CloudFront for Local Worker (uses DEV resources) ---

@@ -9,6 +9,11 @@ databases:
     ipAllowList:
       - source: "50.1.246.139/32"
         description: "El Segundo House"
+  - name: prefect-db # Prefect metadata database
+    plan: starter # 256 MB RAM / 1 GB Storage / 0.1 CPU (Shared)
+    postgresMajorVersion: 16
+    # ipAllowList can be configured if direct access is needed,
+    # but typically the Prefect server will connect internally on Render.
 
 services:
   # --- Phoenix LiveView Web Service ---
@@ -51,3 +56,27 @@ services:
 
     autoDeploy: true
     branch: main
+
+  # --- Prefect Server ---
+  - name: prefect-server
+    type: web
+    env: docker
+    plan: starter # 0.5 CPU / 0.5 GB RAM
+    rootDir: backend # Assuming Dockerfile.prefect-server is in the backend directory
+    dockerfilePath: ./Dockerfile.prefect-server # Relative to rootDir
+    healthCheckPath: /api/health
+    envVars:
+      - key: PREFECT_SERVER_API_HOST
+        value: "0.0.0.0" # Listens on all interfaces within the container
+      - key: PREFECT_API_DATABASE_CONNECTION_URL
+        fromDatabase:
+          name: prefect-db
+          property: connectionString
+      # PREFECT_UI_API_URL will likely need to be the public URL of this service once deployed
+      # e.g., https://prefect-server-xxxx.onrender.com/api
+      # This might need to be manually set in Render UI or dynamically discovered if possible.
+      # For now, we'll let Prefect Server's default behavior for UI discovery work,
+      # or you can set it explicitly in the Render dashboard after the first deploy.
+      - fromGroup: app-secrets # If Prefect server needs any shared secrets
+    autoDeploy: true # Or false if you prefer manual deploys for Prefect server
+    branch: main # Or whichever branch you use for deployments
