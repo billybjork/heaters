@@ -68,15 +68,21 @@ services:
     plan: starter
     dockerfilePath: ./backend/Dockerfile.prefect-server
 
+    # **THIS runs inside the image**; $PORT = 10000 on Render
+    command: ["sh", "-c", "prefect server start --host 0.0.0.0 --port $PORT"]
+
     healthCheckPath: /api/health
 
     envVars:
-      - key: PORT                     # Render listens on this
-        value: "4200"
-      - key: PREFECT_SERVER_API_HOST  # Bind externally
-        value: 0.0.0.0
       - key: PREFECT_API_DATABASE_CONNECTION_URL
         fromDatabase:
           name: prefect-db
           property: connectionString
+      # Optional—Prefect UI will discover its own URL, but you can
+      # specify it explicitly if you like:
+      # - key: PREFECT_UI_API_URL
+      #   value: https://<your-prefect-service>.onrender.com/api
       - fromGroup: app-secrets
+
+    autoDeploy: true
+    branch: main
