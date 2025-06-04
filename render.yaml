@@ -10,7 +10,7 @@ databases:
       - source: "50.1.246.139/32"
         description: "El Segundo House"
   - name: prefect-db # Prefect metadata database
-    plan: starter # 256 MB RAM / 1 GB Storage / 0.1 CPU (Shared)
+    plan: basic-1gb
     postgresMajorVersion: 16
     # ipAllowList can be configured if direct access is needed,
     # but typically the Prefect server will connect internally on Render.
