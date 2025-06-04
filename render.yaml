@@ -58,18 +58,16 @@ services:
     branch: main
 
   # --- Prefect Server ---
-  - name: prefect-server
+ - name: prefect-server
     type: web
     env: docker
-    plan: starter # 0.5 CPU / 0.5 GB RAM
-    rootDir: backend # Assuming Dockerfile.prefect-server is in the backend directory
-    dockerfilePath: ./Dockerfile.prefect-server # Relative to rootDir
+    plan: starter
+    dockerfilePath: ./backend/Dockerfile.prefect-server
     healthCheckPath: /api/health
+    # new: override CMD so Prefect uses the port Render assigns
     startCommand: >
       bash -c "prefect server start --host 0.0.0.0 --port $PORT"
     envVars:
-      - key: PREFECT_SERVER_API_HOST
-        value: "0.0.0.0" # Listens on all interfaces within the container
       - key: PREFECT_API_DATABASE_CONNECTION_URL
         fromDatabase:
           name: prefect-db
