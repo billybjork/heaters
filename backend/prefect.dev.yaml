@@ -18,6 +18,8 @@ deployments:
       interval: 60
       timezone: "UTC"
       late_runs: skip
+    concurrency:
+      limit: 1
     tags: ["ingest", "scheduled", "dispatcher", "development"]
     parameters: 
       environment: "development"
