@@ -111,7 +111,7 @@ services:
       AWS_REGION: ${AWS_REGION}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-    mem_limit: 8g
+    mem_limit: 12g
     volumes:
       - ./backend:/app
     command: >

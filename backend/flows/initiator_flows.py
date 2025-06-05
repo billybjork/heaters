@@ -134,12 +134,13 @@ def _commit_pending_review_actions(environment: str, grace_period_seconds: int):
                     elif action == "selected_group_target":
                         target_state = "review_approved"
                     elif action == "selected_split":
-                        target_state = "pending_split"
                         split_at_frame_val = event_data.get("split_at_frame")
 
                         if split_at_frame_val is not None:
                             try:
                                 frame_to_split = int(split_at_frame_val)
+                                # Only set the target_state if the metadata is valid
+                                target_state = "pending_split"
                                 processing_metadata_update_payload = psycopg2.extras.Json({
                                     "split_request_at_frame": frame_to_split
                                 })
