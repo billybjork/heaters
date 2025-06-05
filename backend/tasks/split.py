@@ -51,7 +51,7 @@ def sanitize_filename(name):
     name = re.sub(r'_+', '_', name).strip('_')
     return name[:150] if name else "default_filename_fallback"
 
-@task(name="Split Clip at Frame", retries=1, retry_delay_seconds=45, concurrency_limit=5)
+@task(name="Split Clip at Frame", retries=1, retry_delay_seconds=45, tags=["splitting"])
 def split_clip_task(clip_id: int, environment: str = "development"):
     """
     Splits a single clip into two based on a FRAME NUMBER specified in its metadata.

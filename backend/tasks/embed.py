@@ -107,7 +107,7 @@ def _load_model_and_processor_internal(model_name, device='cpu'):
 
 
 # --- Prefect Task ---
-@task(name="Generate Clip Embedding", retries=1, retry_delay_seconds=60, concurrency_limit=3)
+@task(name="Generate Clip Embedding", retries=1, retry_delay_seconds=60, tags=["embedding-generation"])
 def generate_embeddings_task(
     clip_id: int,
     model_name: str,

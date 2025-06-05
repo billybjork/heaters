@@ -82,7 +82,7 @@ SPRITE_COLS = int(os.getenv("SPRITE_COLS", 5))
 ARTIFACT_TYPE_SPRITE_SHEET = "sprite_sheet"
 
 
-@task(name="Generate Sprite Sheet", retries=1, retry_delay_seconds=45, concurrency_limit=5)
+@task(name="Generate Sprite Sheet", retries=1, retry_delay_seconds=45, tags=["sprite-generation"])
 def generate_sprite_sheet_task(clip_id: int, overwrite_existing: bool = False, environment: str = "development"):
     """
     Generates a sprite sheet for a given clip, uploads it to S3,

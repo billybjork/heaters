@@ -190,7 +190,7 @@ def _extract_and_save_frames_internal(
 
 
 # --- Prefect Task ---
-@task(name="Extract Clip Keyframes", retries=1, retry_delay_seconds=45, concurrency_limit=5)
+@task(name="Extract Clip Keyframes", retries=1, retry_delay_seconds=45, tags=["keyframe-extraction"])
 def extract_keyframes_task(
     clip_id: int,
     strategy: str = 'midpoint',
