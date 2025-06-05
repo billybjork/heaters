@@ -4,8 +4,8 @@ prefect-version: 3
 # This explicitly tells Prefect how workers should get the code.
 # An empty list means "do nothing, the code is already on the filesystem".
 pull:
-  - prefect.deployments.steps.run_shell_script:
-      script: "echo 'Code is present in the local worker environment. No pull step needed.'"
+  - prefect.deployments.steps.set_working_directory:
+      directory: /app
 
 deployments:
   - name: scheduled-ingest-dispatcher-prod
@@ -43,5 +43,6 @@ deployments:
     work_pool:
       name: default-agent-pool
       work_queue_name: default
+    schedule: null
     parameters: {} # Keep parameters, even if empty, for consistency
     tags: ["ingest", "processing", "post-review", "triggered", "production-default"] # Added a more specific tag
