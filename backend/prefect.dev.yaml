@@ -13,6 +13,7 @@ deployments:
     schedule:
       interval: 60
       timezone: "UTC"
+      late_runs: skip
     tags: ["ingest", "scheduled", "dispatcher", "development"]
     parameters: 
       environment: "development"
@@ -26,6 +27,7 @@ deployments:
     schedule:
       cron: "0 0 * * 0"  # Once a week, Sunday at 00:00 UTC
       timezone: "UTC"
+      late_runs: skip
     tags: ["cleanup", "scheduled", "maintenance", "development"]
     parameters: 
       environment: "development"
