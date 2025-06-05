@@ -1,7 +1,11 @@
 name: heaters-ingest-dev
 prefect-version: 3
 
-build: null
+# This explicitly tells Prefect how workers should get the code.
+# An empty list means "do nothing, the code is already on the filesystem".
+pull:
+  - prefect.deployments.steps.run_shell_script:
+      script: "echo 'Code is present in the local worker environment. No pull step needed.'"
 
 deployments:
   - name: scheduled-ingest-dispatcher-dev

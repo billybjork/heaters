@@ -41,6 +41,8 @@ TASK_SUBMIT_DELAY = float(os.getenv("TASK_SUBMIT_DELAY", 0.1)) # Delay between t
 ACTION_COMMIT_GRACE_PERIOD_SECONDS = int(os.getenv("ACTION_COMMIT_GRACE_PERIOD_SECONDS", 10))
 MAX_NEW_SUBMISSIONS_PER_CYCLE = int(os.getenv("MAX_NEW_SUBMISSIONS_PER_CYCLE", 10)) # Limit submissions per initiator cycle
 MAX_TASK_RETRIES = int(os.getenv("MAX_TASK_RETRIES", 3)) # Max retries for a task before it's not picked up by initiator
+DEFAULT_BATCH_SIZE = int(os.getenv("DEFAULT_BATCH_SIZE", 5)) # Number of tasks to submit in one batch
+DEFAULT_BATCH_DELAY = int(os.getenv("DEFAULT_BATCH_DELAY", 2)) # Seconds to wait between batches
 
 # =============================================================================
 # ===                        COMMIT WORKER LOGIC                            ===
@@ -258,11 +260,16 @@ def _commit_pending_review_actions(environment: str, grace_period_seconds: int):
 # =============================================================================
 
 @flow(log_prints=True)
-def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | None = None):
+def scheduled_ingest_initiator(
+    limit_per_stage: int = 50,
+    environment: str | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    batch_delay_seconds: int = DEFAULT_BATCH_DELAY
+):
     """
-    Main Prefect flow to periodically check for pending work across various ingest stages.
-    The environment for this flow and the tasks it triggers is determined by the
-    explicit 'environment' parameter, falling back to the worker's APP_ENV if not provided.
+    The main initiator flow that runs on a schedule.
+    It finds all pending work items in the database and creates Prefect task/flow runs for them.
+    Work is processed in batches to avoid overwhelming the system.
     """
     logger = get_run_logger()
     # Determine the operating environment from the parameter, or the worker's APP_ENV as a fallback.
@@ -297,6 +304,8 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
         try:
             items_to_process = get_all_pending_work(environment=effective_env, limit_per_stage=limit_per_stage, max_retries=MAX_TASK_RETRIES)
             logger.info(f"Found {len(items_to_process)} general pending work items in '{effective_env}'.")
+
+            post_review_items = [] # Defer post-review items for batched processing
 
             if not items_to_process:
                 logger.info(f"No general pending work found across any stage in '{effective_env}'.")
@@ -350,43 +359,9 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
                                 logger.warning(f"Failed to update state to 'generating_sprite' for clip_id {item_id} (expected 'pending_sprite_generation'). Skipping sprite task submission.")
 
                         elif stage == 'post_review':
-                            logger.info(f"Attempting to set state to 'post_review_initiated' for clip_id {item_id} (expected 'review_approved') in '{effective_env}'.")
-                            if update_clip_state_sync(
-                                environment=effective_env,
-                                clip_id=item_id,
-                                new_state='post_review_initiated',
-                                expected_old_state='review_approved'
-                            ):
-                                logger.info(f"State for clip {item_id} successfully set to 'post_review_initiated'. Submitting process_clip_post_review deployment.")
-                                run_deployment(
-                                    name="process-clip-post-review/process-clip-post-review-default",
-                                    parameters={
-                                        "clip_id": item_id,
-                                        "environment": effective_env
-                                    },
-                                    timeout=0 # Fire and forget
-                                )
-                                submitted_this_cycle += 1
-                            else:
-                                # Fetch current state for better logging if update failed
-                                current_state_on_fail_initiator = "unknown"
-                                conn_check_init_fail = None
-                                try:
-                                    conn_check_init_fail = get_db_connection(effective_env)
-                                    conn_check_init_fail.autocommit = True
-                                    with conn_check_init_fail.cursor() as cur_check_init_fail:
-                                        cur_check_init_fail.execute("SELECT ingest_state FROM clips WHERE id = %s", (item_id,))
-                                        res_init = cur_check_init_fail.fetchone()
-                                        if res_init: current_state_on_fail_initiator = res_init[0]
-                                except Exception as e_log_state_init:
-                                    logger.warning(f"Could not fetch current state for clip {item_id} on initiator update failure: {e_log_state_init}")
-                                finally:
-                                    if conn_check_init_fail: release_db_connection(conn_check_init_fail, effective_env)
-
-                                logger.warning(
-                                    f"Failed to update state for clip {item_id} from 'review_approved' to 'post_review_initiated'. "
-                                    f"Actual current state: '{current_state_on_fail_initiator}'. Skipping deployment. Another initiator might have claimed it."
-                                )
+                            # Defer for batched submission later
+                            post_review_items.append(item)
+                        
                         else:
                             logger.warning(f"Unknown stage '{stage}' for item_id {item_id} in general processing. Skipping.")
 
@@ -467,6 +442,59 @@ def scheduled_ingest_initiator(limit_per_stage: int = 50, environment: str | Non
                 logger.info(f"No pending split jobs found in '{effective_env}'.")
         except Exception as e_get_splits:
             logger.error(f"Error fetching pending split jobs in '{effective_env}': {e_get_splits}", exc_info=True)
+
+    # --- 5. Process Post-Review Clips (Batched) ---
+    if post_review_items:
+        logger.info(f"Found {len(post_review_items)} 'post_review' clips to process in batches.")
+        
+        submitted_in_batch_count = 0
+        for i in range(0, len(post_review_items), batch_size):
+            batch = post_review_items[i:i + batch_size]
+            logger.info(f"Processing batch {i//batch_size + 1}/{(len(post_review_items) + batch_size - 1)//batch_size} "
+                        f"with {len(batch)} clips.")
+
+            for clip_data in batch:
+                clip_id = clip_data['id']
+                
+                # Check submission limit before processing this item
+                if (submitted_this_cycle + submitted_in_batch_count) >= MAX_NEW_SUBMISSIONS_PER_CYCLE:
+                    logger.info(f"Reached max submissions ({MAX_NEW_SUBMISSIONS_PER_CYCLE}) during batch processing. Deferring remaining post-review clips.")
+                    break # Break from inner loop (current batch)
+
+                logger.info(f"Attempting to set state to 'post_review_initiated' for clip_id {clip_id} (expected 'review_approved') in '{effective_env}'.")
+                if update_clip_state_sync(
+                    environment=effective_env,
+                    clip_id=clip_id,
+                    new_state='post_review_initiated',
+                    expected_old_state='review_approved'
+                ):
+                    logger.info(f"State for clip {clip_id} successfully set to 'post_review_initiated'. Submitting 'process-clip-post-review' deployment.")
+                    try:
+                        run_deployment(
+                            name="process-clip-post-review/process-clip-post-review-default",
+                            parameters={"clip_id": clip_id, "environment": effective_env},
+                            timeout=0,  # Fire-and-forget
+                        )
+                        submitted_in_batch_count += 1
+                        time.sleep(TASK_SUBMIT_DELAY)
+                    except Exception as e:
+                        logger.error(f"Failed to submit deployment for clip_id {clip_id}: {e}", exc_info=True)
+                        # Optionally, revert state if submission fails
+                        update_clip_state_sync(environment=effective_env, clip_id=clip_id, new_state='review_approved', expected_old_state='post_review_initiated', error_message=f"Deployment submission failed: {e}")
+                else:
+                    logger.warning(f"Failed to update state for clip {clip_id} from 'review_approved' to 'post_review_initiated'. It may have been processed by another worker. Skipping.")
+            
+            # After each batch, check if we should break from the outer loop
+            if (submitted_this_cycle + submitted_in_batch_count) >= MAX_NEW_SUBMISSIONS_PER_CYCLE:
+                break 
+
+            if i + batch_size < len(post_review_items):
+                logger.info(f"Batch submitted. Waiting for {batch_delay_seconds}s before next batch...")
+                time.sleep(batch_delay_seconds)
+        
+        submitted_this_cycle += submitted_in_batch_count
+        if submitted_in_batch_count > 0:
+            logger.info(f"Total of {submitted_in_batch_count} 'process-clip-post-review' flow runs submitted in batches.")
 
     # --- Wait for all submitted task futures to complete ---
     if submitted_futures:
