@@ -148,7 +148,7 @@ class S3TransferProgress:
 
 
 # --- Prefect Task ---
-@task(name="Intake Source Video", retries=1, retry_delay_seconds=30)
+@task(name="Intake Source Video", retries=1, retry_delay_seconds=30, concurrency_limit=5)
 def intake_task(source_video_id: int,
                 input_source: str,
                 re_encode_for_qt: bool = True,

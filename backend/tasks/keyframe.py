@@ -32,6 +32,13 @@ except ImportError as e:
 KEYFRAMES_S3_PREFIX = os.getenv("KEYFRAMES_S3_PREFIX", "clip_artifacts/keyframes/")
 ARTIFACT_TYPE_KEYFRAME = "keyframe"
 
+def sanitize_filename(name):
+    """Removes potentially problematic characters for filenames and S3 keys."""
+    name = str(name) # Ensure it's a string
+    name = re.sub(r'[^\w\.\-]+', '_', name) # Replace non-alphanumeric (excluding ., -) with _
+    name = re.sub(r'_+', '_', name).strip('_') # Collapse multiple underscores and strip leading/trailing
+    return name[:150] if name else "default_filename_fallback" # Limit length and provide fallback
+
 # --- Core Frame Extraction Logic ---
 def _extract_and_save_frames_internal(
     local_temp_video_path: str,
@@ -137,7 +144,7 @@ def _extract_and_save_frames_internal(
                 height, width = frame.shape[:2]
                 timestamp_sec = frame_index / fps if fps > 0 else 0.0
 
-                output_filename_base = f"{sanitized_title}_{scene_part}_frame_{frame_tag}.jpg"
+                output_filename_base = f"{scene_part}_frame_{frame_tag}.jpg"
                 output_path_temp_abs = os.path.join(local_temp_output_dir, output_filename_base)
 
                 logger.debug(f"Saving frame {frame_index} (tag: {frame_tag}, time: {timestamp_sec:.2f}s) to TEMP path {output_path_temp_abs}")
@@ -183,7 +190,7 @@ def _extract_and_save_frames_internal(
 
 
 # --- Prefect Task ---
-@task(name="Extract Clip Keyframes", retries=1, retry_delay_seconds=45)
+@task(name="Extract Clip Keyframes", retries=1, retry_delay_seconds=45, concurrency_limit=5)
 def extract_keyframes_task(
     clip_id: int,
     strategy: str = 'midpoint',
@@ -285,6 +292,7 @@ def extract_keyframes_task(
             return {"status": final_status, "clip_id": clip_id, "s3_keys": [], "s3_bucket_used": s3_bucket_name_for_task}
 
         # === Main Processing (if needs_processing is True) ===
+        sanitized_title = sanitize_filename(title) if title else f"source_{clip_id}"
         temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"keyframes_{clip_id}_")
         temp_dir = Path(temp_dir_obj.name)
         logger.info(f"Using temporary directory: {temp_dir}")
@@ -354,7 +362,8 @@ def extract_keyframes_task(
         # Upload new frames to S3 and prepare for DB insert
         for frame_data in extracted_frames:
             frame_filename = Path(frame_data['local_path']).name
-            s3_key = f"{KEYFRAMES_S3_PREFIX}{frame_filename}"
+            s3_key_prefix_with_slash = KEYFRAMES_S3_PREFIX.strip('/') + '/'
+            s3_key = f"{s3_key_prefix_with_slash}{sanitized_title}/{frame_filename}"
             try:
                 logger.debug(f"Uploading keyframe {frame_filename} to s3://{s3_bucket_name_for_task}/{s3_key}")
                 s3_client_for_task.upload_file(frame_data['local_path'], s3_bucket_name_for_task, s3_key)

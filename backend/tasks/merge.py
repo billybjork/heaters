@@ -110,7 +110,7 @@ def _delete_clip_s3_artifacts(conn_cursor, clip_id: int, s3_client, s3_bucket_na
         logger_instance.info(f"No S3 artifacts found in DB for clip {clip_id}.")
 
 # --- Task Definition ---
-@task(name="Merge Clips Backward", retries=1, retry_delay_seconds=30)
+@task(name="Merge Clips Backward", retries=1, retry_delay_seconds=30, concurrency_limit=5)
 def merge_clips_task(clip_id_target: int, clip_id_source: int, environment: str = "development"):
     """
     Merges the source clip (N) into the target clip (N-1) using ffmpeg concat.

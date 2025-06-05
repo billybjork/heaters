@@ -210,7 +210,7 @@ def detect_scenes(video_path: str, threshold: float, hist_method: int):
 
 # --- Main Splice Task ---
 
-@task(name="Splice Source Video into Clips", retries=1, retry_delay_seconds=60)
+@task(name="Splice Source Video into Clips", retries=1, retry_delay_seconds=60, concurrency_limit=5)
 def splice_video_task(source_video_id: int, environment: str = "development"):
     """
     Downloads source video, detects scenes using OpenCV, splices using ffmpeg,
