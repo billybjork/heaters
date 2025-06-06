@@ -1,0 +1,191 @@
+/* --------------------------------------------------
+   Base reset & typography
+-------------------------------------------------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+html {
+  font-size: 16px;
+  line-height: 1.5;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background-color: #f7fafc;
+  color: #2d3748;
+}
+/* --------------------------------------------------
+   Page‑level container
+-------------------------------------------------- */
+.container {
+  width: 100%;
+  max-width: 1024px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+/* --------------------------------------------------
+   Flex & grid utilities (optional)
+-------------------------------------------------- */
+.flex {
+  display: flex;
+}
+.items-center {
+  align-items: center;
+}
+.justify-center {
+  justify-content: center;
+}
+.grid {
+  display: grid;
+}
+/* --------------------------------------------------
+   Common spacing vars
+-------------------------------------------------- */
+:root {
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 1rem;
+  --space-4: 1.5rem;
+}
+.mt-1 { margin-top: var(--space-1); }
+.mt-2 { margin-top: var(--space-2); }
+.mt-3 { margin-top: var(--space-3); }
+.mt-4 { margin-top: var(--space-4); }
+.mx-auto { margin-left: auto; margin-right: auto; }
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Review-queue buttons & undo/back                                          */
+/* ────────────────────────────────────────────────────────────────────────── */
+.review-buttons {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    margin: 0 auto;
+}
+.review-buttons__undo,
+.review-buttons__action {
+    padding: 0.25rem 0.75rem;
+    border-radius: 0.25rem;
+    font-weight: 600;
+}
+.review-buttons__undo {
+    color: #4a5568;
+}
+.review-buttons__undo:hover {
+    color: #1a202c;
+    background-color: #edf2f7;
+}
+.review-buttons__undo:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Primary actions (Approve / Skip / Archive / Merge / Group)                */
+/* ────────────────────────────────────────────────────────────────────────── */
+.review-buttons__action {
+    background: none;
+    color: black;
+}
+.review-buttons__action--approve:hover { background-color: #48bb78; }
+.review-buttons__action--skip:hover    { background-color: #a0aec0; }
+.review-buttons__action--archive:hover { background-color: #f56565; }
+.review-buttons__action--merge:hover   { background-color: #9f7aea; }
+.review-buttons__action--group:hover   { background-color: #ed8936; }
+.review-buttons__action:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Keyboard-armed state (A/S/D/F/G)                                          */
+/* ────────────────────────────────────────────────────────────────────────── */
+.review-buttons__action.review-buttons__action--approve.is-armed {
+    background-color: #48bb78;
+}
+.review-buttons__action.review-buttons__action--skip.is-armed {
+    background-color: #a0aec0;
+}
+.review-buttons__action.review-buttons__action--archive.is-armed {
+    background-color: #f56565;
+}
+.review-buttons__action.review-buttons__action--merge.is-armed {
+    background-color: #9f7aea;
+}
+.review-buttons__action.review-buttons__action--group.is-armed {
+    background-color: #ed8936;
+}
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Center the sprite-sheet “video” player                                   */
+/* ────────────────────────────────────────────────────────────────────────── */
+.clip-display-container {
+    margin: 1rem auto;
+}
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Sprite-player controls (play/pause, scrub, frame counter)                */
+/* ────────────────────────────────────────────────────────────────────────── */
+.sprite-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    width: 100%;
+}
+/* Play/Pause button sits at left, never moves */
+.sprite-controls button {
+    flex: 0 0 auto;
+}
+/* Scrub bar fills the center, but will not shrink below its initial size */
+.sprite-controls input[type="range"] {
+    flex: 1 1 auto;
+    margin: 0 0.75rem;
+    min-width: 0;
+}
+/* Frame counter is given a fixed character width so its changing text
+   doesn’t force the scrub bar to resize */
+.sprite-controls span {
+    flex: 0 0 auto;
+    width: 5ch;
+    text-align: right;
+    font-family: monospace;
+    white-space: nowrap;
+}
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Extra buttons (Play/Pause & Split)                                       */
+/* ────────────────────────────────────────────────────────────────────────── */
+.review-buttons__action--play:hover {
+    background-color: #63b3ed;
+}
+.review-buttons__action--split:hover {
+    background-color: #ecc94b;
+}
+/* ────────────────────────────────────────────────────────── */
+/* Hide the default fixed flash (we’ll use our own below)  */
+/* ────────────────────────────────────────────────────────── */
+#flash-group {
+    display: none !important;
+  }
+/* Style our in-page flash message                           */
+.flash-info {
+    color: #22543d;                 /* dark-forest text */
+    border-radius: 0.25rem;
+    padding: 0.5rem 1rem;
+    margin: 1rem auto;
+    max-width: 15rem;               /* match your container width */
+    text-align: center;
+    font-weight: 600;
+  }
+.flash-info--approve { background-color: #48bb78; /* same as approve */ }
+.flash-info--skip    { background-color: #a0aec0; /* same as skip    */ }
+.flash-info--archive { background-color: #f56565; /* same as archive */ }
+.flash-info--merge   { background-color: #9f7aea; /* same as merge   */ }
+.flash-info--group   { background-color: #ed8936; /* same as group   */ }
+.flash-info--split   { background-color: #ecc94b; /* same as split   */ }
+/* ensure your text is still readable: */
+.flash-info--approve,
+.flash-info--merge,
+.flash-info--group { color: white; }
+.flash-info--skip,
+.flash-info--archive,
+.flash-info--split { color: black; }

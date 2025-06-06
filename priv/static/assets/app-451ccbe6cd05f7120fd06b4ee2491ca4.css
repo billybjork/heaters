@@ -1,0 +1,193 @@
+/* --------------------------------------------------
+   Base reset & typography
+-------------------------------------------------- */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+html {
+  font-size: 16px;
+  line-height: 1.5;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+/* --------------------------------------------------
+   Page-level container
+-------------------------------------------------- */
+.container {
+  width: 100%;
+  max-width: 1024px;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+/* --------------------------------------------------
+   Flex & grid utilities
+-------------------------------------------------- */
+.flex { display: flex; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
+.grid { display: grid; }
+/* --------------------------------------------------
+   Common spacing vars
+-------------------------------------------------- */
+:root {
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 1rem;
+  --space-4: 1.5rem;
+}
+.mt-1 { margin-top: var(--space-1); }
+.mt-2 { margin-top: var(--space-2); }
+.mt-3 { margin-top: var(--space-3); }
+.mt-4 { margin-top: var(--space-4); }
+.mx-auto { margin: 0 auto; }
+/* ------------- Design tokens ------------------------------------------ */
+:root {
+    /* neutrals */
+    --bg:        #f7fafc;
+    --fg:        #2d3748;
+    --panel:     #edf2f7;
+  
+    /* actions */
+    --approve: #48bb78;
+    --skip:    #a0aec0;
+    --archive: #f56565;
+    --merge:   #9f7aea;
+    --group:   #ed8936;
+    --split:   #ecc94b;
+  }
+/* ------------- Dark mode ---------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+    :root {
+      --bg:    #1a202c;
+      --fg:    #e2e8f0;
+      --panel: #2d3748;
+  
+      /* tweak action contrast */
+      --skip:   #4a5568;
+      --archive:#c53030;
+    }
+  }
+/* ------------- Global ------------------------------------------------- */
+html {
+    background: var(--bg);
+    color: var(--fg);
+  }
+.stack-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+.gap-4 {
+    gap: var(--space-3);
+  }
+/* ------------- Buttons ------------------------------------------------ */
+.btn {
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--space-1);
+    font-weight: 600;
+    background: none;
+    color: var(--fg);
+    transition: background 0.15s;
+  }
+.btn[disabled] {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+/* Ghost buttons (undo, controls) */
+.btn-ghost {
+    color: inherit;
+    opacity: 0.7;
+  }
+.btn-ghost:hover {
+    background: var(--panel);
+    opacity: 1;
+  }
+/* Action variants */
+.btn.approve:hover { background: var(--approve); color: #fff; }
+.btn.skip:hover    { background: var(--skip);    color: #000; }
+.btn.archive:hover { background: var(--archive); color: #fff; }
+.btn.merge:hover   { background: var(--merge);   color: #fff; }
+.btn.group:hover   { background: var(--group);   color: #000; }
+.btn.split:hover   { background: var(--split);   color: #000; }
+/* ------------- Flash messages ----------------------------------------- */
+.flash {
+    margin-top: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--space-1);
+    font-weight: 600;
+  }
+.flash--approve { background: var(--approve); color: #fff; }
+.flash--skip    { background: var(--skip);    color: #000; }
+.flash--archive { background: var(--archive); color: #fff; }
+.flash--merge   { background: var(--merge);   color: #fff; }
+.flash--group   { background: var(--group);   color: #000; }
+.flash--split   { background: var(--split);   color: #000; }
+/* ------------- Clip & actions wrapper --------------------------------- */
+.clip {
+    margin: var(--space-3) auto;
+    padding: var(--space-3) 0;
+  }
+.actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: 0 var(--space-3);
+  }
+/* Hide default LV flash */
+#flash-group {
+    display: none !important;
+  }
+/* Sprite-player controls container */
+.sprite-controls {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: var(--space-2) 0;
+    gap: var(--space-2);
+    max-width: 100%;
+  }
+/* Control buttons (play/pause) and undo consistency */
+.sprite-controls button,
+  .actions .btn-ghost {
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--space-1);
+    font-weight: 600;
+    background: none !important;
+    color: var(--fg);
+    opacity: 0.7;
+    transition: background 0.15s;
+    border: 2px solid var(--fg);
+  }
+.sprite-controls button:hover,
+  .actions .btn-ghost:hover {
+    background: var(--panel);
+    opacity: 1;
+  }
+/* Scrub bar expands to fill space */
+.sprite-controls input[type="range"] {
+    flex: 1 1 auto;
+    margin: 0 var(--space-2);
+    min-width: 0;
+  }
+/* Fixed-width frame counter to avoid jitter and keep inside */
+.sprite-controls span {
+    flex: 0 0 8ch;
+    text-align: right;
+    font-family: monospace;
+    white-space: nowrap;
+  }
+/* Action buttons armed state */
+.btn.approve.is-armed  { background: var(--approve); color: #fff; }
+.btn.skip.is-armed     { background: var(--skip);    color: #000; }
+.btn.archive.is-armed  { background: var(--archive); color: #fff; }
+.btn.merge.is-armed    { background: var(--merge);   color: #fff; }
+.btn.group.is-armed    { background: var(--group);   color: #000; }
+.btn.split.is-armed    { background: var(--split);   color: #000; }
+/* Split-mode outline indicator */
+.split-armed {
+    outline: 3px dashed var(--split);
+    outline-offset: 2px;
+  }
