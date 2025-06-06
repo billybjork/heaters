@@ -19,32 +19,31 @@ __pycache__/
 *.pyc
 
 # Virtual environments
-venv/
-backend/venv/
+py_tasks/venv/
 
 # ───────────────────────────────
 # Elixir & Phoenix-specific ignores
 # ───────────────────────────────
 
 # Build and dependency artifacts
-/frontend/_build/
-/frontend/deps/
-/frontend/tmp/
-/frontend/cover/
-/frontend/doc/
-/frontend/frontend-*.tar
+/_build/
+/deps/
+/tmp/
+/cover/
+/doc/
+/frontend-*.tar
 
 # Local package/dependency files
-/frontend/.fetch
+/.fetch
 *.ez
 
 # Generated assets and localization
-/frontend/priv/static/
-/frontend/priv/gettext/*.pot
-/frontend/priv/gettext/**/*.po~
+/priv/static/
+/priv/gettext/*.pot
+/priv/gettext/**/*.po~
 
 # Node.js & asset pipeline
-/frontend/assets/node_modules/
+/assets/node_modules/
 *.js.map
 *.css.map
 
