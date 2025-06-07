@@ -70,6 +70,24 @@ defmodule Frontend.Clips do
   end
 
   @doc """
+  Get a clip by ID with its associated artifacts preloaded.
+  Returns {:ok, clip} if found, {:error, :not_found} otherwise.
+  """
+  def get_clip_with_artifacts(id) do
+    case Repo.get(Clip, id) |> Repo.preload(:clip_artifacts) do
+      nil -> {:error, :not_found}
+      clip -> {:ok, clip}
+    end
+  end
+
+  @doc """
+  Returns a changeset for updating a clip with the given attributes.
+  """
+  def change_clip(%Clip{} = clip, attrs) do
+    Clip.changeset(clip, attrs)
+  end
+
+  @doc """
   Update a source video with the given attributes.
   """
   def update_source_video(%SourceVideo{} = source_video, attrs) do

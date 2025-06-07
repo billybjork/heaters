@@ -25,13 +25,17 @@ ENV MIX_ENV=prod \
 
 WORKDIR /app
 
-RUN apk add --no-cache build-base git
+RUN apk add --no-cache build-base git python3 py3-pip
 
 COPY mix.exs mix.lock ./
 RUN mix local.hex --force \
   && mix local.rebar --force \
   && mix deps.get --only prod \
   && mix deps.compile
+
+# Bring in Python tasks and install their dependencies
+COPY py_tasks ./py_tasks
+RUN pip install --no-cache-dir -r py_tasks/requirements.txt
 
 # Bring in compiled assets from the node stage
 COPY --from=node_build /app/priv/static/assets ./priv/static/assets
@@ -55,6 +59,7 @@ RUN apk add --no-cache \
       libstdc++ \
       libgcc \
       ncurses \
+      python3 \
     && update-ca-certificates
 
 ENV PHX_SERVER=true
@@ -63,6 +68,9 @@ ENV MIX_ENV=prod
 
 WORKDIR /app
 COPY --from=build /app/_build/prod/rel/frontend ./
+# Copy the installed Python dependencies and the task scripts
+COPY --from=build /usr/lib/python3.12/site-packages/ /usr/lib/python3.12/site-packages/
+COPY --from=build /app/py_tasks ./py_tasks
 
 EXPOSE 4000
 

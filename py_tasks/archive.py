@@ -1,79 +1,61 @@
-import argparse
-import json
+import os
+import boto3
 import logging
-import sys
+from botocore.exceptions import ClientError, NoCredentialsError
 
-from sqlalchemy.orm import sessionmaker
-from utils.db import get_db_engine
-from utils.s3 import get_s3_client
-from utils.schemas import Clip, ClipArtifact
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-
-def archive_clip(clip_id: int):
+def run_archive(s3_keys_to_delete: list, **kwargs):
     """
-    Archives a clip by deleting its associated S3 artifacts and updating its status.
+    A stateless utility that deletes a provided list of objects from S3.
+    This task does not connect to the database.
     """
-    logging.info(f"Starting archive process for clip_id: {clip_id}")
-    engine = get_db_engine()
-    Session = sessionmaker(bind=engine)
-    session = Session()
-    s3_client = get_s3_client()
+    if not s3_keys_to_delete:
+        logger.info("No S3 keys provided to delete. Exiting successfully.")
+        return {"status": "success", "deleted_count": 0}
+
+    logger.info(f"Attempting to delete {len(s3_keys_to_delete)} S3 objects.")
+
+    s3_bucket_name = os.getenv("S3_BUCKET_NAME")
+    if not s3_bucket_name:
+        raise ValueError("S3_BUCKET_NAME environment variable not set.")
 
     try:
-        clip = session.query(Clip).filter(Clip.id == clip_id).first()
-        if not clip:
-            logging.error(f"No clip found with id: {clip_id}")
-            return {"status": "error", "message": f"Clip not found: {clip_id}"}
+        s3_client = boto3.client("s3")
+    except NoCredentialsError:
+        logger.error("S3 credentials not found. Configure AWS environment variables.")
+        raise
 
-        artifacts = session.query(ClipArtifact).filter(ClipArtifact.clip_id == clip_id).all()
-        if not artifacts:
-            logging.warning(f"No artifacts found for clip_id: {clip_id}. Marking as archived.")
-        else:
-            logging.info(f"Found {len(artifacts)} artifacts to delete for clip {clip_id}.")
-            for artifact in artifacts:
-                if artifact.s3_key:
-                    try:
-                        logging.info(f"Deleting S3 object: {artifact.s3_bucket}/{artifact.s3_key}")
-                        s3_client.delete_object(Bucket=artifact.s3_bucket, Key=artifact.s3_key)
-                        logging.info(f"Successfully deleted S3 object: {artifact.s3_key}")
-                    except Exception as e:
-                        logging.error(f"Failed to delete S3 object {artifact.s3_key}: {e}")
-                        # Decide if we should continue or fail the whole process
-                        # For now, we'll log the error and continue.
+    try:
+        # S3 expects a list of dicts with 'Key'
+        objects_to_delete = [{"Key": key} for key in s3_keys_to_delete]
 
-        # After attempting to delete all artifacts, update the clip's state.
-        clip.ingest_state = "archived"
-        clip.last_error = None # Clear previous errors
-        session.commit()
-        logging.info(f"Successfully archived clip {clip_id} and updated its state.")
+        # delete_objects can handle up to 1000 keys at a time.
+        # For simplicity, we assume fewer than 1000 artifacts per clip.
+        # For a more robust solution, this would be chunked into batches of 1000.
+        response = s3_client.delete_objects(
+            Bucket=s3_bucket_name,
+            Delete={"Objects": objects_to_delete, "Quiet": True},
+        )
 
-        return {"status": "success", "result": {"clip_id": clip_id, "final_state": "archived"}}
+        if response.get("Errors"):
+            error_details = response["Errors"]
+            logger.error(f"S3 deletion had errors: {error_details}")
+            # Even with partial errors, we might want to proceed, but for Oban,
+            # it's better to fail the job so it can be inspected.
+            raise RuntimeError(f"S3 deletion failed for some keys: {error_details}")
 
-    except Exception as e:
-        session.rollback()
-        logging.error(f"An error occurred during the archive process for clip {clip_id}: {e}")
-        # Optionally update the clip state to an error status
-        clip = session.query(Clip).filter(Clip.id == clip_id).first()
-        if clip:
-            clip.ingest_state = "archive_failed"
-            clip.last_error = str(e)
-            session.commit()
-        return {"status": "error", "message": str(e)}
-    finally:
-        session.close()
+        logger.info(f"Successfully deleted {len(objects_to_delete)} S3 objects.")
 
+        return {
+            "status": "success",
+            "deleted_count": len(objects_to_delete),
+        }
 
-def main():
-    parser = argparse.ArgumentParser(description="Archive a clip and its S3 artifacts.")
-    parser.add_argument("--clip-id", type=int, required=True, help="The ID of the clip to archive.")
-    args = parser.parse_args()
-
-    result = archive_clip(args.clip_id)
-    # The final line of output should be the JSON result for the Elixir runner
-    print(json.dumps(result))
-
-
-if __name__ == "__main__":
-    main() 
+    except ClientError as e:
+        logger.error(f"A fatal S3 ClientError occurred during deletion: {e}", exc_info=True)
+        # Re-raise to ensure the Oban job is marked as failed
+        raise

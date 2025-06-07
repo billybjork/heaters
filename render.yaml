@@ -13,10 +13,6 @@ databases:
       - source: "50.1.246.139/32"
         description: "El Segundo House"
 
-  - name: prefect-db
-    plan: basic-1gb
-    postgresMajorVersion: 16
-
 # ---------------------------------------------------------------------------
 #  SERVICES
 # ---------------------------------------------------------------------------
@@ -58,13 +54,3 @@ services:
 
     autoDeploy: true
     branch: main
-
-  # -------------------------------------------------------------------------
-  #  2) Prefect Server (API + UI)
-  # -------------------------------------------------------------------------
-  - name: prefect-server
-    type: web
-    env: docker
-    plan: starter
-    dockerfilePath: ./backend/Dockerfile.prefect-server
-    healthCheckPath: /api/health

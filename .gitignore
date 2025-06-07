@@ -8,6 +8,7 @@
 .idea/
 .vscode/
 /backups/
+/.elixir_ls/
 
 # ───────────────────────────────
 # Python-specific ignores
@@ -19,7 +20,7 @@ __pycache__/
 *.pyc
 
 # Virtual environments
-py_tasks/venv/
+py_tasks/.venv/
 
 # ───────────────────────────────
 # Elixir & Phoenix-specific ignores
