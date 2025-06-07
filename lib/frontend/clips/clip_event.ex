@@ -9,13 +9,15 @@ defmodule Frontend.Clips.ClipEvent do
           clip_id: integer(),
           clip: Frontend.Clips.Clip.t() | Ecto.Association.NotLoaded.t(),
           created_at: DateTime.t(),
-          updated_at: NaiveDateTime.t()
+          updated_at: NaiveDateTime.t(),
+          processed_at: DateTime.t() | nil
         }
 
   schema "clip_events" do
     field :action, :string
     field :reviewer_id, :string
     field :event_data, :map
+    field :processed_at, :utc_datetime
 
     belongs_to :clip, Frontend.Clips.Clip
 
@@ -26,7 +28,7 @@ defmodule Frontend.Clips.ClipEvent do
   @doc false
   def changeset(event, attrs) do
     event
-    |> cast(attrs, [:clip_id, :action, :reviewer_id, :event_data])
+    |> cast(attrs, [:clip_id, :action, :reviewer_id, :event_data, :processed_at])
     |> validate_required([:clip_id, :action])
   end
 end

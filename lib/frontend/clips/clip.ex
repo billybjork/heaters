@@ -49,4 +49,28 @@ defmodule Frontend.Clips.Clip do
 
     timestamps(type: :utc_datetime)
   end
+
+  @doc """
+  Creates a changeset for updating a clip.
+  """
+  def changeset(clip, attrs) do
+    clip
+    |> cast(attrs, [
+      :clip_filepath,
+      :clip_identifier,
+      :start_frame,
+      :end_frame,
+      :start_time_seconds,
+      :end_time_seconds,
+      :ingest_state,
+      :last_error,
+      :retry_count,
+      :reviewed_at,
+      :keyframed_at,
+      :embedded_at,
+      :processing_metadata,
+      :grouped_with_clip_id,
+      :action_committed_at
+    ])
+  end
 end

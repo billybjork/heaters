@@ -11,6 +11,7 @@ defmodule Frontend.Application do
       FrontendWeb.Telemetry,
       Frontend.Repo,
       {DNSCluster, query: Application.get_env(:frontend, :dns_cluster_query) || :ignore},
+      {Oban, Application.fetch_env!(:frontend, Oban)},
       {Phoenix.PubSub, name: Frontend.PubSub},
       # Start a worker by calling: Frontend.Worker.start_link(arg)
       # {Frontend.Worker, arg},

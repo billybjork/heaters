@@ -12,10 +12,12 @@ defmodule Frontend.Clips do
     `reviewed_at` so the clip leaves the queue.
 
   * **Composite actions** – *merge*, *group*, *split* all perform more than one
-    DB mutation but still return the “next job” in a single round-trip.
+    DB mutation but still return the "next job" in a single round-trip.
 
   * **Sibling browsing** – `for_source_video_with_sprites/4` returns pages of other clips
     from the same source video (used by the new merge/group-by-ID mode).
+
+  * **Source Video Management** - Functions for managing source videos and their states.
 
   All public helpers either:
 
@@ -34,7 +36,47 @@ defmodule Frontend.Clips do
   alias Ecto.Query, as: Q
 
   alias Frontend.Repo
-  alias Frontend.Clips.{Clip, ClipEvent, Embedding}
+  alias Frontend.Clips.{Clip, ClipEvent, Embedding, SourceVideo}
+  alias Frontend.Workers.{MergeWorker, SplitWorker}
+
+  # -------------------------------------------------------------------------
+  # Public API - Source Video Management
+  # -------------------------------------------------------------------------
+
+  @doc """
+  Get a source video by ID. Returns {:ok, source_video} if found, {:error, :not_found} otherwise.
+  """
+  def get_source_video(id) do
+    case Repo.get(SourceVideo, id) do
+      nil -> {:error, :not_found}
+      source_video -> {:ok, source_video}
+    end
+  end
+
+  @doc """
+  Get all source videos with the given ingest state.
+  """
+  def get_videos_by_state(state) when is_binary(state) do
+    from(s in SourceVideo, where: s.ingest_state == ^state)
+    |> Repo.all()
+  end
+
+  @doc """
+  Get all clips with the given ingest state.
+  """
+  def get_clips_by_state(state) when is_binary(state) do
+    from(c in Clip, where: c.ingest_state == ^state)
+    |> Repo.all()
+  end
+
+  @doc """
+  Update a source video with the given attributes.
+  """
+  def update_source_video(%SourceVideo{} = source_video, attrs) do
+    source_video
+    |> SourceVideo.changeset(attrs)
+    |> Repo.update()
+  end
 
   # -------------------------------------------------------------------------
   # Constants (UI → DB action map)
@@ -107,7 +149,13 @@ defmodule Frontend.Clips do
           SET    reviewed_at = CASE WHEN $1 = 'selected_undo'
                                     THEN NULL
                                     ELSE NOW()
-                               END
+                               END,
+                 ingest_state = CASE WHEN $1 = 'selected_approve'
+                                     THEN 'review_approved'
+                                     WHEN $1 = 'selected_archive'
+                                     THEN 'review_archived'
+                                     ELSE ingest_state
+                                END
           WHERE  id = $2
         )
         SELECT id
@@ -156,7 +204,8 @@ defmodule Frontend.Clips do
       |> ClipEvent.changeset(%{
         clip_id: curr_id,
         action: "selected_merge_source",
-        reviewer_id: reviewer_id
+        reviewer_id: reviewer_id,
+        event_data: %{"merge_target_clip_id" => prev_id}
       })
       |> Repo.insert!()
 
@@ -274,7 +323,7 @@ defmodule Frontend.Clips do
 
   @doc """
   Return **one** clip (with :source_video and :clip_artifacts preloaded)
-  or raise if it doesn’t exist.
+  or raise if it doesn't exist.
 
   Used by *ReviewLive* when the reviewer types an explicit ID in merge/group-
   by-ID mode.
@@ -342,7 +391,7 @@ defmodule Frontend.Clips do
     %{model_names: model_names, generation_strategies: gen_strats, source_videos: source_videos}
   end
 
-  @doc "Pick one random clip in state ‘embedded’, respecting optional filters"
+  @doc "Pick one random clip in state 'embedded', respecting optional filters"
   def random_embedded_clip(%{model_name: m, generation_strategy: g, source_video_id: sv}) do
     base =
       Embedding
@@ -451,5 +500,66 @@ defmodule Frontend.Clips do
     |> where([c], c.ingest_state == "pending_review" and is_nil(c.reviewed_at))
     |> select([c], count("*"))
     |> Repo.one()
+  end
+
+  @doc """
+  Update a clip with the given attributes.
+  """
+  def update_clip(%Clip{} = clip, attrs) do
+    clip
+    |> Clip.changeset(attrs)
+    |> Repo.update()
+  end
+
+  @doc """
+  Finds unprocessed clip events and enqueues the appropriate worker jobs.
+
+  This function is designed to be called periodically by the Dispatcher. It looks
+  for "selected_split" and "selected_merge_source" events that haven't been
+  processed yet, enqueues the corresponding SplitWorker or MergeWorker, and
+  marks the events as processed in a single transaction.
+  """
+  def commit_pending_actions do
+    unprocessed_events_query =
+      from(e in ClipEvent,
+        where: is_nil(e.processed_at) and e.action in ["selected_split", "selected_merge_source"]
+      )
+
+    unprocessed_events = Repo.all(unprocessed_events_query)
+
+    if Enum.any?(unprocessed_events) do
+      Repo.transaction(fn ->
+        for event <- unprocessed_events do
+          case event.action do
+            "selected_split" ->
+              split_at_frame = event.event_data["split_at_frame"]
+
+              SplitWorker.new(%{
+                clip_id: event.clip_id,
+                split_at_frame: split_at_frame
+              })
+              |> Oban.insert!()
+
+            "selected_merge_source" ->
+              target_clip_id = event.event_data["merge_target_clip_id"]
+
+              MergeWorker.new(%{
+                clip_id_source: event.clip_id,
+                clip_id_target: target_clip_id
+              })
+              |> Oban.insert!()
+
+            _ ->
+              # Ignore other actions
+              :ok
+          end
+
+          # Mark event as processed
+          event
+          |> Ecto.Changeset.change(%{processed_at: DateTime.utc_now()})
+          |> Repo.update!()
+        end
+      end)
+    end
   end
 end

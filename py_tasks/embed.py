@@ -7,8 +7,10 @@ from pathlib import Path
 import tempfile
 import shutil
 from datetime import datetime
+import logging
+import json
+import sys
 
-from prefect import task, get_run_logger
 import psycopg2
 from psycopg2 import sql
 from psycopg2.extras import Json
@@ -23,20 +25,20 @@ except ImportError:
     print("Warning: transformers library not found. CLIP/some DINOv2 models will not be available.")
     CLIPProcessor, CLIPModel, AutoImageProcessor, AutoModel = None, None, None, None
 
-import sys
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+# --- Local Imports ---
 try:
-    # Import both connection getter/releaser and initializer
-    from db.sync_db import get_db_connection, release_db_connection, initialize_db_pool
-    from config import get_s3_resources # Import the new S3 utility function
-except ImportError as e:
-    print(f"Error importing DB utils or config in embed.py: {e}")
-    def get_db_connection(environment: str, cursor_factory=None): raise NotImplementedError("DB Utils not loaded")
-    def release_db_connection(conn, environment: str): pass
-    def initialize_db_pool(environment: str): pass
-    def get_s3_resources(environment: str, logger=None): raise NotImplementedError("S3 resource getter not loaded")
+    # Use relative imports for sibling modules within the package
+    from .utils.db import get_db_connection
+except ImportError:
+    # Fallback for when script is run directly
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+    from py_tasks.utils.db import get_db_connection
+
+# --- Logging Configuration ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # --- Constants ---
 ARTIFACT_TYPE_KEYFRAME = "keyframe"
@@ -46,7 +48,6 @@ ARTIFACT_TYPE_KEYFRAME = "keyframe"
 _model_cache = {}
 def get_cached_model_and_processor(model_name, device='cpu'):
     """Loads model/processor or retrieves from cache."""
-    logger = get_run_logger()
     cache_key = f"{model_name}_{device}"
     if cache_key in _model_cache:
         logger.debug(f"Using cached model/processor for: {cache_key}")
@@ -63,7 +64,6 @@ def get_cached_model_and_processor(model_name, device='cpu'):
 
 def _load_model_and_processor_internal(model_name, device='cpu'):
     """Internal function to load models."""
-    logger = get_run_logger()
     logger.info(f"Attempting to load model: {model_name} to device: {device}")
     model_type_str = None
     embedding_dim = None
@@ -106,14 +106,13 @@ def _load_model_and_processor_internal(model_name, device='cpu'):
     return model, processor, model_type_str, embedding_dim
 
 
-# --- Prefect Task ---
-@task(name="Generate Clip Embedding", retries=1, retry_delay_seconds=60, tags=["embedding-generation"])
-def generate_embeddings_task(
+# --- Stateless Task Function ---
+def run_embed(
     clip_id: int,
     model_name: str,
     generation_strategy: str,
-    overwrite: bool = False,
-    environment: str = "development"
+    environment: str, # For context
+    **kwargs
     ):
     """
     Generates embeddings for a clip based on specified keyframe artifacts.
@@ -121,345 +120,210 @@ def generate_embeddings_task(
     Args:
         clip_id (int): The ID of the clip.
         model_name (str): The name of the embedding model to use.
-        generation_strategy (str): The strategy for selecting/aggregating keyframes.
-        overwrite (bool): Whether to overwrite existing embeddings.
-        environment (str): The execution environment ("development" or "production").
+        generation_strategy (str): Strategy for selecting/aggregating keyframes.
+        environment (str): The execution environment.
+        **kwargs:
+            overwrite (bool): Whether to overwrite existing embeddings.
     """
-    logger = get_run_logger()
-    logger.info(f"TASK [Embedding]: Starting for clip_id: {clip_id}, Model: '{model_name}', Strategy: '{generation_strategy}', Overwrite: {overwrite}, Env: {environment}")
+    overwrite = kwargs.get('overwrite', False)
+    device = kwargs.get('device', 'cpu') # Allow overriding device for testing
+    
+    logger.info(f"RUNNING EMBED for clip_id: {clip_id}, Model: '{model_name}', Strategy: '{generation_strategy}', Overwrite: {overwrite}, Env: {environment}")
 
-    # --- Get S3 Resources using the utility function ---
-    s3_client_for_task, s3_bucket_name_for_task = get_s3_resources(environment, logger=logger)
-    # Error handling for missing S3 resources is now within get_s3_resources
-
-    conn = None
+    # --- Get S3 Resources from Environment ---
+    s3_bucket_name = os.getenv("S3_BUCKET_NAME")
+    if not s3_bucket_name:
+        raise ValueError("S3_BUCKET_NAME environment variable not set.")
+    
+    try:
+        s3_client = boto3.client("s3") # Credentials from env vars
+    except NoCredentialsError:
+        logger.error("S3 credentials not found. Configure AWS_ACCESS_KEY_ID, etc.")
+        raise
+    
     temp_dir_obj = None
-    temp_dir = None
-    final_status = "failed_init"
-    embedding_dim = -1
-    needs_processing = False
-    embedding_str = None
-    error_message_for_db = None
-    task_exception = None
-    keyframe_strategy_name = None
-    aggregation_method = None
+    embedding_id = None
+    error_message = None
 
     try:
+        # --- Strategy Parsing ---
         match = re.match(r"keyframe_([a-zA-Z0-9]+)(?:_(avg))?$", generation_strategy)
         if not match: raise ValueError(f"Invalid generation_strategy format: '{generation_strategy}'.")
         keyframe_strategy_name = match.group(1)
         aggregation_method = match.group(2)
         logger.info(f"Parsed strategy: keyframe_type='{keyframe_strategy_name}', aggregation='{aggregation_method}'")
-    except ValueError as e:
-        logger.error(str(e))
-        # No DB update for this type of error, it's a configuration/call issue.
-        raise e
 
-    # Explicitly initialize DB pool if needed
-    try:
-        initialize_db_pool(environment)
-        logger.info(f"DB pool for '{environment}' initialized or verified by generate_embeddings_task.") # Consistent logging
-    except Exception as pool_err:
-        logger.error(f"CRITICAL: Failed to initialize DB pool for '{environment}' in generate_embeddings_task: {pool_err}", exc_info=True) # Consistent logging & exc_info
-        # No specific DB state update here for pool failure, as the task might not have claimed the item yet.
-        # Raising RuntimeError will fail the Prefect task run.
-        raise RuntimeError(f"DB Pool initialization failed in generate_embeddings_task for env '{environment}'") from pool_err
-
-    try:
-        # === Phase 1: Initial DB Check and State Update ===
-        conn = get_db_connection(environment)
-        conn.autocommit = False
-
-        try:
-            with conn.cursor() as cur:
-                # 1. Acquire lock (must happen *after* autocommit=False)
-                cur.execute("SELECT pg_advisory_xact_lock(2, %s)", (clip_id,))
-                logger.info(f"Acquired DB lock for clip_id: {clip_id} (Phase 1)")
-
-                # 2. Check clip state and existing embedding
-                cur.execute(
-                    """
-                    SELECT c.ingest_state,
-                           EXISTS (SELECT 1 FROM embeddings e WHERE e.clip_id = c.id AND e.model_name = %s AND e.generation_strategy = %s)
-                    FROM clips c WHERE c.id = %s;
-                    """, (model_name, generation_strategy, clip_id)
-                )
-                result = cur.fetchone()
-                if not result: raise ValueError(f"Clip ID {clip_id} not found.")
-                current_state, embedding_exists = result
-                logger.info(f"Clip {clip_id}: State='{current_state}', EmbeddingExists={embedding_exists}")
-
-                # 3. Determine if processing is needed
-                # This task is called by process_clip_post_review flow after keyframing.
-                # Expected entry state is 'keyframed' or 'embedding_failed' for retries.
-                expected_entry_state = 'keyframed'
-                allow_processing_state = current_state == expected_entry_state or \
-                                         current_state == 'embedding_failed' or \
-                                         (overwrite and current_state == 'embedded')
-                
-                if not allow_processing_state:
-                    reason = f"state '{current_state}' is not eligible (expected '{expected_entry_state}' or 'embedding_failed')"
-                    if embedding_exists and not overwrite: reason = "embedding exists and overwrite=False"
-                    logger.info(f"Skipping clip {clip_id}: {reason}.")
-                    final_status = "skipped_state"
-                    needs_processing = False
-                elif embedding_exists and not overwrite:
-                    logger.info(f"Skipping clip {clip_id}: Embedding exists and overwrite=False.")
-                    final_status = "skipped_exists"
-                    needs_processing = False
-                else:
-                    needs_processing = True
-                    action = "Proceeding with embedding generation"
-                    if overwrite and embedding_exists: action += " (overwrite=True)."
-                    elif overwrite: action += " (overwrite=True)."
-                    else: action += "."
-                    logger.info(f"{action} Clip {clip_id} state: {current_state}.")
-
-                # 4. Update state to 'embedding' if processing
-                if needs_processing:
-                    cur.execute(
-                        "SELECT EXISTS (SELECT 1 FROM clip_artifacts WHERE clip_id = %s AND artifact_type = %s AND strategy = %s);",
-                        (clip_id, ARTIFACT_TYPE_KEYFRAME, keyframe_strategy_name)
-                    )
-                    keyframes_found = cur.fetchone()[0]
-                    if not keyframes_found: raise ValueError(f"Prerequisite keyframes missing for clip {clip_id}, strategy '{keyframe_strategy_name}'.")
-                    logger.info(f"Verified prerequisite keyframes exist for '{keyframe_strategy_name}'.")
-
-                    # Transition to 'embedding' state
-                    update_to_embedding_sql = sql.SQL("UPDATE clips SET ingest_state = 'embedding', updated_at = NOW(), last_error = NULL WHERE id = %s AND ingest_state IN (%s, %s);")
-                    cur.execute(update_to_embedding_sql, (clip_id, expected_entry_state, 'embedding_failed'))
-
-                    if cur.rowcount == 0: 
-                        # Check current state if update failed
-                        cur.execute("SELECT ingest_state FROM clips WHERE id = %s", (clip_id,))
-                        current_state_on_fail = cur.fetchone()
-                        actual_current_state = current_state_on_fail[0] if current_state_on_fail else "NOT_FOUND"
-                        logger.error(f"Concurrency Error: Failed to set clip {clip_id} state to 'embedding'. Expected '{expected_entry_state}' or 'embedding_failed', found '{actual_current_state}'.")
-                        raise RuntimeError(f"DB state transition to 'embedding' failed for {clip_id}. Current state: {actual_current_state}")
-                    logger.info(f"Set clip {clip_id} state to 'embedding' from '{current_state}'")
-
-            conn.commit()
-            logger.debug("Phase 1 DB transaction committed.")
-
-        except (ValueError, psycopg2.DatabaseError, RuntimeError) as db_err:
-            logger.error(f"DB Error during Phase 1 for clip {clip_id}: {db_err}", exc_info=True)
-            if conn: conn.rollback()
-            error_message_for_db = f"DB Phase 1 Error: {str(db_err)[:500]}"
-            task_exception = db_err
-            final_status = "failed_db_phase1"
-            raise
-
-        # === Exit Early if Skipped ===
-        if not needs_processing:
-            logger.info(f"No processing required for clip {clip_id}. Final status: {final_status}")
-            # Return status indicating skip reason
-            return {"status": final_status, "reason": final_status, "clip_id": clip_id, "model_name": model_name, "strategy": generation_strategy}
-
-        # === Phase 2: Fetch Artifacts, Download, Process ===
-        s3_keys_to_download = []
-        try:
-            # 5. Fetch Keyframe Artifact S3 Keys from DB (read-only, doesn't strictly need transaction)
-            # Reuse connection 'conn', ensure autocommit is True for safety if we didn't commit Phase 1 for some reason (though we should have)
-            conn.autocommit = True # Set for reads
-            with conn.cursor() as cur:
-                 logger.info(f"Fetching keyframe paths for clip {clip_id}, strategy '{keyframe_strategy_name}'...")
-                 query = sql.SQL("SELECT s3_key FROM clip_artifacts WHERE clip_id = %s AND artifact_type = %s AND strategy = %s ORDER BY tag;")
-                 cur.execute(query, (clip_id, ARTIFACT_TYPE_KEYFRAME, keyframe_strategy_name))
-                 s3_keys_to_download = [row[0] for row in cur.fetchall()]
-            # No commit/rollback needed for SELECT
-
-            if not s3_keys_to_download: raise FileNotFoundError(f"No keyframe S3 keys found in DB for clip {clip_id}, strategy '{keyframe_strategy_name}'.")
-            logger.info(f"Found {len(s3_keys_to_download)} keyframe artifact(s) in DB.")
-
-            # 6. Setup Temp Dir & Download
-            if not s3_client_for_task: raise RuntimeError("S3 client unavailable.")
-            temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"heaters_embed_{clip_id}_")
-            temp_dir = Path(temp_dir_obj.name)
-            logger.info(f"Using temporary directory: {temp_dir}")
-
-            downloaded_local_paths = {}
-            for s3_key in s3_keys_to_download:
-                if not s3_key: continue
-                local_filename = Path(s3_key).name
-                local_temp_path = temp_dir / local_filename
-                try:
-                    logger.debug(f"Downloading s3://{s3_bucket_name_for_task}/{s3_key} to {local_temp_path}")
-                    s3_client_for_task.download_file(s3_bucket_name_for_task, s3_key, str(local_temp_path))
-                    downloaded_local_paths[s3_key] = str(local_temp_path)
-                except ClientError as s3_err:
-                    raise FileNotFoundError(f"Failed download required keyframe {s3_key}") from s3_err
-
-            if not downloaded_local_paths: raise FileNotFoundError(f"Failed download ANY required keyframes from S3.")
-            logger.info(f"Successfully downloaded {len(downloaded_local_paths)} keyframe image(s).")
-
-            # 7. Load Images & Run Inference
-            images = []
-            for p in downloaded_local_paths.values():
-                 try: img = Image.open(p).convert("RGB"); img.verify(); img = Image.open(p).convert("RGB"); images.append(img)
-                 except Exception as img_err: raise RuntimeError(f"Error loading image {Path(p).name}") from img_err
-            if not images: raise RuntimeError(f"Image loading resulted in empty list.")
-
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            model, processor, model_type, embedding_dim = get_cached_model_and_processor(model_name, device)
-            logger.info(f"Using Model '{model_name}' ({model_type}, Dim: {embedding_dim}) on device {device}.")
-
-            all_features_np = None
-            logger.info(f"Running inference for {len(images)} image(s)...")
-            with torch.no_grad():
-                try:
-                    if model_type == "clip":
-                        inputs = processor(text=None, images=images, return_tensors="pt", padding=True).to(device)
-                        image_features = model.get_image_features(**inputs); all_features_np = image_features.cpu().numpy()
-                    elif model_type == "dino":
-                        inputs = processor(images=images, return_tensors="pt").to(device)
-                        outputs = model(**inputs); image_features = outputs.last_hidden_state.mean(dim=1); all_features_np = image_features.cpu().numpy()
-                    else: raise NotImplementedError(f"Embedding logic not implemented for type: {model_type}")
-                except Exception as infer_err: raise RuntimeError(f"Model inference failed") from infer_err
-
-            if all_features_np is None or all_features_np.shape[0] != len(images):
-                 raise RuntimeError("Feature extraction failed or produced unexpected number of results.")
-            logger.info(f"Generated {all_features_np.shape[0]} raw embeddings.")
-
-            # 8. Aggregate Embeddings
-            final_embedding_np = None
-            if aggregation_method == 'avg' and all_features_np.shape[0] > 1:
-                final_embedding_np = np.mean(all_features_np, axis=0); logger.info(f"Averaged {all_features_np.shape[0]} embeddings.")
-            elif all_features_np.shape[0] == 1:
-                 final_embedding_np = all_features_np[0]; logger.info(f"Using single generated embedding.")
-            elif all_features_np.shape[0] > 1 and not aggregation_method:
-                 raise NotImplementedError(f"Ambiguous result: Multiple embeddings for non-aggregating strategy '{generation_strategy}'.")
-            else: raise RuntimeError("Could not determine final embedding.")
-
-            # 9. Format Embedding String
-            embedding_list = final_embedding_np.tolist()
-            if len(embedding_list) != embedding_dim: raise ValueError(f"Generated embedding dim mismatch ({len(embedding_list)} vs {embedding_dim})")
-            embedding_str = '[' + ','.join(map(str, embedding_list)) + ']'
-            logger.info(f"Prepared final embedding string (Dim: {len(embedding_list)}).")
-
-        except (FileNotFoundError, RuntimeError, ValueError, ClientError, ImportError, NotImplementedError) as phase2_err:
-            logger.error(f"Error during Phase 2 for clip {clip_id}: {phase2_err}", exc_info=True)
-            error_message_for_db = f"Processing Error: {str(phase2_err)[:500]}"
-            task_exception = phase2_err
-            final_status = "failed_processing"
-            raise
-
-        # === Phase 3: Final DB Update ===
-        if not embedding_str:
-             # Should have been caught earlier
-             raise task_exception or RuntimeError("Embedding string generation failed silently.")
-
-        try:
+        # --- DB State Check and Prerequisite Validation ---
+        with get_db_connection() as conn, conn.cursor() as cur:
             conn.autocommit = False
-            with conn.cursor() as cur:
-                # 1. Acquire lock
-                cur.execute("SELECT pg_advisory_xact_lock(2, %s)", (clip_id,))
-                logger.info(f"Acquired DB lock for clip_id: {clip_id} (Phase 3)")
+            # Acquire lock
+            cur.execute("SELECT pg_advisory_xact_lock(2, %s)", (clip_id,))
+            logger.info(f"Acquired DB lock for clip_id: {clip_id}")
 
-                # 2. Insert/Update embedding
-                insert_query = sql.SQL("""
-                    INSERT INTO embeddings (clip_id, embedding, model_name, generation_strategy, generated_at, embedding_dim)
-                    VALUES (%s, %s::vector, %s, %s, NOW(), %s)
-                    ON CONFLICT (clip_id, model_name, generation_strategy)
-                    DO UPDATE SET embedding = EXCLUDED.embedding, generated_at = NOW(), embedding_dim = EXCLUDED.embedding_dim;
-                """)
-                cur.execute(insert_query, (clip_id, embedding_str, model_name, generation_strategy, embedding_dim))
-                logger.info(f"Inserted/updated embedding record.")
+            # Check clip state and existing embedding
+            cur.execute(
+                """
+                SELECT c.ingest_state,
+                       EXISTS (SELECT 1 FROM embeddings e WHERE e.clip_id = c.id AND e.model_name = %s AND e.generation_strategy = %s)
+                FROM clips c WHERE c.id = %s;
+                """, (model_name, generation_strategy, clip_id)
+            )
+            result = cur.fetchone()
+            if not result: raise ValueError(f"Clip ID {clip_id} not found.")
+            current_state, embedding_exists = result
+            logger.info(f"Clip {clip_id}: State='{current_state}', EmbeddingExists={embedding_exists}")
 
-                # 3. Update clip status
-                update_clip_query = sql.SQL("""
-                    UPDATE clips SET ingest_state = 'embedded', embedded_at = NOW(), last_error = NULL
-                    WHERE id = %s AND ingest_state = 'embedding';
-                """)
-                cur.execute(update_clip_query, (clip_id,))
+            # Idempotency checks
+            allow_processing = current_state in ('keyframed', 'embedding_failed') or (overwrite and current_state == 'embedded')
+            if not allow_processing:
+                return {"status": "skipped_state", "clip_id": clip_id, "reason": f"State '{current_state}' not eligible."}
+            if embedding_exists and not overwrite:
+                return {"status": "skipped_exists", "clip_id": clip_id, "reason": "Embedding exists and overwrite=False."}
 
-                if cur.rowcount == 1:
-                    logger.info(f"Updated clip {clip_id} state to 'embedded'.")
-                    final_status = "success"
-                else:
-                    logger.error(f"Failed to update clip {clip_id} final state to 'embedded'. Rowcount: {cur.rowcount}.")
-                    conn.rollback()
-                    final_status = "failed_state_update"
-                    error_message_for_db = "Failed final state update to 'embedded'"
-                    raise RuntimeError(f"Failed to update clip {clip_id} state in final DB step.")
-
+            # Check for keyframe artifacts
+            cur.execute(
+                "SELECT s3_key FROM clip_artifacts WHERE clip_id = %s AND artifact_type = %s AND strategy = %s",
+                (clip_id, ARTIFACT_TYPE_KEYFRAME, keyframe_strategy_name)
+            )
+            keyframe_records = cur.fetchall()
+            if not keyframe_records:
+                raise ValueError(f"Prerequisite keyframes missing for clip {clip_id}, strategy '{keyframe_strategy_name}'.")
+            
+            keyframe_s3_keys = [rec[0] for rec in keyframe_records]
+            logger.info(f"Found {len(keyframe_s3_keys)} keyframes to process.")
+            
+            # Set state to 'embedding'
+            cur.execute("UPDATE clips SET ingest_state = 'embedding', updated_at = NOW() WHERE id = %s", (clip_id,))
             conn.commit()
-            logger.debug("Phase 3 DB updates committed.")
+            logger.info(f"Set clip {clip_id} state to 'embedding'")
 
-        except (psycopg2.DatabaseError, RuntimeError) as db_err:
-            logger.error(f"DB Error during Phase 3 for clip {clip_id}: {db_err}", exc_info=True)
-            if conn: conn.rollback()
-            error_message_for_db = f"DB Phase 3 Error: {str(db_err)[:500]}"
-            task_exception = db_err
-            final_status = "failed_db_update"
-            raise
+        # --- Download Keyframes ---
+        temp_dir_obj = tempfile.TemporaryDirectory(prefix="embed_")
+        temp_dir = temp_dir_obj.name
+        local_image_paths = []
+        for s3_key in keyframe_s3_keys:
+            local_path = os.path.join(temp_dir, os.path.basename(s3_key))
+            logger.debug(f"Downloading s3://{s3_bucket_name}/{s3_key} to {local_path}")
+            s3_client.download_file(s3_bucket_name, s3_key, local_path)
+            local_image_paths.append(local_path)
 
-    except (ValueError, FileNotFoundError, RuntimeError, ClientError, ImportError, NotImplementedError, psycopg2.DatabaseError) as e:
-        # --- Main Error Handling ---
-        logger.error(f"TASK ERROR [Embedding]: clip_id {clip_id}, env '{environment}' - {e}", exc_info=True)
-        final_status = final_status if final_status not in ["failed_init", "failed"] else "failed_processing"
-        error_message_for_db = error_message_for_db or f"{type(e).__name__}: {str(e)[:500]}"
-        task_exception = e
-        if conn and needs_processing:
-            try:
-                logger.warning(f"Attempting rollback and state update to 'embedding_failed' for clip {clip_id}, env '{environment}'.")
-                conn.rollback() # Ensure rollback happens before setting autocommit
-                conn.autocommit = True
-                with conn.cursor() as err_cur:
-                    fail_update_sql = sql.SQL("UPDATE clips SET ingest_state = 'embedding_failed', last_error = %s, retry_count = COALESCE(retry_count, 0) + 1 WHERE id = %s AND ingest_state IN ('embedding', 'keyframed');")
-                    err_cur.execute(fail_update_sql, (error_message_for_db, clip_id))
-                logger.info(f"Attempted state update to 'embedding_failed' for clip {clip_id}, env '{environment}'.")
-            except Exception as db_fail_err:
-                logger.error(f"CRITICAL: Failed to update error state for clip {clip_id}, env '{environment}': {db_fail_err}")
-            finally: # Ensure connection is released even if error update fails
-                if conn and not conn.closed:
-                    release_db_connection(conn, environment)
-                    conn = None # Prevent re-release in outer finally
-        elif not conn: logger.error(f"DB connection unavailable for error state update (clip {clip_id}, env '{environment}').")
+        # --- Model Loading and Embedding Generation ---
+        model, processor, model_type, embedding_dim = get_cached_model_and_processor(model_name, device=device)
+        
+        images = [Image.open(p).convert("RGB") for p in local_image_paths]
+        logger.info(f"Loaded {len(images)} images for embedding.")
+        
+        embeddings_list = []
+        with torch.no_grad():
+            if model_type == "clip":
+                inputs = processor(text=None, images=images, return_tensors="pt", padding=True)
+                inputs = {k: v.to(device) for k, v in inputs.items()}
+                image_features = model.get_image_features(**inputs)
+                embeddings_list = image_features.cpu().numpy()
+            elif model_type == "dino":
+                inputs = processor(images=images, return_tensors="pt").to(device)
+                outputs = model(**inputs)
+                # DINOv2 piscina head is recommended for image retrieval tasks
+                image_features = outputs.last_hidden_state
+                embeddings_list = image_features[:, 0].cpu().numpy() # CLS token
+
+        if not aggregation_method and len(embeddings_list) > 1:
+            raise ValueError(f"Multiple keyframes found but no aggregation method (e.g., '_avg') specified in strategy '{generation_strategy}'.")
+        
+        final_embedding = None
+        if aggregation_method == "avg":
+            logger.info(f"Aggregating {len(embeddings_list)} embeddings using 'avg' method.")
+            final_embedding = np.mean(embeddings_list, axis=0)
+        else:
+            final_embedding = embeddings_list[0]
+            
+        final_embedding = final_embedding.flatten().tolist()
+        logger.info(f"Generated final embedding with dimension {len(final_embedding)}")
+
+        # --- Store Embedding in DB ---
+        with get_db_connection() as conn, conn.cursor() as cur:
+            # Upsert the embedding
+            cur.execute(
+                """
+                INSERT INTO embeddings (clip_id, model_name, generation_strategy, embedding_dim, embedding)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (clip_id, model_name, generation_strategy)
+                DO UPDATE SET
+                    embedding = EXCLUDED.embedding,
+                    embedding_dim = EXCLUDED.embedding_dim,
+                    updated_at = NOW()
+                RETURNING id;
+                """,
+                (clip_id, model_name, generation_strategy, embedding_dim, Json(final_embedding))
+            )
+            embedding_id = cur.fetchone()[0]
+            logger.info(f"Stored embedding in DB with ID: {embedding_id}")
+
+            # Update clip state to 'embedded'
+            cur.execute("UPDATE clips SET ingest_state = 'embedded', updated_at = NOW() WHERE id = %s", (clip_id,))
+            conn.commit()
+            logger.info(f"Set clip {clip_id} state to 'embedded'")
+
+        logger.info(f"SUCCESS: Embedding generation finished for clip_id: {clip_id}")
+        return {
+            "status": "success",
+            "clip_id": clip_id,
+            "embedding_id": embedding_id,
+            "model_name": model_name,
+            "strategy": generation_strategy
+        }
 
     except Exception as e:
-         # Catch unexpected errors
-         logger.error(f"UNEXPECTED TASK ERROR [Embedding]: clip_id {clip_id}, env '{environment}' - {e}", exc_info=True)
-         final_status = "failed_unexpected"
-         error_message_for_db = f"Unexpected:{type(e).__name__}: {str(e)[:480]}"
-         task_exception = e
-         if conn and needs_processing:
-             try:
-                conn.rollback(); conn.autocommit = True
-                with conn.cursor() as err_cur: err_cur.execute(sql.SQL("UPDATE clips SET ingest_state = 'embedding_failed', last_error = %s, retry_count = COALESCE(retry_count, 0) + 1 WHERE id = %s AND ingest_state IN ('embedding', 'keyframed');"), (error_message_for_db, clip_id))
-                logger.info(f"Attempted state update to 'embedding_failed' after unexpected error (clip {clip_id}, env '{environment}').")
-             except Exception as db_fail_err: logger.error(f"CRITICAL: Failed to update error state for clip {clip_id}, env '{environment}': {db_fail_err}")
-             finally: # Ensure connection is released
-                if conn and not conn.closed:
-                    release_db_connection(conn, environment)
-                    conn = None # Prevent re-release in outer finally 
-
+        logger.error(f"FATAL: Embedding generation failed for clip_id {clip_id}: {e}", exc_info=True)
+        error_message = str(e)
+        try:
+            with get_db_connection() as conn, conn.cursor() as cur:
+                logger.error(f"Attempting to mark clip {clip_id} as 'embedding_failed'")
+                cur.execute(
+                    """
+                    UPDATE clips SET ingest_state = 'embedding_failed', error_message = %s, updated_at = NOW() WHERE id = %s
+                    """,
+                    (error_message, clip_id)
+                )
+                conn.commit()
+        except Exception as db_fail_err:
+            logger.error(f"CRITICAL: Failed to update DB state to 'embedding_failed' for {clip_id}: {db_fail_err}", exc_info=True)
+        
+        raise
+        
     finally:
-        # --- Final Actions ---
-        if conn and not conn.closed: # Check if conn still exists and is not closed
-            conn.autocommit = True # Ensure autocommit is on before releasing
-            release_db_connection(conn, environment)
-            logger.debug(f"DB connection released for clip_id: {clip_id}, env '{environment}'.")
         if temp_dir_obj:
-            try: shutil.rmtree(temp_dir, ignore_errors=True); logger.info(f"Cleaned up temp dir: {temp_dir}")
-            except Exception as cleanup_err: logger.warning(f"Error cleaning temp dir {temp_dir}: {cleanup_err}")
+            try:
+                temp_dir_obj.cleanup()
+                logger.info(f"Cleaned up temporary directory.")
+            except Exception as cleanup_err:
+                logger.warning(f"Failed to clean up temporary directory: {cleanup_err}")
 
-    # === Return Result or Raise Exception ===
-    result_payload = {
-        "status": final_status,
-        "clip_id": clip_id,
-        "model_name": model_name,
-        "strategy": generation_strategy,
-        "embedding_dim": embedding_dim,
-        "s3_bucket_used": s3_bucket_name_for_task
-    }
+# --- Direct invocation for testing ---
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description="Run embedding generation for a single clip.")
+    parser.add_argument("--clip-id", required=True, type=int, help="The clip_id from the database.")
+    parser.add_argument("--model", required=True, help="The name of the model to use (e.g., 'openai/clip-vit-base-patch32').")
+    parser.add_argument("--strategy", required=True, help="The generation strategy (e.g., 'uniform_avg').")
+    parser.add_argument("--env", default="development", help="The environment.")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing embeddings.")
+    parser.add_argument("--device", default="cpu", help="Device to use for model inference (e.g., 'cpu', 'cuda').")
+    
+    args = parser.parse_args()
 
-    if final_status == "success":
-        logger.info(f"TASK [Embedding] finished successfully for clip_id {clip_id}.")
-        return result_payload
-    elif final_status.startswith("skipped"):
-        logger.info(f"TASK [Embedding] skipped for clip_id {clip_id}. Status: {final_status}")
-        return result_payload
-    else:
-        logger.error(f"TASK [Embedding] failed for clip_id {clip_id}. Status: {final_status}. Error: {error_message_for_db}.")
-        if task_exception: raise task_exception
-        else: raise RuntimeError(f"Embedding task failed for clip {clip_id} with status {final_status}. Reason: {error_message_for_db or 'Unknown error'}")
+    try:
+        result = run_embed(
+            clip_id=args.clip_id,
+            model_name=args.model,
+            generation_strategy=args.strategy,
+            environment=args.env,
+            overwrite=args.overwrite,
+            device=args.device
+        )
+        print("Embedding generation finished successfully.")
+        print(json.dumps(result, indent=2))
+        sys.exit(0)
+    except Exception as e:
+        print(f"Embedding generation failed: {e}", file=sys.stderr)
+        sys.exit(1)

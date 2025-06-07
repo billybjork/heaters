@@ -28,7 +28,9 @@ config :frontend, FrontendWeb.Endpoint,
   code_reloader: true,
   debug_errors: true,
   # Replace if sensitive or keep for dev
-  secret_key_base: System.get_env("SECRET_KEY_BASE") || "1yyvat8bVNahXZFsX5tOvQ2sc75yXYCOC8dTG6pzDpBR4w32TTFftWpI+suyC1jc",
+  secret_key_base:
+    System.get_env("SECRET_KEY_BASE") ||
+      "1yyvat8bVNahXZFsX5tOvQ2sc75yXYCOC8dTG6pzDpBR4w32TTFftWpI+suyC1jc",
   watchers: [
     # Watch JS for changes
     npm: [

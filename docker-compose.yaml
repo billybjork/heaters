@@ -1,5 +1,4 @@
 volumes:
-  prefect_pgdata:
   app_db_dev_data:
 
 networks:
@@ -8,57 +7,7 @@ networks:
 
 services:
 
-  # 1) Prefect metadata Postgres
-  prefect-postgres:
-    image: postgres:16-alpine
-    container_name: prefect-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER:     ${PREFECT_POSTGRES_USER:-prefect}
-      POSTGRES_PASSWORD: ${PREFECT_POSTGRES_PASSWORD:-prefect}
-      POSTGRES_DB:       ${PREFECT_POSTGRES_DB:-prefect}
-    volumes:
-      - prefect_pgdata:/var/lib/postgresql/data
-    ports:
-      - "${PREFECT_POSTGRES_PORT:-5432}:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${PREFECT_POSTGRES_USER:-prefect} -d ${PREFECT_POSTGRES_DB:-prefect}"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 60s
-    networks:
-      - app-network
-
-  # 2) Prefect Orion Server (API & UI)
-  prefect-server:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.prefect-server
-    container_name: prefect-server
-    restart: unless-stopped
-    depends_on:
-      prefect-postgres:
-        condition: service_healthy
-    environment:
-      PREFECT_SERVER_API_HOST: 0.0.0.0
-      PREFECT_UI_API_URL: http://localhost:4200/api
-      PREFECT_API_DATABASE_CONNECTION_URL: "postgresql+asyncpg://${PREFECT_POSTGRES_USER}:${PREFECT_POSTGRES_PASSWORD}@prefect-postgres:${PREFECT_POSTGRES_PORT}/${PREFECT_POSTGRES_DB}"
-      PREFECT_API_DATABASE_TIMEOUT: ${PREFECT_API_DATABASE_TIMEOUT:-600}
-    command: >
-      prefect server start --host 0.0.0.0 --port 4200
-    ports:
-      - "4200:4200"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fs http://localhost:4200/api/health || exit 1"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 120s
-    networks:
-      - app-network
-
-  # Development Database for Frontend AND Backend (local worker)
+  # Development Database for Frontend AND Backend
   app-db-dev:
     image: pgvector/pgvector:pg16
     container_name: app-db-dev
@@ -71,62 +20,16 @@ services:
       - app_db_dev_data:/var/lib/postgresql/data
     ports:
       - "5433:5432"
-    networks:
-      - app-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dev_user -d frontend_dev_db"]
       interval: 5s
       timeout: 3s
       retries: 10
       start_period: 30s
-
-  # 3) Backend (Prefect Worker + Python code)
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    container_name: prefect-worker
-    restart: unless-stopped
-    depends_on:
-      prefect-postgres:
-        condition: service_healthy
-      prefect-server:
-        condition: service_healthy
-      app-db-dev:
-        condition: service_healthy
-    environment:
-      # --- Application DB for Local Worker ---
-      DATABASE_URL: "postgresql://dev_user:dev_password@app-db-dev:5432/frontend_dev_db"
-
-      # --- Environment Indicator ---
-      APP_ENV: ${APP_ENV:-development}
-
-      # --- Prefect Config ---
-      PREFECT_API_URL: ${PREFECT_API_URL:-http://prefect-server:4200/api} # Defaults to local Prefect server
-      PREFECT_WORKER_CONCURRENCY_LIMIT: "3"
-
-      # --- AWS Credentials (already in .env, but explicit pass-through is fine) ---
-      AWS_REGION: ${AWS_REGION}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-    mem_limit: 12g
-    volumes:
-      - ./backend:/app
-    command: >
-      sh -c "
-        echo 'Backend worker: Waiting for Prefect Server API at $${PREFECT_API_URL:-http://prefect-server:4200/api}...' &&
-        until curl -fsS $${PREFECT_API_URL:-http://prefect-server:4200/api}/health; do echo 'Prefect server not ready yet, sleeping...'; sleep 5; done &&
-        echo 'Backend worker: Prefect Server is ready.' &&
-
-        echo 'Backend worker: Starting worker process...' &&
-        exec prefect worker start --pool default-agent-pool --name local-m2-worker
-      "
     networks:
       - app-network
 
-  # 4) Frontend (Phoenix Development Server)
+  # Frontend (Phoenix Development Server)
   frontend:
     image: hexpm/elixir:1.16.2-erlang-26.2.4-alpine-3.19.1
     container_name: frontend-dev
@@ -138,37 +41,27 @@ services:
       PHX_HOST: localhost
       PORT: "4000"
       ERL_AFLAGS: "-kernel shell_history enabled"
-    volumes:
-      - ./frontend:/app
     working_dir: /app
+    volumes:
+      - ./:/app
     command: >
       sh -c "
         apk add --no-cache bash nodejs npm git openssh-client postgresql16-client inotify-tools file && \
-        echo 'Frontend service: Installed build tools.' && \
         mix local.hex --force && \
         mix local.rebar --force && \
-        echo 'Frontend service: Set up Mix tools.' && \
         mix deps.get && \
-        echo 'Frontend service: Fetched Elixir dependencies.' && \
-        echo 'Frontend service: Cleaning and installing Node.js dependencies...' && \
-        rm -rf /app/assets/node_modules && \
-        mkdir -p /app/assets/node_modules && \
-        (cd /app/assets && npm install --loglevel error) && \
-        echo 'Frontend service: Finished Node.js dependency installation.' && \
-        echo 'Frontend service: Waiting for dev database (app-db-dev)...' && \
-        until pg_isready -h app-db-dev -p 5432 -U dev_user -d frontend_dev_db; do echo 'Dev DB not ready, sleeping...'; sleep 2; done && \
-        echo 'Frontend service: Dev database is ready.' && \
+        (cd assets && npm install --loglevel error) && \
+        until pg_isready -h app-db-dev -p 5432 -U dev_user -d frontend_dev_db; do sleep 2; done && \
         mix ecto.create && \
         mix ecto.migrate && \
-        echo 'Frontend service: Starting Phoenix dev server with watchers...' && \
         mix phx.server
       "
     ports:
       - "4000:4000"
-    networks:
-      - app-network
     depends_on:
       app-db-dev:
         condition: service_healthy
+    networks:
+      - app-network
     tty: true
     stdin_open: true

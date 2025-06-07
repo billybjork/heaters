@@ -1,0 +1,35 @@
+defmodule Frontend.Workers.SplitWorker do
+  use Oban.Worker, queue: :media_processing
+
+  alias Frontend.PythonRunner
+  alias Frontend.Workers.SpriteWorker
+
+  @impl Oban.Worker
+  def perform(%Oban.Job{
+        args: %{
+          "clip_id" => clip_id,
+          "split_at_frame" => split_at_frame
+        }
+      }) do
+    py_args = %{clip_id: clip_id, split_at_frame: split_at_frame}
+
+    case PythonRunner.run("split", py_args) do
+      {:ok, %{"result" => %{"new_clip_ids" => new_clip_ids}}} when is_list(new_clip_ids) ->
+        # The split was successful. The original clip has been archived and two
+        # new clips created. We'll enqueue SpriteWorker jobs for both to
+        # generate sprites and put them into the review queue.
+        jobs = Enum.map(new_clip_ids, &SpriteWorker.new(%{clip_id: &1}))
+        Oban.insert_all(jobs)
+        :ok
+
+      {:ok, other} ->
+        # The script succeeded but returned an unexpected payload.
+        {:error, "Split script finished with unexpected payload: #{inspect(other)}"}
+
+      {:error, reason} ->
+        # The script failed. It should have updated the DB state itself.
+        # We return an error to let Oban know the job failed.
+        {:error, reason}
+    end
+  end
+end

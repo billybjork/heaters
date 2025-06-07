@@ -3,6 +3,25 @@
 
 import Config
 
+config :frontend, Oban,
+  engine: Oban.Engines.Basic,
+  notifier: Oban.Notifiers.Postgres,
+  repo: Frontend.Repo,
+  plugins: [
+    Oban.Plugins.Pruner,
+    {Oban.Plugins.Cron,
+     crontab: [
+       # Every 60 seconds, run the Dispatcher worker
+       {"* * * * *", Frontend.Workers.Dispatcher}
+     ]}
+  ],
+  queues: [
+    default: 10,
+    ingest: 3,    # For video processing
+    embed: 2,     # For ML model inference
+    cleanup: 2
+  ]
+
 # General application configuration
 config :frontend,
   ecto_repos: [Frontend.Repo],

@@ -32,4 +32,25 @@ defmodule Frontend.Clips.SourceVideo do
     field :original_url, :string
     timestamps(type: :utc_datetime)
   end
+
+  @doc """
+  Creates a changeset for updating a source video.
+  """
+  def changeset(source_video, attrs) do
+    source_video
+    |> cast(attrs, [
+      :filepath,
+      :duration_seconds,
+      :fps,
+      :width,
+      :height,
+      :published_date,
+      :title,
+      :ingest_state,
+      :last_error,
+      :retry_count,
+      :original_url
+    ])
+    |> validate_required([:ingest_state])
+  end
 end

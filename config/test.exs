@@ -1,4 +1,5 @@
 import Config
+config :frontend, Oban, testing: :manual
 
 # Configure your database
 #
