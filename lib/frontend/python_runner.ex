@@ -1,5 +1,6 @@
 defmodule Frontend.PythonRunner do
   alias FrontendWeb.Endpoint # FIX: Alias the Endpoint to correctly access PubSub
+  require Logger
 
   @py_executable "python3"
   @runner_script "py_tasks/runner.py"
@@ -39,12 +40,12 @@ defmodule Frontend.PythonRunner do
     end
   end
 
-  defp app_env, do: Application.get_env(:frontend, :env)
+  defp app_env, do: System.get_env("APP_ENV") || "development"
 
-  defp db_url_var(:prod), do: "PROD_DATABASE_URL"
+  defp db_url_var("production"), do: "PROD_DATABASE_URL"
   defp db_url_var(_), do: "DEV_DATABASE_URL"
 
-  defp s3_bucket_var(:prod), do: "S3_PROD_BUCKET_NAME"
+  defp s3_bucket_var("production"), do: "S3_PROD_BUCKET_NAME"
   defp s3_bucket_var(_), do: "S3_DEV_BUCKET_NAME"
 
   defp fetch_env(var) do
@@ -56,13 +57,15 @@ defmodule Frontend.PythonRunner do
 
   defp build_env(app_env, database_url, s3_bucket_name) do
     [
-      {"APP_ENV", to_string(app_env)},
+      {"APP_ENV", app_env},
       {"DATABASE_URL", database_url},
       {"S3_BUCKET_NAME", s3_bucket_name},
       {"AWS_REGION", System.get_env("AWS_REGION")},
       {"AWS_ACCESS_KEY_ID", System.get_env("AWS_ACCESS_KEY_ID")},
       {"AWS_SECRET_ACCESS_KEY", System.get_env("AWS_SECRET_ACCESS_KEY")}
     ]
+    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+    |> Enum.map(fn {k, v} -> "#{k}=#{v}" end)
   end
 
   defp port_options(task_name, json_args, port_env) do
@@ -71,8 +74,8 @@ defmodule Frontend.PythonRunner do
       :exit_status,
       :stream,
       :hide,
-      args: [@runner_script, task_name, "--args-json", json_args],
-      env: port_env
+      {:args, [@runner_script, task_name, "--args-json", json_args]},
+      {:env, port_env}
     ]
   end
 
@@ -85,6 +88,7 @@ defmodule Frontend.PythonRunner do
       {^port, {:data, {:eol, line}}} ->
         # Optional: For future use with LiveView progress bars
         # FIX: Use the aliased Endpoint to correctly call broadcast/3
+        Logger.info("[python] " <> line)
         if pubsub_topic, do: Endpoint.broadcast(pubsub_topic, "progress", %{line: line})
         handle_port_messages(port, [line | buffer], pubsub_topic, timeout)
 

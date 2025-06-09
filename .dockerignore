@@ -21,21 +21,21 @@
 **/*.py[cod]
 **/*.pyo
 **/*.pyd
-**/venv/
 **/*.egg-info/
+**/.venv
 
 # ───────────────────────────────
 # Elixir / Phoenix-related
 # ───────────────────────────────
-frontend/_build/
-frontend/deps/
-frontend/cover/
+_build/
+deps/
+cover/
 frontend/tmp/
-frontend/doc/
-frontend/frontend-*.tar
-frontend/.fetch
-frontend/assets/node_modules/
-frontend/priv/static/
+doc/
+frontend-*.tar
+.fetch
+assets/node_modules/
+priv/static/
 
 # ───────────────────────────────
 # Environment / Secrets

@@ -1,0 +1,33 @@
+# For DEVELOPMENT environment
+
+FROM elixir:1.16.2-otp-26-slim
+
+# Install system-level dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  build-essential \
+  git \
+  nodejs \
+  npm \
+  python3 \
+  python3-pip \
+  python3-venv \
+  postgresql-client \
+  inotify-tools \
+  bash \
+  procps \
+  && rm -rf /var/lib/apt/lists/*
+
+# --- Set up the Python Virtual Environment ---
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# --- Install Python Dependencies into the Virtual Environment ---
+WORKDIR /app
+COPY py_tasks/requirements.txt ./py_tasks/requirements.txt
+RUN pip install --no-cache-dir -r py_tasks/requirements.txt
+
+# --- Pre-install Elixir tools ---
+RUN mix local.hex --force && \
+    mix local.rebar --force
+
+CMD ["/bin/sh"]

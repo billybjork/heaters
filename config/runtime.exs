@@ -232,6 +232,32 @@ if config_env() == :prod do
   # The `force_ssl` option above implies HTTPS, so `https` scheme is appropriate.
   # Render handles SSL termination at its load balancers, forwarding traffic as HTTP to your app on `port`.
   # Phoenix needs to know the original scheme (https) and host for correct URL generation.
+
+  # --- Oban Dynamic Configuration ---
+  # Default to running only the 'default' queue if OBAN_QUEUES is not set.
+  # This makes our Render web service safe by default.
+  queues_str = System.get_env("OBAN_QUEUES", "default")
+
+  queues =
+    queues_str
+    |> String.split(",", trim: true)
+    |> Enum.map(fn queue_name -> {String.to_atom(queue_name), 10} end)
+    |> Map.new()
+
+  # Only the node running the 'default' queue (the web service) will schedule jobs.
+  plugins =
+    if "default" in String.split(queues_str, ",", trim: true) do
+      [
+        Oban.Plugins.Pruner,
+        {Oban.Plugins.Cron, crontab: [{"* * * * *", Frontend.Workers.Dispatcher}]}
+      ]
+    else
+      [Oban.Plugins.Pruner]
+    end
+
+  config :frontend, Oban,
+    queues: queues,
+    plugins: plugins
 end
 
 # General debug log at the end of runtime.exs

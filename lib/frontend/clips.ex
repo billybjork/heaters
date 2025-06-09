@@ -39,6 +39,8 @@ defmodule Frontend.Clips do
   alias Frontend.Clips.{Clip, ClipEvent, Embedding, SourceVideo}
   alias Frontend.Workers.{MergeWorker, SplitWorker}
 
+  require Logger
+
   # -------------------------------------------------------------------------
   # Public API - Source Video Management
   # -------------------------------------------------------------------------
@@ -538,20 +540,26 @@ defmodule Frontend.Clips do
   marks the events as processed in a single transaction.
   """
   def commit_pending_actions do
+    Logger.info("CommitActions[start]: Starting.")
     unprocessed_events_query =
       from(e in ClipEvent,
         where: is_nil(e.processed_at) and e.action in ["selected_split", "selected_merge_source"]
       )
 
     unprocessed_events = Repo.all(unprocessed_events_query)
+    Logger.info("CommitActions[query]: Found #{Enum.count(unprocessed_events)} unprocessed events.")
 
     if Enum.any?(unprocessed_events) do
+      Logger.info("CommitActions[if]: Events found, starting transaction.")
       Repo.transaction(fn ->
+        Logger.info("CommitActions[transaction]: Inside transaction.")
         for event <- unprocessed_events do
+          Logger.info("CommitActions[loop]: Processing event ##{event.id} with action '#{event.action}'.")
           case event.action do
             "selected_split" ->
               split_at_frame = event.event_data["split_at_frame"]
 
+              Logger.info("CommitActions[split]: Enqueuing SplitWorker for clip ##{event.clip_id}.")
               SplitWorker.new(%{
                 clip_id: event.clip_id,
                 split_at_frame: split_at_frame
@@ -561,6 +569,7 @@ defmodule Frontend.Clips do
             "selected_merge_source" ->
               target_clip_id = event.event_data["merge_target_clip_id"]
 
+              Logger.info("CommitActions[merge]: Enqueuing MergeWorker for clip ##{event.clip_id}.")
               MergeWorker.new(%{
                 clip_id_source: event.clip_id,
                 clip_id_target: target_clip_id
@@ -568,16 +577,24 @@ defmodule Frontend.Clips do
               |> Oban.insert!()
 
             _ ->
-              # Ignore other actions
+              Logger.info("CommitActions[other]: Ignoring action '#{event.action}'.")
               :ok
           end
 
           # Mark event as processed
+          Logger.info("CommitActions[update]: Marking event ##{event.id} as processed.")
           event
           |> Ecto.Changeset.change(%{processed_at: DateTime.utc_now()})
           |> Repo.update!()
         end
+        Logger.info("CommitActions[transaction]: Finished transaction block.")
       end)
+      Logger.info("CommitActions[if]: Finished processing events.")
+    else
+      Logger.info("CommitActions[if]: No events to process.")
     end
+
+    Logger.info("CommitActions[finish]: Finished.")
+    :ok
   end
 end

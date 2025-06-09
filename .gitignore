@@ -18,9 +18,7 @@ __pycache__/
 *.pyd
 *.pyo
 *.pyc
-
-# Virtual environments
-py_tasks/.venv/
+**/.venv/
 
 # ───────────────────────────────
 # Elixir & Phoenix-specific ignores

@@ -1,78 +1,87 @@
-# -----------------------
-# 1) Node stage: build JS assets
-# -----------------------
-FROM node:18-slim AS node_build
-
-WORKDIR /app/assets
-
-# Copy package manifests explicitly (no brace-expansion)
-COPY ["assets/package.json", "assets/package-lock.json", "./"]
-COPY assets/js           ./js
-COPY assets/css          ./css
-COPY assets/postcss.config.js ./
-
-RUN mkdir -p ../priv/static/assets \
- && npm ci \
- && npm run deploy
+# For PRODUCTION Environment
 
 # -----------------------
-# 2) Elixir build stage: compile + release
+# 1) Build stage
 # -----------------------
-FROM hexpm/elixir:1.16.2-erlang-26.2.4-alpine-3.19.1 AS build
+FROM elixir:1.16.2-otp-26-slim AS build
 
-ENV MIX_ENV=prod \
-    LANG=C.UTF-8
+ENV MIX_ENV=prod
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  build-essential \
+  git \
+  nodejs \
+  npm \
+  python3 \
+  python3-pip \
+  python3-venv \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-RUN apk add --no-cache build-base git python3 py3-pip
+# --- Set up Python Virtual Environment in the build stage ---
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
+# Install Elixir tools
+RUN mix local.hex --force && mix local.rebar --force
+
+# Install Elixir dependencies
 COPY mix.exs mix.lock ./
-RUN mix local.hex --force \
-  && mix local.rebar --force \
-  && mix deps.get --only prod \
-  && mix deps.compile
+RUN mix deps.get --only prod
+RUN mix deps.compile
 
-# Bring in Python tasks and install their dependencies
-COPY py_tasks ./py_tasks
+# Install Python dependencies into the venv
+COPY py_tasks/requirements.txt ./py_tasks/requirements.txt
 RUN pip install --no-cache-dir -r py_tasks/requirements.txt
 
-# Bring in compiled assets from the node stage
-COPY --from=node_build /app/priv/static/assets ./priv/static/assets
+# Copy the rest of the application source
+COPY . .
 
-COPY lib       ./lib
-COPY config    ./config
-COPY priv/repo ./priv/repo
-RUN mix compile \
- && mix phx.digest \
- && mix release --overwrite
+# Build assets
+RUN npm install --prefix ./assets
+RUN npm run --prefix ./assets deploy
+RUN mix phx.digest
+
+# Create the final, self-contained release.
+# The mix.exs config will copy py_tasks into the release.
+RUN mix release frontend --overwrite
 
 # -----------------------
-# 3) Runtime image: slim Elixir release container
+# 2) Runtime image
 # -----------------------
-FROM alpine:3.19.1 AS app
+FROM elixir:1.16.2-otp-26-slim AS app
 
-# Install runtime dependencies
-RUN apk add --no-cache \
-      openssl \
-      ca-certificates \
-      libstdc++ \
-      libgcc \
-      ncurses \
-      python3 \
-    && update-ca-certificates
+# Install only essential runtime dependencies.
+# The Python executable is needed to run the scripts.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  openssl \
+  libncurses6 \
+  python3 \
+  && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /app
+
+# Copy the compiled Elixir release from the build stage.
+COPY --from=build /app/_build/prod/rel/frontend .
+# Copy the entire Python virtual environment from the build stage.
+COPY --from=build /opt/venv /opt/venv
+
+# Activate the virtual environment for the runtime.
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Create a non-root user to run the application securely
+RUN addgroup --system app && adduser --system --ingroup app app
+RUN chown -R app:app /app
+USER app
+
+ENV HOME=/app
 ENV PHX_SERVER=true
 ENV PORT=4000
 ENV MIX_ENV=prod
 
-WORKDIR /app
-COPY --from=build /app/_build/prod/rel/frontend ./
-# Copy the installed Python dependencies and the task scripts
-COPY --from=build /usr/lib/python3.12/site-packages/ /usr/lib/python3.12/site-packages/
-COPY --from=build /app/py_tasks ./py_tasks
-
 EXPOSE 4000
 
-# Run migrations, then start the server
-CMD ["sh", "-c", "/app/bin/frontend eval 'Frontend.Release.migrate()' && /app/bin/frontend start"]
+# The command to run migrations and start the server
+CMD ["bin/frontend", "eval", "Frontend.Release.migrate()", ";", "bin/frontend", "start"]
