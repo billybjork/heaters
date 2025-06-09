@@ -540,61 +540,63 @@ defmodule Frontend.Clips do
   marks the events as processed in a single transaction.
   """
   def commit_pending_actions do
-    Logger.info("CommitActions[start]: Starting.")
     unprocessed_events_query =
       from(e in ClipEvent,
         where: is_nil(e.processed_at) and e.action in ["selected_split", "selected_merge_source"]
       )
 
     unprocessed_events = Repo.all(unprocessed_events_query)
-    Logger.info("CommitActions[query]: Found #{Enum.count(unprocessed_events)} unprocessed events.")
+    event_count = Enum.count(unprocessed_events)
 
-    if Enum.any?(unprocessed_events) do
-      Logger.info("CommitActions[if]: Events found, starting transaction.")
-      Repo.transaction(fn ->
-        Logger.info("CommitActions[transaction]: Inside transaction.")
-        for event <- unprocessed_events do
-          Logger.info("CommitActions[loop]: Processing event ##{event.id} with action '#{event.action}'.")
-          case event.action do
-            "selected_split" ->
-              split_at_frame = event.event_data["split_at_frame"]
+    if event_count > 0 do
+      Logger.info("CommitActions: Found #{event_count} pending actions to process.")
 
-              Logger.info("CommitActions[split]: Enqueuing SplitWorker for clip ##{event.clip_id}.")
-              SplitWorker.new(%{
-                clip_id: event.clip_id,
-                split_at_frame: split_at_frame
-              })
-              |> Oban.insert!()
+      jobs = Enum.map(unprocessed_events, &build_job/1)
+      event_ids = Enum.map(unprocessed_events, &(&1.id))
 
-            "selected_merge_source" ->
-              target_clip_id = event.event_data["merge_target_clip_id"]
+      # Enqueue all jobs in a single call
+      case Oban.insert_all(jobs) do
+        {:ok, inserted_jobs} ->
+          Logger.info("CommitActions: Successfully enqueued #{length(inserted_jobs)} jobs.")
 
-              Logger.info("CommitActions[merge]: Enqueuing MergeWorker for clip ##{event.clip_id}.")
-              MergeWorker.new(%{
-                clip_id_source: event.clip_id,
-                clip_id_target: target_clip_id
-              })
-              |> Oban.insert!()
+          # Mark all processed events in a single call
+          {update_count, _} =
+            from(e in ClipEvent, where: e.id in ^event_ids)
+            |> Repo.update_all(set: [processed_at: DateTime.utc_now()])
 
-            _ ->
-              Logger.info("CommitActions[other]: Ignoring action '#{event.action}'.")
-              :ok
-          end
+          Logger.info(
+            "CommitActions: Marked #{update_count} of #{length(event_ids)} events as processed."
+          )
 
-          # Mark event as processed
-          Logger.info("CommitActions[update]: Marking event ##{event.id} as processed.")
-          event
-          |> Ecto.Changeset.change(%{processed_at: DateTime.utc_now()})
-          |> Repo.update!()
-        end
-        Logger.info("CommitActions[transaction]: Finished transaction block.")
-      end)
-      Logger.info("CommitActions[if]: Finished processing events.")
-    else
-      Logger.info("CommitActions[if]: No events to process.")
+        {:error, _job, changeset, _invalid_jobs} ->
+          # The encompassing transaction will be rolled back by Oban.
+          # We log the error to help with debugging.
+          Logger.error(
+            "CommitActions: Failed to enqueue jobs. The transaction will be rolled back. Last invalid changeset: #{inspect(changeset)}"
+          )
+      end
     end
 
-    Logger.info("CommitActions[finish]: Finished.")
     :ok
+  end
+
+  defp build_job(%ClipEvent{action: "selected_split"} = event) do
+    # Use Access.key to handle both atom and string keys gracefully.
+    split_at_frame = get_in(event.event_data, [Access.key("split_at_frame")])
+
+    SplitWorker.new(%{
+      clip_id: event.clip_id,
+      split_at_frame: split_at_frame
+    })
+  end
+
+  defp build_job(%ClipEvent{action: "selected_merge_source"} = event) do
+    # Use Access.key to handle both atom and string keys gracefully.
+    target_clip_id = get_in(event.event_data, [Access.key("merge_target_clip_id")])
+
+    MergeWorker.new(%{
+      clip_id_source: event.clip_id,
+      clip_id_target: target_clip_id
+    })
   end
 end

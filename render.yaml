@@ -2,17 +2,7 @@
 
 envVarGroups:
   - name: app-secrets
-    envVars:
-      - key: SECRET_KEY_BASE
-        generateValue: true
-      - key: AWS_ACCESS_KEY_ID
-      - key: AWS_SECRET_ACCESS_KEY
-      - key: AWS_REGION
-      - key: S3_PROD_BUCKET_NAME
-      - key: CLOUDFRONT_PROD_DOMAIN
-        fromDatabase:
-          name: app-db
-          property: connectionString
+    envVars: []
 
 # ---------------------------------------------------------------------------
 #  DATABASES
