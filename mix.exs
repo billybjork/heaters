@@ -15,6 +15,11 @@ defmodule Frontend.MixProject do
           steps: [:assemble],
           include_executables: true
         ]
+      ],
+      # Suppress spitfire warnings about private Elixir macros
+      elixirc_options: [
+        warnings_as_errors: false,
+        ignore_module_conflict: true
       ]
     ]
   end
@@ -59,7 +64,8 @@ defmodule Frontend.MixProject do
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.1.1"},
       {:plug_cowboy, "~> 2.5"},
-      {:dialyxir, "~> 1.4", only: [:dev], runtime: false}
+      {:dialyxir, "~> 1.4", only: [:dev], runtime: false},
+      {:spitfire, "~> 0.2.1", override: true}
     ]
   end
 
