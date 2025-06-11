@@ -11,6 +11,7 @@ import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 import psycopg2
 from psycopg2 import sql
+from psycopg2 import extras
 import sys
 import logging
 import json

@@ -315,16 +315,17 @@ def run_intake(
                     logger.error(msg)
 
             download_finished = False
+            downloaded_files = []
 
             def ytdlp_progress_hook(d):
-                nonlocal download_finished
+                nonlocal download_finished, downloaded_files
                 if d["status"] == "finished":
-                    nonlocal initial_temp_filepath
-                    initial_temp_filepath = d.get("filename")
-                    download_finished = True
-                    logger.info(
-                        f"yt-dlp hook: Download finished. File at: {initial_temp_filepath}"
-                    )
+                    filename = d.get("filename")
+                    if filename:
+                        downloaded_files.append(filename)
+                        logger.info(
+                            f"yt-dlp hook: Download finished. File at: {filename}"
+                        )
                 elif d["status"] == "downloading":
                     progress_str = d.get("_percent_str", "N/A")
                     speed_str = d.get("_speed_str", "N/A")
@@ -334,46 +335,173 @@ def run_intake(
                     )
 
             output_template = os.path.join(temp_dir, "%(title)s.%(ext)s")
-            ydl_opts = {
-                "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            
+            # Define format preferences with fallback strategy
+            format_primary = 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b'
+            format_fallback = 'bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+
+            base_ydl_opts = {
                 "outtmpl": output_template,
+                "merge_output_format": "mp4",  # Ensure merged output is mp4
                 "logger": YtdlpLogger(),
                 "progress_hooks": [ytdlp_progress_hook],
                 "nocheckcertificate": True,
                 "retries": 5,
+                "embedmetadata": True,
+                "embedthumbnail": True,
+                "restrictfilenames": True,
+                "ignoreerrors": False,  # Fail on error to trigger fallback
+                "socket_timeout": 120,
+                "postprocessor_args": {
+                    "ffmpeg_i": ["-err_detect", "ignore_err"],
+                },
+                "fragment_retries": 10,
+                "skip_unavailable_fragments": True,
             }
+
+            download_successful = False
+            info_dict = None
+            video_title = f'Untitled Video {source_video_id}'  # Default title
+
+            # Attempt 1: Primary (Best Quality) Format
+            logger.info(f"yt-dlp: Attempt 1 - Using primary format: '{format_primary}'")
+            ydl_opts_primary = {**base_ydl_opts, 'format': format_primary}
+
             try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info_dict = ydl.extract_info(input_source, download=False)
-                    metadata.update(
-                        {
-                            "title": info_dict.get("title"),
-                            "original_url": info_dict.get("webpage_url"),
-                            "uploader": info_dict.get("uploader"),
-                            "duration": info_dict.get("duration"),
-                            "upload_date": info_dict.get("upload_date"),
-                            "extractor": info_dict.get("extractor_key"),
-                            "width": info_dict.get("width"),
-                            "height": info_dict.get("height"),
-                            "fps": info_dict.get("fps"),
-                        }
-                    )
+                with yt_dlp.YoutubeDL(ydl_opts_primary) as ydl:
+                    logger.info(f"Extracting info (Attempt 1) for {input_source}...")
+                    temp_info_dict = ydl.extract_info(input_source, download=False)
+                    video_title = temp_info_dict.get('title', video_title)
+
+                    logger.info(f"Downloading video (Attempt 1): '{video_title}'...")
                     ydl.download([input_source])
+                    download_finished = True
 
-                if (
-                    not download_finished
-                    or not initial_temp_filepath
-                    or not os.path.exists(initial_temp_filepath)
-                ):
-                    raise RuntimeError(
-                        "yt-dlp finished but the output file is missing."
-                    )
-            except Exception as ydl_err:
-                error_message = f"yt-dlp download failed: {str(ydl_err)}"
-                logger.error(error_message, exc_info=True)
-                raise  # Re-raise to be caught by the main try/except block
+                # Find downloaded files
+                final_files = [f for f in downloaded_files if os.path.exists(f)]
+                if not final_files:
+                    for file in os.listdir(temp_dir):
+                        if file.lower().endswith(('.mp4', '.mkv', '.webm', '.avi')):
+                            final_files.append(os.path.join(temp_dir, file))
 
-            final_filename_for_db = f"source_videos/{source_video_id}/{Path(initial_temp_filepath).name}"
+                if not final_files:
+                    raise FileNotFoundError("yt-dlp (Attempt 1) finished but no output file found.")
+
+                # Use the largest file (likely the merged result)
+                initial_temp_filepath = max(final_files, key=os.path.getsize)
+
+                # Re-extract info for metadata accuracy
+                with yt_dlp.YoutubeDL({'logger': YtdlpLogger(), 'quiet': True, 'skip_download': True}) as ydl_info:
+                    info_dict = ydl_info.extract_info(input_source, download=False)
+
+                download_successful = True
+                logger.info("yt-dlp: Download successful with primary format.")
+
+            except yt_dlp.utils.DownloadError as e_primary:
+                logger.warning(f"yt-dlp: Primary download attempt failed: {e_primary}. Trying fallback.")
+                # Clean up temp directory before fallback
+                for item in os.listdir(temp_dir):
+                    item_path = os.path.join(temp_dir, item)
+                    try:
+                        if os.path.isfile(item_path):
+                            os.unlink(item_path)
+                        elif os.path.isdir(item_path):
+                            shutil.rmtree(item_path)
+                    except OSError as oe:
+                        logger.warning(f"Could not remove temp item {item_path}: {oe}")
+                # Reset tracking variables
+                download_finished = False
+                downloaded_files = []
+
+            except Exception as e_generic_primary:
+                logger.error(f"yt-dlp: Unexpected error during primary download: {e_generic_primary}")
+                logger.warning("Proceeding to fallback attempt despite unexpected error.")
+                # Clean up and reset
+                for item in os.listdir(temp_dir):
+                    item_path = os.path.join(temp_dir, item)
+                    try:
+                        if os.path.isfile(item_path):
+                            os.unlink(item_path)
+                        elif os.path.isdir(item_path):
+                            shutil.rmtree(item_path)
+                    except OSError:
+                        pass
+                download_finished = False
+                downloaded_files = []
+
+            # Attempt 2: Fallback (More Compatible) Format
+            if not download_successful:
+                logger.info(f"yt-dlp: Attempt 2 - Using fallback format: '{format_fallback}'")
+                ydl_opts_fallback = {**base_ydl_opts, 'format': format_fallback}
+
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts_fallback) as ydl:
+                        logger.info(f"Extracting info (Attempt 2) for {input_source}...")
+                        info_dict = ydl.extract_info(input_source, download=False)
+                        video_title = info_dict.get('title', video_title)
+
+                        logger.info(f"Downloading video (Attempt 2): '{video_title}'...")
+                        ydl.download([input_source])
+                        download_finished = True
+
+                    # Find downloaded files
+                    final_files = [f for f in downloaded_files if os.path.exists(f)]
+                    if not final_files:
+                        for file in os.listdir(temp_dir):
+                            if file.lower().endswith(('.mp4', '.mkv', '.webm', '.avi')):
+                                final_files.append(os.path.join(temp_dir, file))
+
+                    if not final_files:
+                        raise FileNotFoundError("yt-dlp (Attempt 2 - Fallback) finished but no output file found.")
+
+                    initial_temp_filepath = max(final_files, key=os.path.getsize)
+                    download_successful = True
+                    logger.info("yt-dlp: Download successful with fallback format.")
+
+                except yt_dlp.utils.DownloadError as e_fallback:
+                    logger.error(f"yt-dlp: Fallback download attempt also failed: {e_fallback}")
+                    error_message = f"yt-dlp download failed with all strategies. Last error: {str(e_fallback)[:200]}"
+                    raise RuntimeError(error_message) from e_fallback
+
+                except Exception as e_generic_fallback:
+                    logger.error(f"yt-dlp: Unexpected error during fallback download: {e_generic_fallback}")
+                    error_message = f"yt-dlp unexpected error with fallback: {str(e_generic_fallback)[:200]}"
+                    raise RuntimeError(error_message) from e_generic_fallback
+
+            if not download_successful:
+                error_message = "yt-dlp processing failed after all attempts."
+                logger.error(error_message)
+                raise RuntimeError(error_message)
+
+            # Ensure info_dict is populated
+            if not info_dict:
+                logger.warning("info_dict not populated. Attempting final metadata fetch...")
+                try:
+                    with yt_dlp.YoutubeDL({'logger': YtdlpLogger(), 'quiet': True, 'skip_download': True}) as ydl_final:
+                        info_dict = ydl_final.extract_info(input_source, download=False)
+                except Exception as final_info_err:
+                    logger.error(f"Failed to fetch final metadata: {final_info_err}")
+                    info_dict = {}
+
+            # Extract metadata from successful download
+            metadata.update({
+                "title": info_dict.get("title", video_title),
+                "original_url": info_dict.get("webpage_url", input_source),
+                "uploader": info_dict.get("uploader"),
+                "duration": info_dict.get("duration"),
+                "upload_date": info_dict.get("upload_date"),
+                "extractor": info_dict.get("extractor_key"),
+                "width": info_dict.get("width"),
+                "height": info_dict.get("height"),
+                "fps": info_dict.get("fps"),
+            })
+
+            logger.info(f"Using final file: {initial_temp_filepath}")
+            
+            if not os.path.exists(initial_temp_filepath):
+                raise RuntimeError(f"Selected output file does not exist: {initial_temp_filepath}")
+
+            final_filename_for_db = f"source_videos/{Path(initial_temp_filepath).name}"
 
         else:  # It's a local file path
             logger.info(f"Input is a local file, copying to temp dir: {input_source}")
@@ -384,7 +512,7 @@ def run_intake(
             shutil.copy2(input_source, temp_destination)
             initial_temp_filepath = temp_destination
             logger.info(f"Copied local file to {initial_temp_filepath}")
-            final_filename_for_db = f"source_videos/{source_video_id}/{os.path.basename(input_source)}"
+            final_filename_for_db = f"source_videos/{os.path.basename(input_source)}"
 
         # --- Stage 2: Re-encode (if requested) ---
         file_to_upload = initial_temp_filepath
@@ -399,9 +527,7 @@ def run_intake(
             run_ffmpeg_command(ffmpeg_cmd, "re-encoding", cwd=temp_dir)
 
             file_to_upload = output_filepath
-            final_filename_for_db = (
-                f"source_videos/{source_video_id}/{output_filename}"
-            )
+            final_filename_for_db = f"source_videos/{output_filename}"
             logger.info(
                 f"Re-encoding complete. New file to upload: {output_filepath}"
             )
@@ -459,7 +585,6 @@ def run_intake(
                     SET ingest_state = 'downloaded',
                         filepath = %s,
                         title = COALESCE(%s, title),
-                        metadata = metadata || %s,
                         duration_seconds = %s,
                         width = %s,
                         height = %s,
@@ -471,7 +596,6 @@ def run_intake(
                     (
                         s3_object_key,
                         db_metadata.get("title"),
-                        json.dumps(db_metadata),
                         db_metadata.get("duration"),
                         db_metadata.get("width"),
                         db_metadata.get("height"),
