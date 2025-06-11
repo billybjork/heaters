@@ -1,12 +1,12 @@
 defmodule Frontend.Workers.ArchiveWorker do
-  use Oban.Worker, queue: :background_jobs, max_attempts: 3
+  use Oban.Worker, queue: :media_processing
 
   alias Frontend.Clips
   alias Frontend.Repo
   alias Frontend.PythonRunner
   alias Ecto.Multi
 
-  # Suppress Dialyzer warnings about pattern matching with PythonRunner
+  # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, [perform: 1, archive_in_database: 1]}
 
   @impl Oban.Worker

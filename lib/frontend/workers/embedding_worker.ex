@@ -1,10 +1,10 @@
 defmodule Frontend.Workers.EmbeddingWorker do
-  use Oban.Worker, queue: :media_processing
+  use Oban.Worker, queue: :embeddings
 
   alias Frontend.Clips
   alias Frontend.PythonRunner
 
-  # Suppress Dialyzer warnings about pattern matching with PythonRunner
+  # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, [perform: 1, handle_embedding: 3]}
 
   @impl Oban.Worker

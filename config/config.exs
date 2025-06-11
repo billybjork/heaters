@@ -51,6 +51,12 @@ config :logger, :console,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# Configure PythonRunner paths and executables
+config :frontend, Frontend.PythonRunner,
+  python_executable: System.get_env("PYTHON_EXECUTABLE") || "python3",
+  working_dir: System.get_env("PYTHON_WORKING_DIR") || File.cwd!(),
+  runner_script: "py_tasks/runner.py"
+
 # Configure esbuild (the bundler used for JS/CSS)
 config :esbuild,
   # Use the latest appropriate version

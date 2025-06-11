@@ -258,6 +258,28 @@ if config_env() == :prod do
   config :frontend, Oban,
     queues: queues,
     plugins: plugins
+
+  # Configure PythonRunner for production with strict validation
+  python_exe =
+    System.get_env("PYTHON_EXECUTABLE") || "/opt/venv/bin/python3"
+    |> tap(fn path ->
+      unless File.exists?(path) do
+        raise "PYTHON_EXECUTABLE does not exist: #{path}"
+      end
+    end)
+
+  working_dir =
+    System.get_env("PYTHON_WORKING_DIR") || "/app"
+    |> tap(fn path ->
+      unless File.dir?(path) do
+        raise "PYTHON_WORKING_DIR does not exist: #{path}"
+      end
+    end)
+
+  config :frontend, Frontend.PythonRunner,
+    python_executable: python_exe,
+    working_dir: working_dir,
+    runner_script: "py_tasks/runner.py"
 end
 
 # General debug log at the end of runtime.exs

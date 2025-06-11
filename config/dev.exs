@@ -79,3 +79,9 @@ config :frontend, Oban,
 
 # Enable development-specific routes if you have them
 config :frontend, dev_routes: true
+
+# Configure PythonRunner for development
+config :frontend, Frontend.PythonRunner,
+  python_executable: System.find_executable("python3") || "python3",
+  working_dir: Path.expand("."),  # Current directory for local dev
+  runner_script: "py_tasks/runner.py"

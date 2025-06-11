@@ -4,7 +4,7 @@ defmodule Frontend.Workers.SplitWorker do
   alias Frontend.PythonRunner
   alias Frontend.Workers.SpriteWorker
 
-  # Suppress Dialyzer warnings about pattern matching with PythonRunner
+  # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, perform: 1}
 
   @impl Oban.Worker

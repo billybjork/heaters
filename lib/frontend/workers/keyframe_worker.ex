@@ -5,7 +5,7 @@ defmodule Frontend.Workers.KeyframeWorker do
   alias Frontend.PythonRunner
   alias Frontend.Workers.EmbeddingWorker
 
-  # Suppress Dialyzer warnings about pattern matching with PythonRunner
+  # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, [perform: 1, handle_keyframing: 2]}
 
   @impl Oban.Worker

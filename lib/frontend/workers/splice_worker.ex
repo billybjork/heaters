@@ -8,7 +8,7 @@ defmodule Frontend.Workers.SpliceWorker do
 
   @splicing_complete_states ["spliced", "splicing_failed"]
 
-  # Suppress Dialyzer warnings about pattern matching with PythonRunner
+  # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, [perform: 1, handle_splicing: 1]}
 
   @impl Oban.Worker

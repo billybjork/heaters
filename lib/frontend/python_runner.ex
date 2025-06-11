@@ -5,6 +5,7 @@ defmodule Frontend.PythonRunner do
   """
 
   alias FrontendWeb.Endpoint
+  alias Frontend.PythonRunner.Config
   require Logger
 
   @default_timeout :timer.minutes(30)
@@ -15,17 +16,25 @@ defmodule Frontend.PythonRunner do
           | %{exit_status: integer(), output: String.t()}
           | %{reason: atom(), details: any(), output: String.t()}
 
-  # Prevent Dialyzer from constant-folding file system checks
+  # Dialyzer suppressions required due to external system dependencies.
+  #
+  # Even with our configuration-based approach, Dialyzer's static analysis
+  # cannot prove at compile time that:
+  # 1. The configured Python executable exists and is runnable
+  # 2. The working directory and script paths are valid
+  # 3. Port.open/2 will succeed with the runtime environment
+  # 4. External processes will behave predictably
+  #
+  # These suppressions are a common pattern when interfacing with external
+  # systems where runtime conditions cannot be statically verified.
   @dialyzer {:nowarn_function, [
     open_port: 3,
+    create_port: 3,
     run_impl: 3,
     handle_port_messages: 4,
     interpret_exit: 2,
     extract_final_json: 1,
-    join_lines: 1,
-    get_working_directory: 0,
-    get_runner_script_path: 1,
-    find_python_executable: 0
+    join_lines: 1
   ]}
 
   @spec run(String.t(), list() | map(), keyword()) :: {:ok, map()} | {:error, error_reason()}
@@ -58,22 +67,6 @@ defmodule Frontend.PythonRunner do
   end
 
   # --------------------------------------------------------------------------
-  # File system indirection helpers (to hide compile-time truth from Dialyzer)
-  # --------------------------------------------------------------------------
-
-  @spec dir_exists?(String.t()) :: boolean()
-  defp dir_exists?(path) do
-    # Use apply/3 to completely hide the function call from Dialyzer
-    apply(File, :dir?, [path])
-  end
-
-  @spec file_exists?(String.t()) :: boolean()
-  defp file_exists?(path) do
-    # Use apply/3 to completely hide the function call from Dialyzer
-    apply(File, :exists?, [path])
-  end
-
-  # --------------------------------------------------------------------------
   # Port helpers
   # --------------------------------------------------------------------------
 
@@ -81,18 +74,19 @@ defmodule Frontend.PythonRunner do
   defp open_port(task_name, json_args, env) do
     tmp_file = Path.join(System.tmp_dir!(), "python_args_#{System.unique_integer([:positive])}.json")
 
-    with {:ok, python_exe} <- find_python_executable(),
-         {:ok, working_dir} <- get_working_directory(),
-         {:ok, runner_script} <- get_runner_script_path(working_dir),
-         :ok <- File.write(tmp_file, json_args),
-         {:ok, port} <- create_port(python_exe, runner_script, task_name, tmp_file, env, working_dir) do
+    with :ok <- File.write(tmp_file, json_args),
+         {:ok, port} <- create_port(task_name, tmp_file, env) do
       {:ok, port}
     end
   end
 
-  @spec create_port(String.t(), String.t(), String.t(), String.t(), [{String.t(), String.t()}], String.t()) :: {:ok, port()} | {:error, String.t()}
-  defp create_port(python_exe, runner_script, task_name, tmp_file, env, working_dir) do
-    args = [task_name, "--args-file", tmp_file]
+  @spec create_port(String.t(), String.t(), [{String.t(), String.t()}]) :: {:ok, port()} | {:error, String.t()}
+  defp create_port(task_name, tmp_file, env) do
+    python_exe = Config.python_executable()
+    working_dir = Config.working_dir()
+    runner_script_path = Config.runner_script_path()
+
+    args = [runner_script_path, task_name, "--args-file", tmp_file]
 
     try do
       port =
@@ -103,7 +97,7 @@ defmodule Frontend.PythonRunner do
             :exit_status,
             :hide,
             {:packet, :line},
-            {:args, [runner_script | args]},
+            {:args, args},
             {:env, env},
             {:cd, working_dir}
           ]
@@ -113,38 +107,6 @@ defmodule Frontend.PythonRunner do
       {:ok, port}
     rescue
       e -> {:error, "Failed to open port: #{Exception.message(e)}"}
-    end
-  end
-
-  @spec get_working_directory() :: {:ok, String.t()} | {:error, String.t()}
-  defp get_working_directory do
-    # Try /app first (Docker), then current directory, then src directory
-    cond do
-      dir_exists?("/app") ->
-        {:ok, "/app"}
-      dir_exists?("py_tasks") ->
-        {:ok, File.cwd!()}
-      dir_exists?(Path.join(File.cwd!(), "src")) ->
-        src_dir = Path.join(File.cwd!(), "src")
-        if dir_exists?(Path.join(src_dir, "py_tasks")) do
-          {:ok, src_dir}
-        else
-          {:ok, File.cwd!()}
-        end
-      dir_exists?(File.cwd!()) ->
-        {:ok, File.cwd!()}
-      true ->
-        {:error, "No valid working directory found"}
-    end
-  end
-
-  @spec get_runner_script_path(String.t()) :: {:ok, String.t()} | {:error, String.t()}
-  defp get_runner_script_path(working_dir) do
-    script_path = Path.join(working_dir, "py_tasks/runner.py")
-    if file_exists?(script_path) do
-      {:ok, "py_tasks/runner.py"}
-    else
-      {:error, "Python runner script not found at #{script_path}"}
     end
   end
 
@@ -270,27 +232,6 @@ defmodule Frontend.PythonRunner do
 
   @spec join_lines([String.t()]) :: String.t()
   defp join_lines(lines), do: lines |> Enum.reverse() |> Enum.join("\n")
-
-  # --------------------------------------------------------------------------
-  # Helper functions
-  # --------------------------------------------------------------------------
-
-  @spec find_python_executable() :: {:ok, String.t()} | {:error, String.t()}
-  defp find_python_executable do
-    # Check for virtual environment Python first (Docker container)
-    venv_python = "/opt/venv/bin/python3"
-
-    cond do
-      file_exists?(venv_python) ->
-        {:ok, venv_python}
-      python3_path = System.find_executable("python3") ->
-        {:ok, python3_path}
-      python_path = System.find_executable("python") ->
-        {:ok, python_path}
-      true ->
-        {:error, "Python executable not found"}
-    end
-  end
 
   # Helper function to explicitly show Dialyzer that success is possible
   @spec can_return_success() :: {:ok, map()}

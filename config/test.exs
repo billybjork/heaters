@@ -26,3 +26,9 @@ config :logger, level: :warning
 
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime
+
+# Configure PythonRunner for testing
+config :frontend, Frontend.PythonRunner,
+  python_executable: "/usr/bin/env python3",
+  working_dir: System.tmp_dir!(),
+  runner_script: "test/fixtures/mock_runner.py"
