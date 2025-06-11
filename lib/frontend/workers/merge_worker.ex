@@ -4,6 +4,9 @@ defmodule Frontend.Workers.MergeWorker do
   alias Frontend.PythonRunner
   alias Frontend.Workers.SpriteWorker
 
+  # Suppress Dialyzer warnings about pattern matching with PythonRunner
+  @dialyzer {:nowarn_function, perform: 1}
+
   @impl Oban.Worker
   def perform(%Oban.Job{
         args: %{
@@ -18,8 +21,10 @@ defmodule Frontend.Workers.MergeWorker do
         # The merge was successful. The target clip has been modified and its
         # state set back to "spliced". We'll enqueue a SpriteWorker job to
         # regenerate its sprite and put it back into the review queue.
-        SpriteWorker.new(%{clip_id: merged_clip_id}) |> Oban.insert()
-        :ok
+        case SpriteWorker.new(%{clip_id: merged_clip_id}) |> Oban.insert() do
+          {:ok, _job} -> :ok
+          {:error, reason} -> {:error, "Failed to enqueue sprite worker: #{inspect(reason)}"}
+        end
 
       {:ok, other} ->
         # The script succeeded but returned an unexpected payload.

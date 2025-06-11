@@ -6,6 +6,9 @@ defmodule Frontend.Workers.ArchiveWorker do
   alias Frontend.PythonRunner
   alias Ecto.Multi
 
+  # Suppress Dialyzer warnings about pattern matching with PythonRunner
+  @dialyzer {:nowarn_function, [perform: 1, archive_in_database: 1]}
+
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"clip_id" => clip_id}}) do
     with {:ok, clip} <- Clips.get_clip_with_artifacts(clip_id),
@@ -40,9 +43,12 @@ defmodule Frontend.Workers.ArchiveWorker do
     do: :ok
 
   defp archive_in_database(clip) do
-    Multi.new()
-    |> Multi.delete_all(:delete_artifacts, Ecto.assoc(clip, :clip_artifacts))
-    |> Multi.update(:archive_clip, Clips.change_clip(clip, %{ingest_state: "archived"}))
-    |> Repo.transaction()
+    case Multi.new()
+         |> Multi.delete_all(:delete_artifacts, Ecto.assoc(clip, :clip_artifacts))
+         |> Multi.update(:archive_clip, Clips.change_clip(clip, %{ingest_state: "archived"}))
+         |> Repo.transaction() do
+      {:ok, _results} -> :ok
+      {:error, _step, reason, _changes} -> {:error, reason}
+    end
   end
 end

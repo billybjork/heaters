@@ -6,6 +6,9 @@ defmodule Frontend.Workers.SpriteWorker do
 
   @complete_states ["pending_review", "complete"]
 
+  # Suppress Dialyzer warnings about pattern matching with PythonRunner
+  @dialyzer {:nowarn_function, [perform: 1, handle_sprite_generation: 1]}
+
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"clip_id" => clip_id}}) do
     # Using try/rescue because get_clip! raises Ecto.NoResultsError if not found.

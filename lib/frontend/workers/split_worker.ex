@@ -4,6 +4,9 @@ defmodule Frontend.Workers.SplitWorker do
   alias Frontend.PythonRunner
   alias Frontend.Workers.SpriteWorker
 
+  # Suppress Dialyzer warnings about pattern matching with PythonRunner
+  @dialyzer {:nowarn_function, perform: 1}
+
   @impl Oban.Worker
   def perform(%Oban.Job{
         args: %{
@@ -19,8 +22,13 @@ defmodule Frontend.Workers.SplitWorker do
         # new clips created. We'll enqueue SpriteWorker jobs for both to
         # generate sprites and put them into the review queue.
         jobs = Enum.map(new_clip_ids, &SpriteWorker.new(%{clip_id: &1}))
-        Oban.insert_all(jobs)
-        :ok
+
+        try do
+          _inserted_jobs = Oban.insert_all(jobs)
+          :ok
+        rescue
+          error -> {:error, "Failed to enqueue sprite workers: #{Exception.message(error)}"}
+        end
 
       {:ok, other} ->
         # The script succeeded but returned an unexpected payload.

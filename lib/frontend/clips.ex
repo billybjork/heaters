@@ -562,23 +562,15 @@ defmodule Frontend.Clips do
 
       # Enqueue all jobs in a single call
       try do
-        result = Oban.insert_all(jobs)
+        inserted_jobs = Oban.insert_all(jobs)
 
-        case result do
-          {:ok, inserted_jobs} when is_list(inserted_jobs) ->
-            Logger.info("CommitActions: Successfully enqueued #{length(inserted_jobs)} jobs.")
-            inserted_jobs
-
-          inserted_jobs when is_list(inserted_jobs) ->
-            Logger.info("CommitActions: Successfully enqueued #{length(inserted_jobs)} jobs.")
-            inserted_jobs
-
-          other ->
-            Logger.error("CommitActions: Unexpected return format from Oban.insert_all: #{inspect(other, limit: 3)}")
-            []
+        if is_list(inserted_jobs) do
+          Logger.info("CommitActions: Successfully enqueued #{length(inserted_jobs)} jobs.")
+        else
+          Logger.error("CommitActions: Unexpected return format from Oban.insert_all: #{inspect(inserted_jobs, limit: 3)}")
         end
 
-        # Mark all processed events in a single call regardless of the Oban result format
+        # Mark all processed events in a single call
         {update_count, _} =
           from(e in ClipEvent, where: e.id in ^event_ids)
           |> Repo.update_all(set: [processed_at: DateTime.utc_now()])
@@ -614,7 +606,7 @@ defmodule Frontend.Clips do
         split_at_frame: split_at_frame
       })
     else
-      Logger.warn("Skipping SplitWorker job for clip_id=#{event.clip_id} - missing split_at_frame")
+      Logger.warning("Skipping SplitWorker job for clip_id=#{event.clip_id} - missing split_at_frame")
       nil
     end
   end
@@ -631,7 +623,7 @@ defmodule Frontend.Clips do
         clip_id_target: target_clip_id
       })
     else
-      Logger.warn("Skipping MergeWorker job for clip_id=#{event.clip_id} - missing merge_target_clip_id")
+      Logger.warning("Skipping MergeWorker job for clip_id=#{event.clip_id} - missing merge_target_clip_id")
       nil
     end
   end

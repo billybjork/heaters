@@ -8,6 +8,9 @@ defmodule Frontend.Workers.SpliceWorker do
 
   @splicing_complete_states ["spliced", "splicing_failed"]
 
+  # Suppress Dialyzer warnings about pattern matching with PythonRunner
+  @dialyzer {:nowarn_function, [perform: 1, handle_splicing: 1]}
+
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"source_video_id" => source_video_id}}) do
     with {:ok, source_video} <- Clips.get_source_video(source_video_id) do
@@ -33,8 +36,12 @@ defmodule Frontend.Workers.SpliceWorker do
             SpriteWorker.new(%{clip_id: clip_id})
           end)
 
-        Oban.insert_all(jobs)
-        :ok
+        try do
+          _inserted_jobs = Oban.insert_all(jobs)
+          :ok
+        rescue
+          error -> {:error, "Failed to enqueue sprite workers: #{Exception.message(error)}"}
+        end
 
       {:ok, other} ->
         error_message =

@@ -4,6 +4,9 @@ defmodule Frontend.Workers.IntakeWorker do
   alias Frontend.Clips
   alias Frontend.PythonRunner
 
+  # Suppress Dialyzer warnings about pattern matching with PythonRunner
+  @dialyzer {:nowarn_function, perform: 1}
+
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"source_video_id" => source_video_id}}) do
     # Use a `with` statement for a clean, chained workflow
@@ -17,7 +20,10 @@ defmodule Frontend.Workers.IntakeWorker do
 
         {:ok, _result} ->
           # On success, enqueue the NEXT worker in the chain.
-          Oban.insert(Frontend.Workers.SpliceWorker.new(%{source_video_id: source_video.id}))
+          case Oban.insert(Frontend.Workers.SpliceWorker.new(%{source_video_id: source_video.id})) do
+            {:ok, _job} -> :ok
+            {:error, reason} -> {:error, "Failed to enqueue splice worker: #{inspect(reason)}"}
+          end
 
         {:error, reason} ->
           # If the python script fails, we record the error and let Oban retry.

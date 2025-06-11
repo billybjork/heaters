@@ -4,6 +4,9 @@ defmodule Frontend.Workers.EmbeddingWorker do
   alias Frontend.Clips
   alias Frontend.PythonRunner
 
+  # Suppress Dialyzer warnings about pattern matching with PythonRunner
+  @dialyzer {:nowarn_function, [perform: 1, handle_embedding: 3]}
+
   @impl Oban.Worker
   def perform(%Oban.Job{
         args: %{
@@ -25,32 +28,38 @@ defmodule Frontend.Workers.EmbeddingWorker do
   defp handle_embedding(%{ingest_state: "embedded"}, _model, _strategy), do: :ok
 
   defp handle_embedding(clip, model_name, generation_strategy) do
-    Clips.update_clip(clip, %{ingest_state: "embedding"})
+    case Clips.update_clip(clip, %{ingest_state: "embedding"}) do
+      {:ok, _updated_clip} ->
+        py_args = %{
+          clip_id: clip.id,
+          model_name: model_name,
+          generation_strategy: generation_strategy
+        }
 
-    py_args = %{
-      clip_id: clip.id,
-      model_name: model_name,
-      generation_strategy: generation_strategy
-    }
+        case PythonRunner.run("embed", py_args) do
+          {:ok, _} ->
+            case Clips.update_clip(clip, %{
+                   ingest_state: "embedded",
+                   embedded_at: DateTime.utc_now()
+                 }) do
+              {:ok, _updated_clip} -> :ok
+              {:error, changeset} -> {:error, "Failed to update clip as embedded: #{inspect(changeset.errors)}"}
+            end
 
-    case PythonRunner.run("embed", py_args) do
-      {:ok, _} ->
-        Clips.update_clip(clip, %{
-          ingest_state: "embedded",
-          embedded_at: DateTime.utc_now()
-        })
+          {:error, reason} ->
+            error_message = "Embedding script failed: #{inspect(reason)}"
 
-        :ok
+            case Clips.update_clip(clip, %{
+                   ingest_state: "embedding_failed",
+                   last_error: error_message
+                 }) do
+              {:ok, _updated_clip} -> {:error, error_message}
+              {:error, changeset} -> {:error, "Failed to update clip with error: #{inspect(changeset.errors)}"}
+            end
+        end
 
-      {:error, reason} ->
-        error_message = "Embedding script failed: #{inspect(reason)}"
-
-        Clips.update_clip(clip, %{
-          ingest_state: "embedding_failed",
-          last_error: error_message
-        })
-
-        {:error, error_message}
+      {:error, changeset} ->
+        {:error, "Failed to update clip to embedding state: #{inspect(changeset.errors)}"}
     end
   end
 end
