@@ -221,7 +221,7 @@ def run_splice(source_video_id: int, environment: str, **kwargs):
         try:
             with get_db_connection() as conn, conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE source_videos SET ingest_state = 'splicing_failed', error_message = %s WHERE id = %s",
+                    "UPDATE source_videos SET ingest_state = 'splicing_failed', last_error = %s WHERE id = %s",
                     (str(e), source_video_id)
                 )
                 conn.commit()

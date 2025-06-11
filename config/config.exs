@@ -18,8 +18,9 @@ config :frontend, Oban,
   queues: [
     default: 10,
     ingest: 3,    # For video processing
-    embed: 2,     # For ML model inference
-    cleanup: 2
+    media_processing: 5,  # Added missing queue for most workers
+    background_jobs: 2,   # Added missing queue for dispatcher/archive
+    embeddings: 2         # Renamed from 'embed' to match worker usage
   ]
 
 # General application configuration

@@ -188,7 +188,7 @@ def run_sprite_sheet(clip_id: int, overwrite: bool, environment: str, **kwargs):
             with get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "UPDATE clips SET ingest_state = 'sprite_failed', error_message = %s, updated_at = NOW() WHERE id = %s",
+                        "UPDATE clips SET ingest_state = 'sprite_failed', last_error = %s, updated_at = NOW() WHERE id = %s",
                         (error_message, clip_id)
                     )
                     conn.commit()

@@ -70,6 +70,7 @@ config :frontend, Oban,
   queues: [
     default: 10,
     ingest: 5,
+    media_processing: 8,
     events: 20,
     media: 5,
     embeddings: 5,

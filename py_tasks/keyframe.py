@@ -239,7 +239,7 @@ def run_keyframe(
             with get_db_connection() as conn, conn.cursor() as cur:
                 logger.error(f"Attempting to mark clip {clip_id} as 'keyframing_failed'")
                 cur.execute(
-                    "UPDATE clips SET ingest_state = 'keyframing_failed', error_message = %s, updated_at = NOW() WHERE id = %s",
+                    "UPDATE clips SET ingest_state = 'keyframing_failed', last_error = %s, updated_at = NOW() WHERE id = %s",
                     (error_message, clip_id)
                 )
                 conn.commit()

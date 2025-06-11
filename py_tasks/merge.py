@@ -208,7 +208,7 @@ def run_merge(clip_id_target: int, clip_id_source: int, environment: str, **kwar
             with get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "UPDATE clips SET ingest_state = 'merge_failed', error_message = %s, updated_at = NOW() WHERE id = ANY(%s::int[])",
+                        "UPDATE clips SET ingest_state = 'merge_failed', last_error = %s, updated_at = NOW() WHERE id = ANY(%s::int[])",
                         (error_message, [clip_id_target, clip_id_source])
                     )
                     conn.commit()

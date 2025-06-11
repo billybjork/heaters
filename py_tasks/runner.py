@@ -6,6 +6,11 @@ import logging
 import importlib
 import traceback
 
+# Add the parent directory to Python path so we can import py_tasks
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 # Configure logging to stream to stdout, which Elixir's Port will capture.
 # This ensures Python logs appear alongside Elixir logs.
 logging.basicConfig(
@@ -14,15 +19,43 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
+# Ensure output is flushed immediately
+sys.stdout.reconfigure(line_buffering=True)
+
 def main():
     """
     This is the single entrypoint for all Python tasks called by Elixir.
     It uses the task_name argument to dynamically load and run the correct module.
     """
-    parser = argparse.ArgumentParser(description="A CLI to run Python tasks for the Heaters app.")
+    logging.info(f"Python runner started with task: {sys.argv[1] if len(sys.argv) > 1 else 'none'}")
+    sys.stdout.flush()
+    
+    parser = argparse.ArgumentParser(description="A CLI to run various Python tasks")
     parser.add_argument("task_name", help="The name of the task module to run (e.g., 'intake', 'splice').")
-    parser.add_argument("--args-json", required=True, help="A JSON string containing the arguments for the task.")
-    cli_args = parser.parse_args()
+    
+    # Support both command line JSON and file-based JSON
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--args-json", help="A JSON string containing the arguments for the task.")
+    group.add_argument("--args-file", help="Path to a file containing JSON arguments for the task.")
+    
+    try:
+        cli_args = parser.parse_args()
+        logging.info(f"Successfully parsed arguments: task_name='{cli_args.task_name}'")
+        
+        # Read JSON from file or command line
+        if cli_args.args_file:
+            logging.info(f"Reading JSON from file: {cli_args.args_file}")
+            with open(cli_args.args_file, 'r') as f:
+                json_content = f.read().strip()
+            logging.info(f"JSON content from file: {json_content}")
+        else:
+            json_content = cli_args.args_json
+            logging.info(f"JSON content from command line: {json_content}")
+            
+    except Exception as parse_err:
+        logging.error(f"Failed to parse arguments: {parse_err}")
+        logging.error(f"sys.argv was: {sys.argv}")
+        sys.exit(1)
 
     try:
         task_module_name = cli_args.task_name
@@ -34,7 +67,7 @@ def main():
         sys.exit(1)
 
     try:
-        task_args = json.loads(cli_args.args_json)
+        task_args = json.loads(json_content)
     except json.JSONDecodeError:
         logging.error("Error: Invalid JSON provided in --args-json argument.")
         sys.exit(1)
@@ -52,9 +85,10 @@ def main():
             environment=os.getenv("APP_ENV", "development")
         )
         
-        # On success, print the final result as a single JSON line to stdout.
+        # On success, print the final result as a single JSON line to stdout,
+        # prefixed with a token for reliable parsing by Elixir.
         # This is how the task signals its result back to Elixir.
-        print(json.dumps(result))
+        print(f"FINAL_JSON:{json.dumps(result)}")
 
     except Exception:
         # On any failure, log the full exception traceback and exit with a non-zero code.

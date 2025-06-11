@@ -279,11 +279,10 @@ def run_embed(
         try:
             with get_db_connection() as conn, conn.cursor() as cur:
                 logger.error(f"Attempting to mark clip {clip_id} as 'embedding_failed'")
-                cur.execute(
-                    """
-                    UPDATE clips SET ingest_state = 'embedding_failed', error_message = %s, updated_at = NOW() WHERE id = %s
-                    """,
-                    (error_message, clip_id)
+                cur.execute("""
+                    UPDATE clips SET ingest_state = 'embedding_failed', last_error = %s, updated_at = NOW() WHERE id = %s
+                """,
+                (error_message, clip_id)
                 )
                 conn.commit()
         except Exception as db_fail_err:

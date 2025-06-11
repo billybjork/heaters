@@ -260,7 +260,7 @@ def run_split(clip_id: int, split_at_frame: int, environment: str, **kwargs):
             with get_db_connection() as conn:
                 cur = conn.cursor()
                 cur.execute(
-                    "UPDATE clips SET ingest_state = 'split_failed', error_message = %s, updated_at = NOW() WHERE id = %s",
+                    "UPDATE clips SET ingest_state = 'split_failed', last_error = %s, updated_at = NOW() WHERE id = %s",
                     (error_message, clip_id)
                 )
                 conn.commit()

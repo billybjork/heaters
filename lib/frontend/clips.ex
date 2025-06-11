@@ -551,52 +551,88 @@ defmodule Frontend.Clips do
     if event_count > 0 do
       Logger.info("CommitActions: Found #{event_count} pending actions to process.")
 
-      jobs = Enum.map(unprocessed_events, &build_job/1)
+      jobs =
+        unprocessed_events
+        |> Enum.map(&build_job/1)
+        |> Enum.reject(&is_nil/1)  # Filter out nil jobs (invalid data)
+
       event_ids = Enum.map(unprocessed_events, &(&1.id))
 
+      Logger.info("CommitActions: Built #{length(jobs)} valid jobs, attempting to enqueue...")
+
       # Enqueue all jobs in a single call
-      case Oban.insert_all(jobs) do
-        {:ok, inserted_jobs} ->
-          Logger.info("CommitActions: Successfully enqueued #{length(inserted_jobs)} jobs.")
+      try do
+        result = Oban.insert_all(jobs)
 
-          # Mark all processed events in a single call
-          {update_count, _} =
-            from(e in ClipEvent, where: e.id in ^event_ids)
-            |> Repo.update_all(set: [processed_at: DateTime.utc_now()])
+        case result do
+          {:ok, inserted_jobs} when is_list(inserted_jobs) ->
+            Logger.info("CommitActions: Successfully enqueued #{length(inserted_jobs)} jobs.")
+            inserted_jobs
 
-          Logger.info(
-            "CommitActions: Marked #{update_count} of #{length(event_ids)} events as processed."
-          )
+          inserted_jobs when is_list(inserted_jobs) ->
+            Logger.info("CommitActions: Successfully enqueued #{length(inserted_jobs)} jobs.")
+            inserted_jobs
 
-        {:error, _job, changeset, _invalid_jobs} ->
-          # The encompassing transaction will be rolled back by Oban.
-          # We log the error to help with debugging.
-          Logger.error(
-            "CommitActions: Failed to enqueue jobs. The transaction will be rolled back. Last invalid changeset: #{inspect(changeset)}"
-          )
+          other ->
+            Logger.error("CommitActions: Unexpected return format from Oban.insert_all: #{inspect(other, limit: 3)}")
+            []
+        end
+
+        # Mark all processed events in a single call regardless of the Oban result format
+        {update_count, _} =
+          from(e in ClipEvent, where: e.id in ^event_ids)
+          |> Repo.update_all(set: [processed_at: DateTime.utc_now()])
+
+        Logger.info(
+          "CommitActions: Marked #{update_count} events as processed."
+        )
+
+      rescue
+        error ->
+          Logger.error("CommitActions: Oban.insert_all raised an exception: #{inspect(error)}")
+          Logger.error("CommitActions: Error details: #{Exception.message(error)}")
       end
     end
 
     :ok
+  rescue
+    exception ->
+      Logger.error("CommitActions: Exception occurred: #{inspect(exception)}")
+      Logger.error("CommitActions: Stacktrace: #{Exception.format_stacktrace(__STACKTRACE__)}")
+      :error
   end
 
   defp build_job(%ClipEvent{action: "selected_split"} = event) do
     # Use Access.key to handle both atom and string keys gracefully.
     split_at_frame = get_in(event.event_data, [Access.key("split_at_frame")])
 
-    SplitWorker.new(%{
-      clip_id: event.clip_id,
-      split_at_frame: split_at_frame
-    })
+    if split_at_frame do
+      Logger.debug("Building SplitWorker job for clip_id=#{event.clip_id}, split_at_frame=#{split_at_frame}")
+
+      SplitWorker.new(%{
+        clip_id: event.clip_id,
+        split_at_frame: split_at_frame
+      })
+    else
+      Logger.warn("Skipping SplitWorker job for clip_id=#{event.clip_id} - missing split_at_frame")
+      nil
+    end
   end
 
   defp build_job(%ClipEvent{action: "selected_merge_source"} = event) do
     # Use Access.key to handle both atom and string keys gracefully.
     target_clip_id = get_in(event.event_data, [Access.key("merge_target_clip_id")])
 
-    MergeWorker.new(%{
-      clip_id_source: event.clip_id,
-      clip_id_target: target_clip_id
-    })
+    if target_clip_id do
+      Logger.debug("Building MergeWorker job for clip_id_source=#{event.clip_id}, clip_id_target=#{target_clip_id}")
+
+      MergeWorker.new(%{
+        clip_id_source: event.clip_id,
+        clip_id_target: target_clip_id
+      })
+    else
+      Logger.warn("Skipping MergeWorker job for clip_id=#{event.clip_id} - missing merge_target_clip_id")
+      nil
+    end
   end
 end

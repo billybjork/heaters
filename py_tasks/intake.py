@@ -499,22 +499,22 @@ def run_intake(
             with get_db_connection() as conn:
                 with conn.cursor() as cur:
                     logger.error(
-                        f"Attempting to mark source_video_id {source_video_id} as 'download_failed'"
+                        f"Attempting to mark source_video_id {source_video_id} as 'ingestion_failed'"
                     )
                     cur.execute(
                         """
-                        UPDATE source_videos
-                            SET ingest_state = 'download_failed',
-                                error_message = %s,
-                                updated_at = NOW()
-                            WHERE id = %s
+                        UPDATE source_videos 
+                        SET ingest_state = 'ingestion_failed', 
+                            last_error = %s,
+                            retry_count = retry_count + 1
+                        WHERE id = %s
                         """,
                         (error_message, source_video_id),
                     )
                     conn.commit()
         except Exception as db_fail_err:
             logger.error(
-                f"CRITICAL: Failed to update DB state to 'download_failed' for {source_video_id}: {db_fail_err}",
+                f"CRITICAL: Failed to update DB state to 'ingestion_failed' for {source_video_id}: {db_fail_err}",
                 exc_info=True,
             )
 
