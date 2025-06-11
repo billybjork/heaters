@@ -59,6 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   openssl \
   libncurses6 \
   python3 \
+  ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

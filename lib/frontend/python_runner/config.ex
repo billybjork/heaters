@@ -13,7 +13,7 @@ defmodule Frontend.PythonRunner.Config do
   """
   @spec python_executable() :: String.t()
   def python_executable do
-    get_config()[:python_executable]
+    get_config(:python_executable)
   end
 
   @doc """
@@ -22,7 +22,7 @@ defmodule Frontend.PythonRunner.Config do
   """
   @spec working_dir() :: String.t()
   def working_dir do
-    get_config()[:working_dir]
+    get_config(:working_dir)
   end
 
   @doc """
@@ -30,7 +30,7 @@ defmodule Frontend.PythonRunner.Config do
   """
   @spec runner_script() :: String.t()
   def runner_script do
-    get_config()[:runner_script]
+    get_config(:runner_script)
   end
 
   @doc """
@@ -41,11 +41,19 @@ defmodule Frontend.PythonRunner.Config do
     Path.join(working_dir(), runner_script())
   end
 
-  # Private function to get config at runtime, preventing Dialyzer constant folding
-  @spec get_config() :: map()
-  defp get_config do
+  # Private function to get specific config value at runtime, preventing Dialyzer constant folding
+  @spec get_config(atom()) :: String.t()
+  defp get_config(key) do
     # Use apply/3 to hide from Dialyzer's constant folding
-    apply(Application, :get_env, [@app, @key, []])
-    |> Map.new()
+    config = apply(Application, :get_env, [@app, @key, []])
+
+    case Keyword.get(config, key) do
+      nil ->
+        raise "Frontend.PythonRunner configuration missing key: #{key}. Please check your config files."
+      value when is_binary(value) ->
+        value
+      value ->
+        raise "Frontend.PythonRunner configuration key #{key} must be a string, got: #{inspect(value)}"
+    end
   end
 end

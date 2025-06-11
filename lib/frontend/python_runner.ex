@@ -88,25 +88,54 @@ defmodule Frontend.PythonRunner do
 
     args = [runner_script_path, task_name, "--args-file", tmp_file]
 
+    Logger.info("PythonRunner: Creating port with python_exe=#{python_exe}, working_dir=#{working_dir}, script_exists=#{File.exists?(runner_script_path)}")
+    Logger.info("PythonRunner: Args: #{inspect(args)}")
+    Logger.info("PythonRunner: Env: #{inspect(env)}")
+    Logger.info("PythonRunner: Args types: #{inspect(Enum.map(args, &{&1, :erlang.is_list(&1)}))}")
+    Logger.info("PythonRunner: Python exe type: #{inspect({python_exe, :erlang.is_list(python_exe)})}")
+
+    # Convert environment variables to charlists (required by Port.open)
+    charlist_env = Enum.map(env, fn {key, value} ->
+      {String.to_charlist(key), String.to_charlist(value)}
+    end)
+
+    Logger.info("PythonRunner: Original env: #{inspect(env)}")
+    Logger.info("PythonRunner: Charlist env: #{inspect(charlist_env)}")
+
+    port_options = [
+      :binary,
+      :exit_status,
+      :hide,
+      :line,
+      {:args, args},
+      {:env, charlist_env},
+      {:cd, working_dir}
+    ]
+
+    Logger.info("PythonRunner: Port options: #{inspect(port_options)}")
+    Logger.info("PythonRunner: About to call Port.open with:")
+    Logger.info("PythonRunner:   First arg: #{inspect({:spawn_executable, python_exe})}")
+    Logger.info("PythonRunner:   Second arg: #{inspect(port_options)}")
+
     try do
       port =
         Port.open(
           {:spawn_executable, python_exe},
-          [
-            :binary,
-            :exit_status,
-            :hide,
-            {:packet, :line},
-            {:args, args},
-            {:env, env},
-            {:cd, working_dir}
-          ]
+          port_options
         )
 
       Port.monitor(port)
+      Logger.info("PythonRunner: Port created successfully")
       {:ok, port}
     rescue
-      e -> {:error, "Failed to open port: #{Exception.message(e)}"}
+      e ->
+        error_msg = "Failed to open port: #{Exception.message(e)}"
+        Logger.error("PythonRunner: #{error_msg}")
+        Logger.error("PythonRunner: Exception details: #{inspect(e)}")
+        Logger.error("PythonRunner: Python exe exists? #{File.exists?(python_exe)}")
+        Logger.error("PythonRunner: Working dir exists? #{File.exists?(working_dir)}")
+        Logger.error("PythonRunner: Runner script exists? #{File.exists?(runner_script_path)}")
+        {:error, error_msg}
     end
   end
 
@@ -163,6 +192,12 @@ defmodule Frontend.PythonRunner do
           {:ok, map()} | {:error, error_reason()}
   defp handle_port_messages(port, buffer, pubsub_topic, timeout) do
     receive do
+      {^port, {:data, {:eol, line}}} ->
+        trimmed = String.trim(line)
+        Logger.info("[python] " <> trimmed)
+        if pubsub_topic, do: Endpoint.broadcast(pubsub_topic, "progress", %{line: trimmed})
+        handle_port_messages(port, [trimmed | buffer], pubsub_topic, timeout)
+
       {^port, {:data, line}} ->
         trimmed = String.trim(line)
         Logger.info("[python] " <> trimmed)
@@ -170,7 +205,7 @@ defmodule Frontend.PythonRunner do
         handle_port_messages(port, [trimmed | buffer], pubsub_topic, timeout)
 
       {^port, {:exit_status, status}} ->
-        Port.close(port)
+        # Port already closed, don't try to close it again
         # Log all output on non-zero exit for debugging
         if status != 0 do
           output = join_lines(buffer)
