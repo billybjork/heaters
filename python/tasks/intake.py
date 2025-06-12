@@ -17,16 +17,14 @@ from botocore.exceptions import ClientError, NoCredentialsError
 
 # --- Local Imports ---
 try:
-    # Use relative imports for sibling modules within the package
-    from .utils.db import get_db_connection
-    from .utils.process_utils import run_ffmpeg_command
+    from python.utils.db import get_db_connection
+    from python.utils.process_utils import run_ffmpeg_command
 except ImportError:
-    # Fallback for when script is run directly
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
-    from py_tasks.utils.db import get_db_connection
-    from py_tasks.utils.process_utils import run_ffmpeg_command
+    from python.utils.db import get_db_connection
+    from python.utils.process_utils import run_ffmpeg_command
 
 
 # --- Logging Configuration ---
@@ -663,7 +661,7 @@ if __name__ == "__main__":
     # Example:
     # export DATABASE_URL="..."
     # export S3_BUCKET_NAME="..."
-    # python -m py_tasks.intake --source-id 123 --url "https://www.youtube.com/watch?v=..."
+    # python -m python.tasks.intake --source-id 123 --url "https://www.youtube.com/watch?v=..."
 
     parser = argparse.ArgumentParser(
         description="Run the intake process for a single video."

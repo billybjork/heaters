@@ -279,7 +279,7 @@ if config_env() == :prod do
   config :frontend, Frontend.PythonRunner,
     python_executable: python_exe,
     working_dir: working_dir,
-    runner_script: "py_tasks/runner.py"
+    runner_script: "python/runner.py"
 end
 
 # General debug log at the end of runtime.exs

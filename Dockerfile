@@ -33,8 +33,8 @@ RUN mix deps.get --only prod
 RUN mix deps.compile
 
 # Install Python dependencies into the venv
-COPY py_tasks/requirements.txt ./py_tasks/requirements.txt
-RUN pip install --no-cache-dir -r py_tasks/requirements.txt
+COPY python/requirements.txt ./python/requirements.txt
+RUN pip install --no-cache-dir -r python/requirements.txt
 
 # Copy the rest of the application source
 COPY . .
@@ -45,7 +45,7 @@ RUN npm run --prefix ./assets deploy
 RUN mix phx.digest
 
 # Create the final, self-contained release.
-# The mix.exs config will copy py_tasks into the release.
+# The mix.exs config will copy python into the release.
 RUN mix release frontend --overwrite
 
 # -----------------------

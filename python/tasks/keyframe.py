@@ -18,12 +18,12 @@ from botocore.exceptions import ClientError, NoCredentialsError
 
 # --- Local Imports ---
 try:
-    from .utils.db import get_db_connection
+    from python.utils.db import get_db_connection
 except ImportError:
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
-    from py_tasks.utils.db import get_db_connection
+    from python.utils.db import get_db_connection
 
 # --- Logging Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

@@ -6,7 +6,7 @@ import logging
 import importlib
 import traceback
 
-# Add the parent directory to Python path so we can import py_tasks
+# Add the parent directory to Python path so we can import python
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
@@ -38,38 +38,38 @@ def main():
     group.add_argument("--args-json", help="A JSON string containing the arguments for the task.")
     group.add_argument("--args-file", help="Path to a file containing JSON arguments for the task.")
     
-    try:
-        cli_args = parser.parse_args()
-        logging.info(f"Successfully parsed arguments: task_name='{cli_args.task_name}'")
-        
-        # Read JSON from file or command line
-        if cli_args.args_file:
-            logging.info(f"Reading JSON from file: {cli_args.args_file}")
-            with open(cli_args.args_file, 'r') as f:
-                json_content = f.read().strip()
-            logging.info(f"JSON content from file: {json_content}")
-        else:
-            json_content = cli_args.args_json
-            logging.info(f"JSON content from command line: {json_content}")
-            
-    except Exception as parse_err:
-        logging.error(f"Failed to parse arguments: {parse_err}")
-        logging.error(f"sys.argv was: {sys.argv}")
-        sys.exit(1)
+    args = parser.parse_args()
+    task_module_name = args.task_name
+    
+    logging.info(f"Successfully parsed arguments: task_name='{task_module_name}'")
+    
+    # Read task arguments from JSON (either command line or file)
+    if args.args_json:
+        logging.info("Reading JSON from command line argument")
+        try:
+            task_args = json.loads(args.args_json)
+        except json.JSONDecodeError as e:
+            logging.error(f"Failed to parse JSON from command line: {e}")
+            sys.exit(1)
+    else:
+        logging.info(f"Reading JSON from file: {args.args_file}")
+        try:
+            with open(args.args_file, 'r') as f:
+                json_content = f.read()
+                logging.info(f"JSON content from file: {json_content}")
+                task_args = json.loads(json_content)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logging.error(f"Failed to read or parse JSON from file {args.args_file}: {e}")
+            sys.exit(1)
 
     try:
-        task_module_name = cli_args.task_name
-        # Dynamically import the task module from the `py_tasks` package
-        # e.g., if task_name is 'intake', this imports py_tasks.intake
-        task_module = importlib.import_module(f"py_tasks.{task_module_name}")
-    except ImportError:
-        logging.error(f"Error: Could not find or import task module 'py_tasks.{task_module_name}'.")
-        sys.exit(1)
-
-    try:
-        task_args = json.loads(json_content)
-    except json.JSONDecodeError:
-        logging.error("Error: Invalid JSON provided in --args-json argument.")
+        # Dynamically import the task module from the `python.tasks` package
+        # e.g., if task_name is 'intake', this imports python.tasks.intake
+        task_module = importlib.import_module(f"python.tasks.{task_module_name}")
+    except ImportError as e:
+        logging.error(f"Error: Could not find or import task module 'python.tasks.{task_module_name}'.")
+        logging.error(f"Import error details: {e}")
+        logging.error(f"Make sure the module exists and is properly named.")
         sys.exit(1)
 
     try:

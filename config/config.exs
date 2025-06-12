@@ -59,7 +59,7 @@ config :elixir, :ansi_enabled, true
 config :frontend, Frontend.PythonRunner,
   python_executable: System.get_env("PYTHON_EXECUTABLE") || "python3",
   working_dir: System.get_env("PYTHON_WORKING_DIR") || File.cwd!(),
-  runner_script: "py_tasks/runner.py"
+  runner_script: "python/runner.py"
 
 # Configure esbuild (the bundler used for JS/CSS)
 config :esbuild,

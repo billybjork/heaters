@@ -84,4 +84,4 @@ config :frontend, dev_routes: true
 config :frontend, Frontend.PythonRunner,
   python_executable: System.find_executable("python3") || System.find_executable("python") || "/usr/bin/python3",
   working_dir: Path.expand("."),  # Current directory for local dev
-  runner_script: "py_tasks/runner.py"
+  runner_script: "python/runner.py"

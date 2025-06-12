@@ -2,11 +2,21 @@ import os
 import boto3
 import logging
 from botocore.exceptions import ClientError, NoCredentialsError
+import sys
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# --- Local Imports ---
+try:
+    from python.utils.db import get_db_connection
+except ImportError:
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+    from python.utils.db import get_db_connection
 
 def run_archive(s3_keys_to_delete: list, **kwargs):
     """
