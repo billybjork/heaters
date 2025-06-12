@@ -19,7 +19,7 @@ defmodule Frontend.MixProject do
       # Suppress spitfire warnings about private Elixir macros
       elixirc_options: [
         warnings_as_errors: false,
-        ignore_module_conflict: true
+        no_warn_undefined: [Macro.Env]
       ]
     ]
   end

@@ -146,7 +146,7 @@ def run_merge(clip_id_target: int, clip_id_source: int, environment: str, **kwar
             output_path = temp_dir / output_filename
             
             ffmpeg_cmd = [
-                "ffmpeg", "-f", "concat", "-safe", "0", "-i", str(concat_list_path),
+                "-f", "concat", "-safe", "0", "-i", str(concat_list_path),
                 "-c", "copy", str(output_path)
             ]
             run_ffmpeg_command(ffmpeg_cmd, "Merging clips")
@@ -165,13 +165,13 @@ def run_merge(clip_id_target: int, clip_id_source: int, environment: str, **kwar
                     """
                     UPDATE clips
                     SET clip_identifier = %s, clip_filepath = %s, end_time_seconds = %s,
-                        end_frame = %s, duration_seconds = %s, ingest_state = 'spliced',
+                        end_frame = %s, ingest_state = 'spliced',
                         updated_at = NOW()
                     WHERE id = %s;
                     """,
                     (
                         new_identifier, merged_clip_s3_key, clip_source_data['end_time_seconds'],
-                        new_end_frame, new_duration, clip_id_target
+                        new_end_frame, clip_id_target
                     )
                 )
                 logger.info(f"Updated target clip {clip_id_target} with merged data.")

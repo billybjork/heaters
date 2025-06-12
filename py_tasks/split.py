@@ -141,7 +141,7 @@ def run_split(clip_id: int, split_at_frame: int, environment: str, **kwargs):
                 s3_client.download_file(s3_bucket_name, original_clip_s3_path, str(local_clip_path))
                 
                 ffprobe_cmd = [
-                    "ffprobe", "-v", "error", "-select_streams", "v:0",
+                    "-v", "error", "-select_streams", "v:0",
                     "-show_entries", "stream=r_frame_rate", "-of", "default=noprint_wrappers=1:nokey=1",
                     str(local_clip_path)
                 ]
@@ -178,7 +178,7 @@ def run_split(clip_id: int, split_at_frame: int, environment: str, **kwargs):
                 fn_a = f"{id_a}.mp4"
                 output_path_a = temp_dir / fn_a
                 
-                cmd_a = ["ffmpeg", "-i", str(local_source_path), "-ss", str(start_a_time), "-to", str(end_a_time)] + ffmpeg_base_opts + [str(output_path_a)]
+                cmd_a = ["-i", str(local_source_path), "-ss", str(start_a_time), "-to", str(end_a_time)] + ffmpeg_base_opts + [str(output_path_a)]
                 run_ffmpeg_command(cmd_a, "Splitting Clip A")
                 
                 s3_key_a = f"{CLIP_S3_PREFIX}{fn_a}"
@@ -188,10 +188,10 @@ def run_split(clip_id: int, split_at_frame: int, environment: str, **kwargs):
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        INSERT INTO clips (source_video_id, clip_identifier, clip_filepath, start_time_seconds, end_time_seconds, duration_seconds, start_frame, end_frame, ingest_state)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'spliced') RETURNING id;
+                        INSERT INTO clips (source_video_id, clip_identifier, clip_filepath, start_time_seconds, end_time_seconds, start_frame, end_frame, ingest_state)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'spliced') RETURNING id;
                         """,
-                        (source_video_id, id_a, s3_key_a, start_a_time, end_a_time, duration_a, start_f_a, end_f_a)
+                        (source_video_id, id_a, s3_key_a, start_a_time, end_a_time, start_f_a, end_f_a)
                     )
                     new_clip_ids.append(cur.fetchone()[0])
 
@@ -207,7 +207,7 @@ def run_split(clip_id: int, split_at_frame: int, environment: str, **kwargs):
                 fn_b = f"{id_b}.mp4"
                 output_path_b = temp_dir / fn_b
 
-                cmd_b = ["ffmpeg", "-i", str(local_source_path), "-ss", str(start_b_time), "-to", str(end_b_time)] + ffmpeg_base_opts + [str(output_path_b)]
+                cmd_b = ["-i", str(local_source_path), "-ss", str(start_b_time), "-to", str(end_b_time)] + ffmpeg_base_opts + [str(output_path_b)]
                 run_ffmpeg_command(cmd_b, "Splitting Clip B")
                 
                 s3_key_b = f"{CLIP_S3_PREFIX}{fn_b}"
@@ -217,10 +217,10 @@ def run_split(clip_id: int, split_at_frame: int, environment: str, **kwargs):
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        INSERT INTO clips (source_video_id, clip_identifier, clip_filepath, start_time_seconds, end_time_seconds, duration_seconds, start_frame, end_frame, ingest_state)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'spliced') RETURNING id;
+                        INSERT INTO clips (source_video_id, clip_identifier, clip_filepath, start_time_seconds, end_time_seconds, start_frame, end_frame, ingest_state)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'spliced') RETURNING id;
                         """,
-                        (source_video_id, id_b, s3_key_b, start_b_time, end_b_time, duration_b, start_f_b, end_f_b)
+                        (source_video_id, id_b, s3_key_b, start_b_time, end_b_time, start_f_b, end_f_b)
                     )
                     new_clip_ids.append(cur.fetchone()[0])
             

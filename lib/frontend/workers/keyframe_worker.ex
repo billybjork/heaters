@@ -35,7 +35,7 @@ defmodule Frontend.Workers.KeyframeWorker do
                 case EmbeddingWorker.new(%{
                        clip_id: clip.id,
                        model_name: "ViT-g-14/laion2b_s34b_b88k",
-                       generation_strategy: "per_keyframe_average"
+                       generation_strategy: "keyframe_multi_avg"
                      })
                      |> Oban.insert() do
                   {:ok, _job} -> :ok

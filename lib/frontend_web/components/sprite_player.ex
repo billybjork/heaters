@@ -108,7 +108,7 @@ defmodule FrontendWeb.SpritePlayer do
   # ------------------------------------------------------------------------
 
   defp build_sprite_player_meta(clip, art) do
-    base = art.metadata || %{}
+    base = if art, do: art.metadata || %{}, else: %{}
 
     cols = base["cols"] || 5
     tile_w = base["tile_width"] || 160
@@ -146,8 +146,8 @@ defmodule FrontendWeb.SpritePlayer do
       "total_sprite_frames" => total_sprite_frames,
       "clip_fps" => fps,
       "clip_total_frames" => clip_total_frames,
-      "spriteUrl" => cdn_url(art.s3_key),
-      "isValid" => true
+      "spriteUrl" => if(art, do: cdn_url(art.s3_key), else: cdn_url(nil)),
+      "isValid" => art != nil
     }
   end
 

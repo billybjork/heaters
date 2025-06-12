@@ -51,6 +51,10 @@ config :logger, :console,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# Suppress spitfire warnings about private Elixir macros
+config :elixir, :warnings_as_errors, false
+config :elixir, :ansi_enabled, true
+
 # Configure PythonRunner paths and executables
 config :frontend, Frontend.PythonRunner,
   python_executable: System.get_env("PYTHON_EXECUTABLE") || "python3",

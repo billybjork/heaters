@@ -180,7 +180,7 @@ def run_splice(source_video_id: int, environment: str, **kwargs):
             output_path = os.path.join(temp_dir, output_filename)
 
             ffmpeg_cmd = [
-                "ffmpeg", "-i", local_video_path,
+                "-i", local_video_path,
                 "-ss", str(start_time), "-to", str(end_time),
                 "-c:v", "libx264", "-preset", FFMPEG_PRESET, "-crf", FFMPEG_CRF,
                 "-c:a", "aac", "-b:a", FFMPEG_AUDIO_BITRATE,
@@ -195,10 +195,10 @@ def run_splice(source_video_id: int, environment: str, **kwargs):
             with get_db_connection() as conn, conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO clips (source_video_id, clip_identifier, clip_filepath, start_time_seconds, end_time_seconds, duration_seconds)
-                    VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
+                    INSERT INTO clips (source_video_id, clip_identifier, clip_filepath, start_time_seconds, end_time_seconds, ingest_state)
+                    VALUES (%s, %s, %s, %s, %s, 'spliced') RETURNING id
                     """,
-                    (source_video_id, clip_identifier, clip_s3_key, start_time, end_time, duration)
+                    (source_video_id, clip_identifier, clip_s3_key, start_time, end_time)
                 )
                 new_clip_id = cur.fetchone()[0]
                 created_clip_ids.append(new_clip_id)
