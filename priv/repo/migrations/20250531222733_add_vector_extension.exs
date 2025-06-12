@@ -1,4 +1,4 @@
-defmodule Frontend.Repo.Migrations.AddVectorExtension do
+defmodule Heaters.Repo.Migrations.AddVectorExtension do
   use Ecto.Migration
 
   def up do

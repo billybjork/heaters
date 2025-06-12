@@ -1,4 +1,4 @@
-defmodule Frontend.Repo.Migrations.AddOban do
+defmodule Heaters.Repo.Migrations.AddOban do
   use Ecto.Migration
 
   use Ecto.Migration

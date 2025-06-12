@@ -1,9 +1,9 @@
-defmodule Frontend.MixProject do
+defmodule Heaters.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :frontend,
+      app: :heaters,
       version: "0.1.0",
       elixir: "~> 1.14",
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -11,7 +11,7 @@ defmodule Frontend.MixProject do
       aliases: aliases(),
       deps: deps(),
       releases: [
-        frontend: [
+        heaters: [
           steps: [:assemble],
           include_executables: true
         ]
@@ -29,7 +29,7 @@ defmodule Frontend.MixProject do
   # Type `mix help compile.app` for more information.
   def application do
     [
-      mod: {Frontend.Application, []},
+      mod: {Heaters.Application, []},
       extra_applications: [:logger, :runtime_tools]
     ]
   end

@@ -5,7 +5,7 @@
 # Inside the script, you can read and write to any of your
 # repositories directly:
 #
-#     Frontend.Repo.insert!(%Frontend.SomeSchema{})
+#     Heaters.Repo.insert!(%Heaters.SomeSchema{})
 #
 # We recommend using the bang functions (`insert!`, `update!`
 # and so on) as they will fail if something goes wrong.

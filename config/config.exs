@@ -3,43 +3,47 @@
 
 import Config
 
-config :frontend, Oban,
+config :heaters, Oban,
   engine: Oban.Engines.Basic,
   notifier: Oban.Notifiers.Postgres,
-  repo: Frontend.Repo,
+  repo: Heaters.Repo,
   plugins: [
     Oban.Plugins.Pruner,
     {Oban.Plugins.Cron,
      crontab: [
        # Every 60 seconds, run the Dispatcher worker
-       {"* * * * *", Frontend.Workers.Dispatcher}
+       {"* * * * *", Heaters.Workers.Dispatcher}
      ]}
   ],
   queues: [
     default: 10,
-    ingest: 3,    # For video processing
-    media_processing: 5,  # Added missing queue for most workers
-    background_jobs: 2,   # Added missing queue for dispatcher/archive
-    embeddings: 2         # Renamed from 'embed' to match worker usage
+    # For video processing
+    ingest: 3,
+    # Added missing queue for most workers
+    media_processing: 5,
+    # Added missing queue for dispatcher/archive
+    background_jobs: 2,
+    # Renamed from 'embed' to match worker usage
+    embeddings: 2
   ]
 
 # General application configuration
-config :frontend,
-  ecto_repos: [Frontend.Repo],
+config :heaters,
+  ecto_repos: [Heaters.Repo],
   generators: [timestamp_type: :utc_datetime]
 
 # Tell Ecto/Postgres about our custom types (for the `vector` column)
-config :frontend, Frontend.Repo, types: Frontend.PostgresTypes
+config :heaters, Heaters.Repo, types: Heaters.PostgresTypes
 
 # Configures the endpoint
-config :frontend, FrontendWeb.Endpoint,
+config :heaters, HeatersWeb.Endpoint,
   url: [host: "localhost"],
   adapter: Phoenix.Endpoint.Cowboy2Adapter,
   render_errors: [
-    formats: [html: FrontendWeb.ErrorHTML, json: FrontendWeb.ErrorJSON],
+    formats: [html: HeatersWeb.ErrorHTML, json: HeatersWeb.ErrorJSON],
     layout: false
   ],
-  pubsub_server: Frontend.PubSub,
+  pubsub_server: Heaters.PubSub,
   # Replace with a secure salt from `mix phx.gen.secret 32`
   live_view: [signing_salt: "KWvQc1I2"]
 
@@ -56,7 +60,7 @@ config :elixir, :warnings_as_errors, false
 config :elixir, :ansi_enabled, true
 
 # Configure PythonRunner paths and executables
-config :frontend, Frontend.PythonRunner,
+config :heaters, Heaters.PythonRunner,
   python_executable: System.get_env("PYTHON_EXECUTABLE") || "python3",
   working_dir: System.get_env("PYTHON_WORKING_DIR") || File.cwd!(),
   runner_script: "python/runner.py"

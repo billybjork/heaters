@@ -46,7 +46,7 @@ RUN mix phx.digest
 
 # Create the final, self-contained release.
 # The mix.exs config will copy python into the release.
-RUN mix release frontend --overwrite
+RUN mix release heaters --overwrite
 
 # -----------------------
 # 2) Runtime image
@@ -65,7 +65,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Copy the compiled Elixir release from the build stage.
-COPY --from=build /app/_build/prod/rel/frontend .
+COPY --from=build /app/_build/prod/rel/heaters .
 # Copy the entire Python virtual environment from the build stage.
 COPY --from=build /opt/venv /opt/venv
 
@@ -85,4 +85,4 @@ ENV MIX_ENV=prod
 EXPOSE 4000
 
 # The command to run migrations and start the server
-CMD ["bin/frontend", "eval", "Frontend.Release.migrate()", ";", "bin/frontend", "start"]
+CMD ["bin/heaters", "eval", "Heaters.Release.migrate()", ";", "bin/heaters", "start"]

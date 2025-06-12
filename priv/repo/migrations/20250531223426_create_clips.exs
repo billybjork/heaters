@@ -1,4 +1,4 @@
-defmodule Frontend.Repo.Migrations.CreateClips do
+defmodule Heaters.Repo.Migrations.CreateClips do
   use Ecto.Migration
 
   def up do

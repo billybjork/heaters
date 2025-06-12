@@ -1,4 +1,4 @@
-defmodule Frontend.Repo.Migrations.CreateEmbeddings do
+defmodule Heaters.Repo.Migrations.CreateEmbeddings do
   use Ecto.Migration
 
   def up do

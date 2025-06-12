@@ -1,4 +1,4 @@
-defmodule Frontend.Repo.Migrations.AddProcessedAtToClipEvents do
+defmodule Heaters.Repo.Migrations.AddProcessedAtToClipEvents do
   use Ecto.Migration
 
   def change do

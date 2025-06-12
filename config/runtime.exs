@@ -6,7 +6,7 @@ import Config
 # config :phoenix_html, :csrf_tokens_via_cookie_session, true # Keep if you have this line
 
 if System.get_env("PHX_SERVER") do
-  config :frontend, FrontendWeb.Endpoint, server: true
+  config :heaters, HeatersWeb.Endpoint, server: true
 end
 
 # === S3/CloudFront Configuration (based on APP_ENV) ===
@@ -15,7 +15,7 @@ end
 app_env_string = System.get_env("APP_ENV")
 
 # Make APP_ENV available in application config if needed
-config :frontend, :app_env, app_env_string
+config :heaters, :app_env, app_env_string
 
 # Configure Cloudfront Domain
 current_cloudfront_domain =
@@ -56,7 +56,7 @@ current_cloudfront_domain =
       end
   end
 
-config :frontend, :cloudfront_domain, current_cloudfront_domain
+config :heaters, :cloudfront_domain, current_cloudfront_domain
 IO.puts("[Runtime.exs] Configured CloudFront Domain: #{current_cloudfront_domain}")
 
 # Configure S3 Bucket Name (if Phoenix needs to know it directly for URL generation, etc.)
@@ -87,7 +87,7 @@ current_s3_bucket =
   end
 
 if current_s3_bucket do
-  config :frontend, :s3_bucket, current_s3_bucket
+  config :heaters, :s3_bucket, current_s3_bucket
   IO.puts("[Runtime.exs] Configured S3 Bucket: #{current_s3_bucket}")
 else
   IO.puts("[Runtime.exs] S3 Bucket not configured via APP_ENV specific vars or S3_BUCKET_NAME.")
@@ -106,7 +106,7 @@ if config_env() != :dev do
       raise """
       environment variable PROD_DATABASE_URL or DATABASE_URL is missing.
       It's required for environments other than :dev (e.g., :prod, :test).
-      For :dev, ensure your config/dev.exs sets up the Frontend.Repo configuration.
+      For :dev, ensure your config/dev.exs sets up the Heaters.Repo configuration.
       """
 
   IO.puts(
@@ -180,7 +180,7 @@ if config_env() != :dev do
       database_url
     end
 
-  config :frontend, Frontend.Repo,
+  config :heaters, Heaters.Repo,
     url: repo_url_with_sslmode,
     ssl: ssl_opts,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
@@ -210,10 +210,10 @@ if config_env() == :prod do
 
   # DNS_CLUSTER_QUERY is for clustered deployments (e.g., libcluster with DNS strategy).
   if dns_cluster_query_env = System.get_env("DNS_CLUSTER_QUERY") do
-    config :frontend, :dns_cluster_query, dns_cluster_query_env
+    config :heaters, :dns_cluster_query, dns_cluster_query_env
   end
 
-  config :frontend, FrontendWeb.Endpoint,
+  config :heaters, HeatersWeb.Endpoint,
     # Prod typically runs on HTTPS.
     url: [host: host, port: 443, scheme: "https"],
     http: [
@@ -249,34 +249,36 @@ if config_env() == :prod do
     if "default" in String.split(queues_str, ",", trim: true) do
       [
         Oban.Plugins.Pruner,
-        {Oban.Plugins.Cron, crontab: [{"* * * * *", Frontend.Workers.Dispatcher}]}
+        {Oban.Plugins.Cron, crontab: [{"* * * * *", Heaters.Workers.Dispatcher}]}
       ]
     else
       [Oban.Plugins.Pruner]
     end
 
-  config :frontend, Oban,
+  config :heaters, Oban,
     queues: queues,
     plugins: plugins
 
   # Configure PythonRunner for production with strict validation
   python_exe =
-    System.get_env("PYTHON_EXECUTABLE") || "/opt/venv/bin/python3"
-    |> tap(fn path ->
-      unless File.exists?(path) do
-        raise "PYTHON_EXECUTABLE does not exist: #{path}"
-      end
-    end)
+    System.get_env("PYTHON_EXECUTABLE") ||
+      "/opt/venv/bin/python3"
+      |> tap(fn path ->
+        unless File.exists?(path) do
+          raise "PYTHON_EXECUTABLE does not exist: #{path}"
+        end
+      end)
 
   working_dir =
-    System.get_env("PYTHON_WORKING_DIR") || "/app"
-    |> tap(fn path ->
-      unless File.dir?(path) do
-        raise "PYTHON_WORKING_DIR does not exist: #{path}"
-      end
-    end)
+    System.get_env("PYTHON_WORKING_DIR") ||
+      "/app"
+      |> tap(fn path ->
+        unless File.dir?(path) do
+          raise "PYTHON_WORKING_DIR does not exist: #{path}"
+        end
+      end)
 
-  config :frontend, Frontend.PythonRunner,
+  config :heaters, Heaters.PythonRunner,
     python_executable: python_exe,
     working_dir: working_dir,
     runner_script: "python/runner.py"

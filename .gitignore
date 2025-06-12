@@ -30,7 +30,7 @@ __pycache__/
 /tmp/
 /cover/
 /doc/
-/frontend-*.tar
+/heaters-*.tar
 
 # Local package/dependency files
 /.fetch

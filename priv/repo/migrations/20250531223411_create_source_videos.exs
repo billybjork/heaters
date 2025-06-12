@@ -1,4 +1,4 @@
-defmodule Frontend.Repo.Migrations.CreateSourceVideos do
+defmodule Heaters.Repo.Migrations.CreateSourceVideos do
   use Ecto.Migration
 
   def up do

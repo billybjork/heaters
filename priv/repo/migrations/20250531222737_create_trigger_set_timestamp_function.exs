@@ -1,4 +1,4 @@
-defmodule Frontend.Repo.Migrations.CreateTriggerSetTimestampFunction do
+defmodule Heaters.Repo.Migrations.CreateTriggerSetTimestampFunction do
   use Ecto.Migration
 
   def up do
