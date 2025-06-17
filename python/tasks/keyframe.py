@@ -1,281 +1,295 @@
-import cv2
+"""
+Refactored Keyframe Task - "Dumber" Python focused on keyframe extraction only.
+
+This version:
+- Receives explicit S3 paths and extraction strategy from Elixir
+- Focuses only on keyframe extraction and image processing
+- Returns structured data about keyframe artifacts instead of managing database state
+- No database connections or state management
+"""
+
+import argparse
+import json
+import logging
 import os
 import re
-import argparse
-import shutil
 import tempfile
+import threading
 from pathlib import Path
-from datetime import datetime
-import logging
-import json
-import sys
 
-import psycopg2
-from psycopg2 import sql
-from psycopg2.extras import Json, execute_values
 import boto3
+import cv2
 from botocore.exceptions import ClientError, NoCredentialsError
 
-# --- Local Imports ---
-try:
-    from python.utils.db import get_db_connection
-except ImportError:
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
-    from python.utils.db import get_db_connection
-
 # --- Logging Configuration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
+# --- Task Configuration ---
+JPEG_QUALITY = 90
 
-# --- Configuration ---
-KEYFRAMES_S3_PREFIX = os.getenv("KEYFRAMES_S3_PREFIX", "clip_artifacts/keyframes/")
-ARTIFACT_TYPE_KEYFRAME = "keyframe"
+class S3TransferProgress:
+    """Callback for boto3 reporting progress via logger"""
+    
+    def __init__(self, total_size, filename, logger_instance, throttle_percentage=25):
+        self._filename = filename
+        self._total_size = total_size
+        self._seen_so_far = 0
+        self._lock = threading.Lock()
+        self._logger = logger_instance
+        self._throttle_percentage = max(1, min(int(throttle_percentage), 100))
+        self._last_logged_percentage = -1
+
+    def __call__(self, bytes_amount):
+        try:
+            with self._lock:
+                self._seen_so_far += bytes_amount
+                current_percentage = 0
+                if self._total_size > 0:
+                    current_percentage = int((self._seen_so_far / self._total_size) * 100)
+                
+                should_log = (
+                    current_percentage >= self._last_logged_percentage + self._throttle_percentage
+                    and current_percentage < 100
+                ) or (current_percentage == 100 and self._last_logged_percentage != 100)
+
+                if should_log:
+                    size_mb = self._seen_so_far / (1024 * 1024)
+                    total_size_mb = self._total_size / (1024 * 1024)
+                    self._logger.info(
+                        f"S3 Upload: {self._filename} - {current_percentage}% complete "
+                        f"({size_mb:.2f}/{total_size_mb:.2f} MiB)"
+                    )
+                    self._last_logged_percentage = current_percentage
+        except Exception as e:
+            self._logger.error(f"S3 Progress error: {e}")
 
 def sanitize_filename(name):
     """Removes potentially problematic characters for filenames and S3 keys."""
+    if not name:
+        return "default_filename"
     name = str(name)
     name = re.sub(r'[^\w\.\-]+', '_', name)
     name = re.sub(r'_+', '_', name).strip('_')
     return name[:150] if name else "default_filename"
 
-# --- Core Frame Extraction Logic ---
-def _extract_and_save_frames_internal(
-    local_temp_video_path: str,
+def extract_keyframes(
+    video_path: str,
+    output_dir: Path,
     clip_identifier: str,
-    title: str,
-    local_temp_output_dir: str,
-    strategy: str = 'midpoint'
-    ) -> list[dict]:
+    strategy: str = "midpoint"
+) -> list:
     """
-    Extracts frames based on strategy, saves them locally, and returns metadata.
+    Extracts keyframes from a video based on the specified strategy.
+    Returns metadata about extracted frames.
     """
-    extracted_frames_data = []
-    cap = None
-    try:
-        logger.debug(f"Opening video for frame extraction: {local_temp_video_path}")
-        cap = cv2.VideoCapture(str(local_temp_video_path))
-        if not cap.isOpened():
-            raise IOError(f"Error opening video file: {local_temp_video_path}")
+    logger.info(f"Opening video for keyframe extraction: {video_path}")
+    
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise IOError(f"Error opening video file: {video_path}")
 
+    try:
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        
         if total_frames <= 0:
-            logger.warning(f"Video has no frames: {local_temp_video_path}")
+            logger.warning(f"Video has no frames: {video_path}")
             return []
 
+        # Determine frame indices to extract based on strategy
         frame_indices_to_extract = []
-        if strategy == 'multi':
-            indices = sorted(list({int(total_frames * p) for p in [0.25, 0.50, 0.75]}))
-            frame_indices_to_extract = [(idx, f"{int(p*100)}pct") for idx, p in zip(indices, [0.25, 0.50, 0.75])]
-        elif strategy == 'midpoint':
-            frame_indices_to_extract.append((int(total_frames * 0.5), "mid"))
+        
+        if strategy == "multi":
+            # Extract frames at 25%, 50%, and 75% of the video
+            percentages = [0.25, 0.50, 0.75]
+            indices = [int(total_frames * p) for p in percentages]
+            tags = ["25pct", "50pct", "75pct"]
+            frame_indices_to_extract = list(zip(indices, tags))
+        elif strategy == "midpoint":
+            # Extract single frame at 50% of the video
+            frame_indices_to_extract = [(int(total_frames * 0.5), "mid")]
         else:
             raise ValueError(f"Unsupported keyframe strategy: {strategy}")
         
-        sanitized_title = sanitize_filename(title)
+        logger.info(f"Extracting {len(frame_indices_to_extract)} keyframes using strategy '{strategy}'")
+
+        extracted_frames = []
+        sanitized_identifier = sanitize_filename(clip_identifier)
 
         for frame_index, tag in frame_indices_to_extract:
+            # Seek to the frame
             cap.set(cv2.CAP_PROP_POS_FRAMES, float(frame_index))
             ret, frame = cap.read()
+            
             if ret:
                 height, width = frame.shape[:2]
                 timestamp_sec = frame_index / fps
-                output_filename = f"{sanitized_title}_{tag}.jpg"
-                output_path = os.path.join(local_temp_output_dir, output_filename)
+                output_filename = f"{sanitized_identifier}_{tag}.jpg"
+                output_path = output_dir / output_filename
 
                 logger.debug(f"Saving frame {frame_index} (tag: {tag}) to {output_path}")
-                if cv2.imwrite(output_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 90]):
-                    extracted_frames_data.append({
+                
+                # Save frame as JPEG
+                success = cv2.imwrite(
+                    str(output_path), 
+                    frame, 
+                    [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
+                )
+                
+                if success:
+                    extracted_frames.append({
                         'tag': tag,
-                        'local_path': output_path,
+                        'local_path': str(output_path),
                         's3_filename': output_filename,
                         'frame_index': frame_index,
                         'timestamp_sec': round(timestamp_sec, 3),
                         'width': width,
                         'height': height
                     })
+                    logger.debug(f"Successfully saved keyframe: {output_filename}")
                 else:
                     logger.error(f"Failed to write frame image to {output_path}")
             else:
-                logger.warning(f"Could not read frame at index {frame_index}.")
+                logger.warning(f"Could not read frame at index {frame_index}")
 
-    except Exception as e:
-        logger.error(f"Error during frame extraction for {local_temp_video_path}: {e}", exc_info=True)
-        raise
+        return extracted_frames
+
     finally:
-        if cap:
-            cap.release()
+        cap.release()
 
-    return extracted_frames_data
-
-
-# --- Stateless Task Function ---
 def run_keyframe(
     clip_id: int,
-    strategy: str,
-    environment: str,
+    input_s3_path: str,
+    output_s3_prefix: str,
+    strategy: str = "midpoint",
     **kwargs
-    ):
+):
     """
-    Extracts keyframes, uploads them to S3, and records them in the database.
+    Downloads clip video, extracts keyframes, and uploads to S3.
+    Returns structured data about the keyframe artifacts instead of managing database state.
+    
+    Args:
+        clip_id: The ID of the clip (for reference only)
+        input_s3_path: S3 path to the clip video file
+        output_s3_prefix: S3 prefix where to upload keyframe images
+        strategy: Keyframe extraction strategy ('midpoint' or 'multi')
+        **kwargs: Additional options
+    
+    Returns:
+        dict: Structured data about the keyframe artifacts including S3 keys and metadata
     """
-    overwrite = kwargs.get('overwrite', False)
-    logger.info(f"RUNNING KEYFRAME for clip_id: {clip_id}, Strategy: '{strategy}', Overwrite: {overwrite}, Env: {environment}")
-
-    # --- Get S3 Resources from Environment ---
+    logger.info(f"RUNNING KEYFRAME for clip_id: {clip_id}")
+    logger.info(f"Input: {input_s3_path}, Output prefix: {output_s3_prefix}, Strategy: {strategy}")
+    
+    # Get S3 resources from environment (provided by Elixir)
     s3_bucket_name = os.getenv("S3_BUCKET_NAME")
     if not s3_bucket_name:
-        raise ValueError("S3_BUCKET_NAME environment variable not set.")
-    
+        raise ValueError("S3_BUCKET_NAME environment variable not set")
+
     try:
         s3_client = boto3.client("s3")
     except NoCredentialsError:
-        logger.error("S3 credentials not found. Configure AWS_ACCESS_KEY_ID, etc.")
+        logger.error("S3 credentials not found")
         raise
 
-    temp_dir_obj = None
-    error_message = None
-    generated_artifact_s3_keys = []
-
-    try:
-        # --- DB Check and State Update ---
-        with get_db_connection() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            conn.autocommit = False
-            cur.execute("SELECT pg_advisory_xact_lock(3, %s)", (clip_id,))
-            logger.info(f"Acquired DB lock for clip_id: {clip_id}")
-            
-            cur.execute(
-                """
-                SELECT c.ingest_state, c.clip_filepath, c.clip_identifier, sv.title
-                FROM clips c JOIN source_videos sv ON c.source_video_id = sv.id
-                WHERE c.id = %s
-                """, (clip_id,)
-            )
-            clip_rec = cur.fetchone()
-            if not clip_rec: raise ValueError(f"Clip ID {clip_id} not found.")
-
-            # Idempotency checks
-            eligible_states = ['spliced', 'keyframing_failed']
-            if clip_rec['ingest_state'] not in eligible_states and not (overwrite and clip_rec['ingest_state'] == 'keyframed'):
-                return {"status": "skipped_state", "clip_id": clip_id, "reason": f"State '{clip_rec['ingest_state']}' not eligible."}
-            
-            if overwrite:
-                cur.execute("DELETE FROM clip_artifacts WHERE clip_id = %s AND artifact_type = %s AND strategy = %s", (clip_id, ARTIFACT_TYPE_KEYFRAME, strategy))
-                logger.info(f"Overwrite enabled: Deleted {cur.rowcount} existing keyframe artifacts for strategy '{strategy}'.")
-
-            cur.execute("UPDATE clips SET ingest_state = 'keyframing', updated_at = NOW() WHERE id = %s", (clip_id,))
-            conn.commit()
-            logger.info(f"Set clip {clip_id} state to 'keyframing'")
-
-        # --- Download and Process ---
-        temp_dir_obj = tempfile.TemporaryDirectory(prefix="keyframe_")
-        temp_dir = temp_dir_obj.name
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir_path = Path(temp_dir)
         
-        clip_s3_key = clip_rec['clip_filepath']
-        local_video_path = os.path.join(temp_dir, os.path.basename(clip_s3_key))
-        logger.info(f"Downloading clip s3://{s3_bucket_name}/{clip_s3_key} to {local_video_path}")
-        s3_client.download_file(s3_bucket_name, clip_s3_key, local_video_path)
-        
-        extracted_frames = _extract_and_save_frames_internal(
-            local_video_path,
-            clip_rec['clip_identifier'],
-            clip_rec['title'],
-            temp_dir,
-            strategy
-        )
-
-        if not extracted_frames:
-            raise RuntimeError("Frame extraction failed to produce any images.")
-
-        # --- Upload and Record Artifacts ---
-        db_artifact_records = []
-        for frame_data in extracted_frames:
-            s3_key = f"{KEYFRAMES_S3_PREFIX}{clip_id}/{frame_data['s3_filename']}"
-            logger.info(f"Uploading {frame_data['local_path']} to s3://{s3_bucket_name}/{s3_key}")
-            s3_client.upload_file(frame_data['local_path'], s3_bucket_name, s3_key)
-            generated_artifact_s3_keys.append(s3_key)
-            
-            metadata = {
-                'frame_index': frame_data['frame_index'],
-                'timestamp_sec': frame_data['timestamp_sec'],
-                'width': frame_data['width'],
-                'height': frame_data['height']
-            }
-            db_artifact_records.append((
-                clip_id, ARTIFACT_TYPE_KEYFRAME, s3_key, strategy,
-                frame_data['tag'], Json(metadata)
-            ))
-        
-        with get_db_connection() as conn, conn.cursor() as cur:
-            execute_values(cur,
-                """
-                INSERT INTO clip_artifacts
-                (clip_id, artifact_type, s3_key, strategy, tag, metadata)
-                VALUES %s
-                """, db_artifact_records
-            )
-            logger.info(f"Inserted {len(db_artifact_records)} keyframe artifacts into DB.")
-            
-            cur.execute("UPDATE clips SET ingest_state = 'keyframed', keyframed_at = NOW() WHERE id = %s", (clip_id,))
-            conn.commit()
-            logger.info(f"Set clip {clip_id} state to 'keyframed'")
-
-        logger.info(f"SUCCESS: Keyframe extraction finished for clip_id: {clip_id}")
-        return {
-            "status": "success",
-            "clip_id": clip_id,
-            "strategy": strategy,
-            "generated_artifacts": len(generated_artifact_s3_keys),
-            "artifact_keys": generated_artifact_s3_keys
-        }
-
-    except Exception as e:
-        logger.error(f"FATAL: Keyframe extraction failed for clip_id {clip_id}: {e}", exc_info=True)
-        error_message = str(e)
         try:
-            with get_db_connection() as conn, conn.cursor() as cur:
-                logger.error(f"Attempting to mark clip {clip_id} as 'keyframing_failed'")
-                cur.execute(
-                    "UPDATE clips SET ingest_state = 'keyframing_failed', last_error = %s, updated_at = NOW() WHERE id = %s",
-                    (error_message, clip_id)
+            # Step 1: Download clip video from S3
+            local_video_path = temp_dir_path / Path(input_s3_path).name
+            logger.info(f"Downloading s3://{s3_bucket_name}/{input_s3_path} to {local_video_path}")
+            s3_client.download_file(s3_bucket_name, input_s3_path, str(local_video_path))
+
+            # Step 2: Extract keyframes
+            clip_identifier = f"clip_{clip_id}"
+            extracted_frames = extract_keyframes(
+                str(local_video_path),
+                temp_dir_path,
+                clip_identifier,
+                strategy
+            )
+
+            if not extracted_frames:
+                raise RuntimeError("Keyframe extraction failed to produce any images")
+
+            # Step 3: Upload keyframes to S3 and collect artifact data
+            artifacts = []
+            for frame_data in extracted_frames:
+                s3_key = f"{output_s3_prefix}/{frame_data['s3_filename']}"
+                local_path = frame_data['local_path']
+                
+                # Get file size for progress reporting
+                file_size = Path(local_path).stat().st_size
+                progress_callback = S3TransferProgress(file_size, frame_data['s3_filename'], logger)
+                
+                logger.info(f"Uploading {local_path} to s3://{s3_bucket_name}/{s3_key}")
+                s3_client.upload_file(
+                    local_path, 
+                    s3_bucket_name, 
+                    s3_key,
+                    Callback=progress_callback
                 )
-                conn.commit()
-        except Exception as db_fail_err:
-            logger.error(f"CRITICAL: Failed to update DB state to 'keyframing_failed' for {clip_id}: {db_fail_err}", exc_info=True)
-        
-        raise
+                
+                # Create artifact data for Elixir to process
+                artifacts.append({
+                    "artifact_type": "keyframe",
+                    "s3_key": s3_key,
+                    "metadata": {
+                        "tag": frame_data['tag'],
+                        "frame_index": frame_data['frame_index'],
+                        "timestamp_sec": frame_data['timestamp_sec'],
+                        "width": frame_data['width'],
+                        "height": frame_data['height'],
+                        "strategy": strategy,
+                        "file_size": file_size
+                    }
+                })
 
-    finally:
-        if temp_dir_obj:
-            try:
-                temp_dir_obj.cleanup()
-                logger.info("Cleaned up temporary directory.")
-            except Exception as cleanup_err:
-                logger.warning(f"Failed to clean up temporary directory: {cleanup_err}")
+            # Return structured data for Elixir to process
+            return {
+                "status": "success",
+                "artifacts": artifacts,
+                "metadata": {
+                    "strategy": strategy,
+                    "keyframes_extracted": len(artifacts),
+                    "clip_id": clip_id
+                }
+            }
 
-# --- Direct invocation for testing ---
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Run keyframe extraction for a single clip.")
-    parser.add_argument("--clip-id", required=True, type=int, help="The clip_id from the database.")
-    parser.add_argument("--strategy", default='midpoint', choices=['midpoint', 'multi'], help="The keyframe extraction strategy.")
-    parser.add_argument("--env", default="development", help="The environment.")
-    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing keyframes for this strategy.")
+        except Exception as e:
+            logger.error(f"Error processing keyframes: {e}")
+            raise
+
+def main():
+    """Main entry point for standalone execution"""
+    parser = argparse.ArgumentParser(description="Keyframe extraction task")
+    parser.add_argument("--clip-id", type=int, required=True)
+    parser.add_argument("--input-s3-path", required=True)
+    parser.add_argument("--output-s3-prefix", required=True)
+    parser.add_argument("--strategy", default="midpoint", choices=["midpoint", "multi"])
     
     args = parser.parse_args()
-
+    
     try:
         result = run_keyframe(
-            clip_id=args.clip_id,
-            strategy=args.strategy,
-            environment=args.env,
-            overwrite=args.overwrite
+            args.clip_id,
+            args.input_s3_path,
+            args.output_s3_prefix,
+            args.strategy
         )
-        print("Keyframe extraction finished successfully.")
         print(json.dumps(result, indent=2))
-        sys.exit(0)
     except Exception as e:
-        print(f"Keyframe extraction failed: {e}", file=sys.stderr)
-        sys.exit(1)
+        error_result = {
+            "status": "error",
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+        print(json.dumps(error_result, indent=2))
+        exit(1)
+
+if __name__ == "__main__":
+    main() 

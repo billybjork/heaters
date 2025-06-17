@@ -1,320 +1,384 @@
+"""
+Refactored Sprite Task - "Dumber" Python focused on sprite sheet generation only.
+
+This version:
+- Receives explicit S3 paths and sprite parameters from Elixir
+- Focuses only on sprite sheet generation using FFmpeg
+- Returns structured data about sprite artifacts instead of managing database state
+- No database connections or state management
+"""
+
+import argparse
+import json
+import logging
+import math
 import os
-import sys
 import re
+import shutil
 import subprocess
 import tempfile
-from pathlib import Path
-import shutil
-import json
-import math
-import logging
-import argparse
+import threading
 from datetime import datetime
+from pathlib import Path
 
-import psycopg2
-from psycopg2 import sql, extras
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
-# --- Local Imports ---
-try:
-    from python.utils.db import get_db_connection
-    from python.utils.process_utils import run_ffmpeg_command, run_ffprobe_command
-except ImportError:
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
-    from python.utils.db import get_db_connection
-    from python.utils.process_utils import run_ffmpeg_command, run_ffprobe_command
-
 # --- Logging Configuration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
+
+# --- Task Configuration ---
+SPRITE_TILE_WIDTH = 480
+SPRITE_TILE_HEIGHT = -1  # -1 preserves aspect ratio
+SPRITE_FPS = 24
+SPRITE_COLS = 5
+JPEG_QUALITY = 3  # FFmpeg qscale:v value (lower = better quality)
+
+class S3TransferProgress:
+    """Callback for boto3 reporting progress via logger"""
+    
+    def __init__(self, total_size, filename, logger_instance, throttle_percentage=25):
+        self._filename = filename
+        self._total_size = total_size
+        self._seen_so_far = 0
+        self._lock = threading.Lock()
+        self._logger = logger_instance
+        self._throttle_percentage = max(1, min(int(throttle_percentage), 100))
+        self._last_logged_percentage = -1
+
+    def __call__(self, bytes_amount):
+        try:
+            with self._lock:
+                self._seen_so_far += bytes_amount
+                current_percentage = 0
+                if self._total_size > 0:
+                    current_percentage = int((self._seen_so_far / self._total_size) * 100)
+                
+                should_log = (
+                    current_percentage >= self._last_logged_percentage + self._throttle_percentage
+                    and current_percentage < 100
+                ) or (current_percentage == 100 and self._last_logged_percentage != 100)
+
+                if should_log:
+                    size_mb = self._seen_so_far / (1024 * 1024)
+                    total_size_mb = self._total_size / (1024 * 1024)
+                    self._logger.info(
+                        f"S3 Upload: {self._filename} - {current_percentage}% complete "
+                        f"({size_mb:.2f}/{total_size_mb:.2f} MiB)"
+                    )
+                    self._last_logged_percentage = current_percentage
+        except Exception as e:
+            self._logger.error(f"S3 Progress error: {e}")
 
 def sanitize_filename(name):
     """Sanitizes a string to be a valid filename."""
-    if not name: return "default_filename"
+    if not name:
+        return "default_filename"
     name = str(name)
     name = re.sub(r'[^\w\.\-]+', '_', name)
     name = re.sub(r'_+', '_', name).strip('_')
     return name[:150]
 
-# --- Constants ---
-SPRITE_SHEET_S3_PREFIX = os.getenv("SPRITE_SHEET_S3_PREFIX", "clip_artifacts/sprite_sheets/")
-SPRITE_TILE_WIDTH = int(os.getenv("SPRITE_TILE_WIDTH", 480))
-SPRITE_TILE_HEIGHT = int(os.getenv("SPRITE_TILE_HEIGHT", -1)) # -1 preserves aspect ratio
-SPRITE_FPS = int(os.getenv("SPRITE_FPS", 24)) # Use video's native FPS for sprite generation
-SPRITE_COLS = int(os.getenv("SPRITE_COLS", 5))
-ARTIFACT_TYPE_SPRITE_SHEET = "sprite_sheet"
+def run_ffprobe_command(cmd_args, description="FFprobe command"):
+    """Runs an FFprobe command with proper error handling."""
+    cmd = ["ffprobe"] + cmd_args
+    logger.info(f"{description}: {' '.join(cmd)}")
+    
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.error(f"FFprobe command failed: {result.stderr}")
+        raise RuntimeError(f"FFprobe failed: {result.stderr}")
+    
+    return result.stdout, result.stderr
 
+def run_ffmpeg_command(cmd_args, description="FFmpeg command"):
+    """Runs an FFmpeg command with proper error handling."""
+    cmd = ["ffmpeg"] + cmd_args
+    logger.info(f"{description}: {' '.join(cmd)}")
+    
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.error(f"FFmpeg command failed: {result.stderr}")
+        raise RuntimeError(f"FFmpeg failed: {result.stderr}")
+    
+    return result
 
-def run_sprite(clip_id: int, overwrite: bool, environment: str, **kwargs):
+def get_video_metadata(video_path: str) -> dict:
+    """Extracts detailed video metadata using ffprobe."""
+    logger.info(f"Probing video metadata: {video_path}")
+    
+    ffprobe_cmd = [
+        "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=duration,r_frame_rate,nb_frames",
+        "-count_frames", "-of", "json", str(video_path)
+    ]
+    
+    stdout, _ = run_ffprobe_command(ffprobe_cmd, "FFprobe for video metadata")
+    
+    try:
+        probe_data_list = json.loads(stdout).get('streams', [])
+        if not probe_data_list:
+            raise ValueError(f"ffprobe found no video streams in {video_path}")
+        
+        probe_data = probe_data_list[0]
+        logger.debug(f"ffprobe result: {probe_data}")
+
+        # Extract duration
+        duration_str = probe_data.get('duration')
+        if duration_str:
+            duration = float(duration_str)
+        else:
+            raise ValueError("Could not determine video duration")
+
+        # Extract frame rate
+        fps_str = probe_data.get('r_frame_rate', '0/1')
+        if '/' in fps_str:
+            num_str, den_str = fps_str.split('/')
+            num, den = int(num_str), int(den_str)
+            if den > 0:
+                fps = num / den
+            else:
+                raise ValueError("Invalid frame rate denominator")
+        else:
+            fps = float(fps_str)
+
+        # Extract total frames
+        nb_frames_str = probe_data.get('nb_frames')
+        if nb_frames_str:
+            total_frames = int(nb_frames_str)
+            logger.info(f"Using ffprobe nb_frames: {total_frames}")
+        else:
+            # Calculate from duration and fps
+            total_frames = math.ceil(duration * fps)
+            logger.info(f"Calculated total frames from duration*fps: {total_frames}")
+
+        if duration <= 0 or fps <= 0 or total_frames <= 0:
+            raise ValueError(f"Invalid video metadata: duration={duration:.3f}s, fps={fps:.3f}, frames={total_frames}")
+        
+        return {
+            "duration": duration,
+            "fps": fps,
+            "total_frames": total_frames
+        }
+
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+        logger.error(f"Failed to parse video metadata: {e}")
+        raise ValueError(f"Video metadata parsing failed: {e}")
+
+def generate_sprite_sheet(
+    video_path: str,
+    output_path: Path,
+    clip_identifier: str,
+    sprite_params: dict
+) -> dict:
     """
-    Generates a sprite sheet for a given clip, uploads it to S3,
-    and records it as an artifact in the database.
+    Generates a sprite sheet from a video file.
+    Returns metadata about the generated sprite sheet.
     """
-    logger.info(f"RUNNING SPRITE SHEET for clip_id: {clip_id}, Overwrite: {overwrite}, Env: {environment}")
+    # Get sprite parameters
+    tile_width = sprite_params.get("tile_width", SPRITE_TILE_WIDTH)
+    tile_height = sprite_params.get("tile_height", SPRITE_TILE_HEIGHT)
+    sprite_fps = sprite_params.get("fps", SPRITE_FPS)
+    cols = sprite_params.get("cols", SPRITE_COLS)
+    
+    # Get video metadata
+    metadata = get_video_metadata(str(video_path))
+    duration = metadata["duration"]
+    video_fps = metadata["fps"]
+    
+    # Calculate sprite parameters using video's native FPS
+    effective_sprite_fps = min(video_fps, sprite_fps)  # Don't exceed video's native FPS
+    num_sprite_frames = math.ceil(duration * effective_sprite_fps)
+    
+    if num_sprite_frames <= 0:
+        raise ValueError(f"Video too short for sprite generation: {duration:.3f}s")
+    
+    # Generate output filename
+    base_filename = sanitize_filename(f"{clip_identifier}_sprite")
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    output_filename = f"{base_filename}_{effective_sprite_fps}fps_w{tile_width}_c{cols}_{timestamp}.jpg"
+    final_output_path = output_path / output_filename
+    
+    # Calculate grid dimensions
+    num_rows = max(1, math.ceil(num_sprite_frames / cols))
+    
+    # Build FFmpeg video filter
+    vf_option = f"fps={effective_sprite_fps},scale={tile_width}:{tile_height}:flags=neighbor,tile={cols}x{num_rows}"
+    
+    # Generate sprite sheet using FFmpeg
+    ffmpeg_cmd = [
+        "-y", "-i", str(video_path),
+        "-vf", vf_option,
+        "-an",  # No audio
+        "-qscale:v", str(JPEG_QUALITY),
+        str(final_output_path)
+    ]
+    
+    run_ffmpeg_command(ffmpeg_cmd, f"Generating sprite sheet")
+    
+    if not final_output_path.exists():
+        raise RuntimeError("Sprite sheet generation failed - output file not created")
+    
+    # Get file size
+    file_size = final_output_path.stat().st_size
+    
+    logger.info(f"Successfully generated sprite sheet: {output_filename} ({file_size} bytes)")
+    
+    return {
+        "local_path": str(final_output_path),
+        "filename": output_filename,
+        "file_size": file_size,
+        "sprite_metadata": {
+            "effective_fps": effective_sprite_fps,
+            "num_frames": num_sprite_frames,
+            "cols": cols,
+            "rows": num_rows,
+            "tile_width": tile_width,
+            "tile_height": tile_height,
+            "video_duration": duration,
+            "video_fps": video_fps
+        }
+    }
 
+def run_sprite(
+    clip_id: int,
+    input_s3_path: str,
+    output_s3_prefix: str,
+    overwrite: bool = False,
+    **kwargs
+):
+    """
+    Downloads clip video, generates sprite sheet, and uploads to S3.
+    Returns structured data about the sprite artifact instead of managing database state.
+    
+    Args:
+        clip_id: The ID of the clip (for reference only)
+        input_s3_path: S3 path to the clip video file
+        output_s3_prefix: S3 prefix where to upload sprite sheet
+        overwrite: Whether to overwrite existing sprites (for compatibility)
+        **kwargs: Additional sprite parameters
+    
+    Returns:
+        dict: Structured data about the sprite artifact including S3 key and metadata
+    """
+    logger.info(f"RUNNING SPRITE for clip_id: {clip_id}")
+    logger.info(f"Input: {input_s3_path}, Output prefix: {output_s3_prefix}, Overwrite: {overwrite}")
+    
+    # Extract sprite parameters from kwargs
+    sprite_params = {
+        "tile_width": kwargs.get("tile_width", SPRITE_TILE_WIDTH),
+        "tile_height": kwargs.get("tile_height", SPRITE_TILE_HEIGHT),
+        "fps": kwargs.get("sprite_fps", SPRITE_FPS),
+        "cols": kwargs.get("cols", SPRITE_COLS)
+    }
+    
+    # Get S3 resources from environment (provided by Elixir)
     s3_bucket_name = os.getenv("S3_BUCKET_NAME")
     if not s3_bucket_name:
-        raise ValueError("S3_BUCKET_NAME environment variable not set.")
+        raise ValueError("S3_BUCKET_NAME environment variable not set")
 
     try:
         s3_client = boto3.client("s3")
     except NoCredentialsError:
-        logger.error("S3 credentials not found.")
+        logger.error("S3 credentials not found")
         raise
-    
-    temp_dir_obj = None
-    error_message = None
 
-    try:
-        with get_db_connection(cursor_factory=extras.DictCursor) as conn:
-            # --- Phase 1: DB Check, Lock, and State Update ---
-            with conn.cursor() as cur:
-                conn.autocommit = False
-                cur.execute("SELECT pg_advisory_xact_lock(3, %s)", (clip_id,))
-                logger.info(f"Acquired DB lock for clip {clip_id}")
+    # Check dependencies
+    if not shutil.which("ffmpeg"):
+        raise FileNotFoundError("ffmpeg not found in PATH")
+    if not shutil.which("ffprobe"):
+        raise FileNotFoundError("ffprobe not found in PATH")
 
-                cur.execute(
-                    """
-                    SELECT
-                        c.clip_filepath, c.clip_identifier, c.ingest_state,
-                        sv.title AS source_title
-                    FROM clips c
-                    JOIN source_videos sv ON c.source_video_id = sv.id
-                    WHERE c.id = %s FOR UPDATE;
-                    """, (clip_id,)
-                )
-                clip_data = cur.fetchone()
-
-                if not clip_data:
-                    raise ValueError(f"Clip {clip_id} not found.")
-                
-                if not clip_data['clip_filepath']:
-                    raise ValueError(f"Clip {clip_id} is missing a filepath.")
-
-                current_state = clip_data['ingest_state']
-                logger.info(f"Clip {clip_id} current state: '{current_state}'")
-
-                # Idempotency and state check
-                eligible_states = ['spliced', 'keyframed', 'embedded', 'sprite_failed']
-                if current_state not in eligible_states and not (overwrite and current_state == 'pending_review'):
-                    return {"status": "skipped_state", "clip_id": clip_id, "reason": f"State '{current_state}' not eligible."}
-
-                if overwrite:
-                    cur.execute("DELETE FROM clip_artifacts WHERE clip_id = %s AND artifact_type = %s", (clip_id, ARTIFACT_TYPE_SPRITE_SHEET))
-                    logger.info(f"Overwrite enabled: Deleted {cur.rowcount} existing sprite sheet artifacts for clip {clip_id}.")
-
-                cur.execute("UPDATE clips SET ingest_state = 'generating_sprite', updated_at = NOW() WHERE id = %s", (clip_id,))
-                conn.commit()
-                logger.info(f"Set clip {clip_id} state to 'generating_sprite'")
-
-            # --- Phase 2: Processing ---
-            temp_dir_obj = tempfile.TemporaryDirectory(prefix=f"sprite_{clip_id}_")
-            temp_dir = Path(temp_dir_obj.name)
-            
-            clip_s3_key = clip_data['clip_filepath']
-            local_clip_path = temp_dir / Path(clip_s3_key).name
-            logger.info(f"Downloading clip s3://{s3_bucket_name}/{clip_s3_key} to {local_clip_path}")
-            s3_client.download_file(s3_bucket_name, clip_s3_key, str(local_clip_path))
-
-            # Probe for detailed video metadata
-            logger.info(f"Probing downloaded clip: {local_clip_path}")
-            ffprobe_cmd = [
-                "-v", "error", "-select_streams", "v:0",
-                "-show_entries", "stream=duration,r_frame_rate,nb_frames",
-                "-count_frames", "-of", "json", str(local_clip_path)
-            ]
-            stdout, _ = run_ffprobe_command(ffprobe_cmd, "FFprobe for detailed metadata")
-            
-            try:
-                probe_data_list = json.loads(stdout).get('streams', [])
-                if not probe_data_list:
-                    raise ValueError(f"ffprobe found no video streams in {local_clip_path}")
-                probe_data = probe_data_list[0]
-                logger.debug(f"ffprobe result for clip {clip_id}: {probe_data}")
-
-                # Extract duration
-                duration_str = probe_data.get('duration')
-                if duration_str:
-                    duration = float(duration_str)
-                else:
-                    raise ValueError("Could not determine video duration")
-
-                # Extract frame rate
-                fps_str = probe_data.get('r_frame_rate', '0/1')
-                if '/' in fps_str:
-                    num_str, den_str = fps_str.split('/')
-                    num, den = int(num_str), int(den_str)
-                    if den > 0:
-                        fps = num / den
-                    else:
-                        raise ValueError("Invalid frame rate denominator")
-                else:
-                    fps = float(fps_str)
-
-                # Extract total frames
-                nb_frames_str = probe_data.get('nb_frames')
-                if nb_frames_str:
-                    total_frames_in_clip = int(nb_frames_str)
-                    logger.info(f"Using ffprobe nb_frames: {total_frames_in_clip}")
-                else:
-                    # Calculate from duration and fps
-                    total_frames_in_clip = math.ceil(duration * fps)
-                    logger.info(f"Calculated total frames from duration*fps: {total_frames_in_clip}")
-
-                if duration <= 0 or fps <= 0 or total_frames_in_clip <= 0:
-                    raise ValueError(f"Invalid video metadata: duration={duration:.3f}s, fps={fps:.3f}, frames={total_frames_in_clip}")
-                
-                logger.info(f"Clip {clip_id} metadata: Duration={duration:.3f}s, FPS={fps:.3f}, Total Frames={total_frames_in_clip}")
-
-            except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
-                logger.error(f"Failed to parse video metadata: {e}")
-                raise ValueError(f"Video metadata parsing failed: {e}")
-
-            # Calculate sprite parameters using video's native FPS
-            effective_sprite_fps = min(fps, SPRITE_FPS)  # Don't exceed video's native FPS
-            num_sprite_frames = math.ceil(duration * effective_sprite_fps)
-            
-            if num_sprite_frames <= 0:
-                logger.warning(f"Clip {clip_id} too short for sprite generation: {duration:.3f}s")
-                # Still update to pending_review but without sprite
-                with conn.cursor() as cur:
-                    cur.execute("UPDATE clips SET ingest_state = 'pending_review', updated_at = NOW() WHERE id = %s", (clip_id,))
-                    conn.commit()
-                return {"status": "success_no_sprite", "clip_id": clip_id, "reason": "Video too short"}
-
-            # Generate sprite sheet
-            source_title = clip_data.get('source_title', f'source_{clip_id}')
-            base_filename = sanitize_filename(f"{source_title}_{clip_data['clip_identifier']}_sprite")
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            output_filename = f"{base_filename}_{effective_sprite_fps}fps_w{SPRITE_TILE_WIDTH}_c{SPRITE_COLS}_{timestamp}.jpg"
-            output_path = temp_dir / output_filename
-            
-            num_rows = max(1, math.ceil(num_sprite_frames / SPRITE_COLS))
-            vf_option = f"fps={effective_sprite_fps},scale={SPRITE_TILE_WIDTH}:{SPRITE_TILE_HEIGHT}:flags=neighbor,tile={SPRITE_COLS}x{num_rows}"
-            
-            ffmpeg_cmd = [
-                "-y", "-i", str(local_clip_path),
-                "-vf", vf_option, "-an", "-qscale:v", "3",
-                "-vframes", str(num_sprite_frames),
-                str(output_path)
-            ]
-            
-            logger.info(f"Generating {SPRITE_COLS}x{num_rows} sprite sheet ({num_sprite_frames} frames) for clip {clip_id}...")
-            run_ffmpeg_command(ffmpeg_cmd, "Generate sprite sheet")
-            
-            if not output_path.exists() or output_path.stat().st_size == 0:
-                raise RuntimeError("ffmpeg failed to generate a non-empty sprite sheet.")
-            
-            logger.info(f"Generated sprite sheet: {output_path}")
-
-            # Probe the generated sprite to get actual tile height
-            calculated_tile_height = None
-            try:
-                sprite_probe_cmd = [
-                    "-v", "error", "-select_streams", "v:0",
-                    "-show_entries", "stream=width,height", "-of", "json", str(output_path)
-                ]
-                sprite_stdout, _ = run_ffprobe_command(sprite_probe_cmd, "Probe sprite dimensions")
-                sprite_dims_list = json.loads(sprite_stdout).get('streams', [])
-                
-                if sprite_dims_list:
-                    sprite_dims = sprite_dims_list[0]
-                    total_sprite_height = int(sprite_dims.get('height', 0))
-                    if total_sprite_height > 0 and num_rows > 0:
-                        calculated_tile_height = math.floor(total_sprite_height / num_rows)
-                        logger.info(f"Calculated sprite tile height: {calculated_tile_height}")
-                    else:
-                        logger.warning("Could not calculate valid tile height from sprite probe")
-                else:
-                    logger.warning("No video streams found in generated sprite")
-            except Exception as sprite_probe_err:
-                logger.warning(f"Could not probe sprite dimensions: {sprite_probe_err}")
-
-            # --- Phase 3: Upload and DB Record ---
-            sprite_s3_key = f"{SPRITE_SHEET_S3_PREFIX}{clip_id}/{output_filename}"
-            s3_client.upload_file(str(output_path), s3_bucket_name, sprite_s3_key)
-            logger.info(f"Uploaded sprite sheet to s3://{s3_bucket_name}/{sprite_s3_key}")
-
-            with conn.cursor() as cur:
-                metadata = {
-                    "tile_width": SPRITE_TILE_WIDTH,
-                    "tile_height_calculated": calculated_tile_height,
-                    "cols": SPRITE_COLS,
-                    "rows": num_rows,
-                    "total_sprite_frames": num_sprite_frames,
-                    "clip_fps_source": round(fps, 3),
-                    "clip_total_frames_source": total_frames_in_clip,
-                    "sprite_fps_used": effective_sprite_fps,
-                    "video_duration": duration
-                }
-                cur.execute(
-                    """
-                    INSERT INTO clip_artifacts (clip_id, artifact_type, s3_key, strategy, tag, metadata)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (clip_id, artifact_type, strategy, tag) DO UPDATE SET
-                        s3_key = EXCLUDED.s3_key,
-                        metadata = EXCLUDED.metadata,
-                        updated_at = NOW()
-                    RETURNING id;
-                    """,
-                    (clip_id, ARTIFACT_TYPE_SPRITE_SHEET, sprite_s3_key, "default", None, json.dumps(metadata))
-                )
-                artifact_id = cur.fetchone()[0]
-                logger.info(f"Created clip artifact record with ID: {artifact_id}")
-
-                cur.execute("UPDATE clips SET ingest_state = 'pending_review', updated_at = NOW() WHERE id = %s", (clip_id,))
-                conn.commit()
-                logger.info(f"Set clip {clip_id} state to 'pending_review'")
-
-        return {
-            "status": "success",
-            "clip_id": clip_id,
-            "artifact_id": artifact_id,
-            "s3_key": sprite_s3_key
-        }
-
-    except Exception as e:
-        logger.error(f"FATAL: Sprite sheet generation failed for clip_id {clip_id}: {e}", exc_info=True)
-        error_message = str(e)
-        try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "UPDATE clips SET ingest_state = 'sprite_failed', last_error = %s, updated_at = NOW() WHERE id = %s",
-                        (error_message, clip_id)
-                    )
-                    conn.commit()
-        except Exception as db_err:
-            logger.error(f"CRITICAL: Failed to update DB state to 'sprite_failed' for {clip_id}: {db_err}")
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir_path = Path(temp_dir)
         
-        raise
-    
-    finally:
-        if temp_dir_obj:
-            temp_dir_obj.cleanup()
-            logger.info("Cleaned up temporary directory.")
+        try:
+            # Step 1: Download clip video from S3
+            local_video_path = temp_dir_path / Path(input_s3_path).name
+            logger.info(f"Downloading s3://{s3_bucket_name}/{input_s3_path} to {local_video_path}")
+            s3_client.download_file(s3_bucket_name, input_s3_path, str(local_video_path))
 
+            # Step 2: Generate sprite sheet
+            clip_identifier = f"clip_{clip_id}"
+            sprite_result = generate_sprite_sheet(
+                str(local_video_path),
+                temp_dir_path,
+                clip_identifier,
+                sprite_params
+            )
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Generate a sprite sheet for a single clip.")
-    parser.add_argument("--clip-id", required=True, type=int, help="The clip_id from the database.")
-    parser.add_argument("--env", default="development", help="The environment.")
-    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing sprite sheet for this clip.")
+            # Step 3: Upload sprite sheet to S3
+            s3_key = f"{output_s3_prefix}/{sprite_result['filename']}"
+            local_path = sprite_result['local_path']
+            file_size = sprite_result['file_size']
+            
+            progress_callback = S3TransferProgress(file_size, sprite_result['filename'], logger)
+            
+            logger.info(f"Uploading {local_path} to s3://{s3_bucket_name}/{s3_key}")
+            s3_client.upload_file(
+                local_path,
+                s3_bucket_name,
+                s3_key,
+                Callback=progress_callback
+            )
+
+            # Return structured data for Elixir to process
+            return {
+                "status": "success",
+                "artifacts": [{
+                    "artifact_type": "sprite_sheet",
+                    "s3_key": s3_key,
+                    "metadata": {
+                        "file_size": file_size,
+                        "filename": sprite_result['filename'],
+                        **sprite_result['sprite_metadata']
+                    }
+                }],
+                "metadata": {
+                    "clip_id": clip_id,
+                    "sprite_generated": True
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"Error processing sprite: {e}")
+            raise
+
+def main():
+    """Main entry point for standalone execution"""
+    parser = argparse.ArgumentParser(description="Sprite sheet generation task")
+    parser.add_argument("--clip-id", type=int, required=True)
+    parser.add_argument("--input-s3-path", required=True)
+    parser.add_argument("--output-s3-prefix", required=True)
+    parser.add_argument("--overwrite", action="store_true", default=False)
+    parser.add_argument("--tile-width", type=int, default=SPRITE_TILE_WIDTH)
+    parser.add_argument("--sprite-fps", type=int, default=SPRITE_FPS)
+    parser.add_argument("--cols", type=int, default=SPRITE_COLS)
     
     args = parser.parse_args()
-
+    
     try:
         result = run_sprite(
-            clip_id=args.clip_id,
-            overwrite=args.overwrite,
-            environment=args.env
+            args.clip_id,
+            args.input_s3_path,
+            args.output_s3_prefix,
+            args.overwrite,
+            tile_width=args.tile_width,
+            sprite_fps=args.sprite_fps,
+            cols=args.cols
         )
-        print("Sprite sheet generation finished successfully.")
         print(json.dumps(result, indent=2))
-        sys.exit(0)
     except Exception as e:
-        print(f"Sprite sheet generation failed: {e}", file=sys.stderr)
-        sys.exit(1)
+        error_result = {
+            "status": "error",
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+        print(json.dumps(error_result, indent=2))
+        exit(1)
+
+if __name__ == "__main__":
+    main() 

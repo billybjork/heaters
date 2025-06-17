@@ -1,11 +1,13 @@
 defmodule Heaters.Clip.Embed.EmbeddingWorker do
   use Oban.Worker, queue: :media_processing
 
+  alias Heaters.Clip.Embed
   alias Heaters.Clip.Queries, as: ClipQueries
   alias Heaters.Infrastructure.PythonRunner
+  require Logger
 
   # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
-  @dialyzer {:nowarn_function, [perform: 1, handle_embedding: 3]}
+  @dialyzer {:nowarn_function, [perform: 1]}
 
   @impl Oban.Worker
   def perform(%Oban.Job{
@@ -15,33 +17,70 @@ defmodule Heaters.Clip.Embed.EmbeddingWorker do
           "generation_strategy" => generation_strategy
         }
       }) do
-    try do
-      clip = ClipQueries.get_clip!(clip_id)
-      handle_embedding(clip, model_name, generation_strategy)
-    rescue
-      _e in Ecto.NoResultsError ->
-        # Clip was likely deleted before the job ran, which is fine.
+    Logger.info("EmbeddingWorker: Starting embedding for clip_id: #{clip_id}, model: #{model_name}, strategy: #{generation_strategy}")
+
+    with {:ok, clip} <- ClipQueries.get_clip(clip_id),
+         :ok <- check_idempotency(clip),
+         {:ok, updated_clip} <- Embed.start_embedding(clip_id) do
+
+      Logger.info("EmbeddingWorker: Running PythonRunner for clip_id: #{clip_id}")
+
+      # Python task receives explicit parameters for embedding generation
+      py_args = %{
+        clip_id: updated_clip.id,
+        input_s3_path: updated_clip.clip_filepath,
+        model_name: model_name,
+        generation_strategy: generation_strategy
+      }
+
+      case PythonRunner.run("embed", py_args) do
+        {:ok, result} ->
+          Logger.info("EmbeddingWorker: PythonRunner succeeded for clip_id: #{clip_id}")
+
+          # Use the new Embed context to process the success
+          case Embed.process_embedding_success(updated_clip, result) do
+            {:ok, _final_clip} ->
+              Logger.info("EmbeddingWorker: Successfully completed embedding for clip_id: #{clip_id}")
+              :ok
+
+            {:error, reason} ->
+              Logger.error("EmbeddingWorker: Failed to process embedding success: #{inspect(reason)}")
+              {:error, reason}
+          end
+
+        {:error, reason} ->
+          Logger.error("EmbeddingWorker: PythonRunner failed for clip_id: #{clip_id}, reason: #{inspect(reason)}")
+
+          # Use the new Embed context to mark as failed
+          case Embed.mark_failed(updated_clip, "embedding_failed", reason) do
+            {:ok, _} -> {:error, reason}
+            {:error, db_error} ->
+              Logger.error("EmbeddingWorker: Failed to mark clip as failed: #{inspect(db_error)}")
+              {:error, reason}
+          end
+      end
+    else
+      {:error, :not_found} ->
+        Logger.warning("EmbeddingWorker: Clip #{clip_id} not found, likely deleted")
         :ok
-    end
-  end
 
-  defp handle_embedding(%{ingest_state: "embedded"}, _model, _strategy), do: :ok
-
-  defp handle_embedding(clip, model_name, generation_strategy) do
-    py_args = %{
-      clip_id: clip.id,
-      model_name: model_name,
-      generation_strategy: generation_strategy
-    }
-
-    case PythonRunner.run("embed", py_args) do
-      {:ok, _} ->
+      {:error, :already_processed} ->
+        Logger.info("EmbeddingWorker: Clip #{clip_id} already embedded, skipping")
         :ok
 
       {:error, reason} ->
-        # The script itself should have recorded the error, but we'll return
-        # it here to make sure Oban logs the job failure.
+        Logger.error("EmbeddingWorker: Error in workflow for clip #{clip_id}: #{inspect(reason)}")
         {:error, reason}
     end
+  end
+
+  # Idempotency check: Skip processing if already embedded
+  defp check_idempotency(%{ingest_state: "embedded"}), do: {:error, :already_processed}
+  defp check_idempotency(%{ingest_state: "pending_review"}), do: :ok
+  defp check_idempotency(%{ingest_state: "review_approved"}), do: :ok
+  defp check_idempotency(%{ingest_state: "embedding_failed"}), do: :ok
+  defp check_idempotency(%{ingest_state: state}) do
+    Logger.warning("EmbeddingWorker: Unexpected clip state '#{state}' for embedding")
+    {:error, :invalid_state}
   end
 end

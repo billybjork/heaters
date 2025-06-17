@@ -7,7 +7,7 @@ defmodule Heaters.Infrastructure.Orchestration.Dispatcher do
   alias Heaters.Clip.Queries, as: ClipQueries
   alias Heaters.Clip.Review, as: ClipReview
   alias Heaters.Video.Ingest.IntakeWorker
-  alias Heaters.Clip.Transform.SpriteWorker
+  alias Heaters.Clip.Review.SpriteWorker
   alias Heaters.Clip.Transform.KeyframeWorker
   alias Heaters.Infrastructure.Orchestration.ArchiveWorker
 

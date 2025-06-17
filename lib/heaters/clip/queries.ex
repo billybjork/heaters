@@ -16,6 +16,17 @@ defmodule Heaters.Clip.Queries do
   end
 
   @doc """
+  Get a clip by ID.
+  Returns {:ok, clip} if found, {:error, :not_found} otherwise.
+  """
+  def get_clip(id) do
+    case Repo.get(Clip, id) do
+      nil -> {:error, :not_found}
+      clip -> {:ok, clip}
+    end
+  end
+
+  @doc """
   Get a clip by ID with its associated artifacts preloaded.
   Returns {:ok, clip} if found, {:error, :not_found} otherwise.
   """

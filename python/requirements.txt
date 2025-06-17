@@ -1,10 +1,8 @@
 boto3==1.38.1
 botocore==1.38.1
-psycopg2-binary==2.9.10
 yt-dlp==2025.6.9
 torch==2.6.0
 Pillow==11.1.0
 numpy==2.2.4
 transformers==4.51.0
 opencv-python-headless==4.11.0.86
-SQLAlchemy==2.0.40

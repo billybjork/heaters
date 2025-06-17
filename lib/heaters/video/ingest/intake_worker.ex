@@ -13,47 +13,55 @@ defmodule Heaters.Video.Ingest.IntakeWorker do
   def perform(%Oban.Job{args: %{"source_video_id" => source_video_id}}) do
     Logger.info("IntakeWorker: Starting intake for source_video_id: #{source_video_id}")
 
-    # Use a `with` statement for a clean, chained workflow
+    # Use new state management pattern
     with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id),
-         :ok <- check_idempotency(source_video) do
+         :ok <- check_idempotency(source_video),
+         {:ok, updated_video} <- Ingest.start_downloading(source_video_id) do
+
       Logger.info(
-        "IntakeWorker: Running PythonRunner for source_video_id: #{source_video_id}, URL: #{source_video.original_url}"
+        "IntakeWorker: Running PythonRunner for source_video_id: #{source_video_id}, URL: #{updated_video.original_url}"
       )
 
-      # The PythonRunner now handles all environment config automatically.
-      case PythonRunner.run(
-             "intake",
-             %{
-               source_video_id: source_video.id,
-               input_source: source_video.original_url
-             },
-             timeout: :timer.minutes(20)
-           ) do
+      # Python task now receives explicit S3 output prefix and returns data instead of managing state
+      py_args = %{
+        source_video_id: updated_video.id,
+        input_source: updated_video.original_url,
+        output_s3_prefix: Ingest.build_s3_prefix(updated_video),
+        re_encode_for_qt: true
+      }
+
+      case PythonRunner.run("intake", py_args, timeout: :timer.minutes(20)) do
         {:ok, result} ->
           Logger.info(
             "IntakeWorker: PythonRunner succeeded for source_video_id: #{source_video_id}, result: #{inspect(result)}"
           )
 
-          # On success, enqueue the NEXT worker in the chain.
-          case Oban.insert(Heaters.Video.Process.SpliceWorker.new(%{source_video_id: source_video.id})) do
-            {:ok, _job} -> :ok
-            {:error, reason} -> {:error, "Failed to enqueue splice worker: #{inspect(reason)}"}
+          # Elixir handles the state transition and metadata update
+          case Ingest.complete_downloading(source_video_id, result) do
+            {:ok, _updated_video} ->
+              # Enqueue the next worker in the chain
+              case Oban.insert(Heaters.Video.Ingest.SpliceWorker.new(%{source_video_id: updated_video.id})) do
+                {:ok, _job} -> :ok
+                {:error, reason} -> {:error, "Failed to enqueue splice worker: #{inspect(reason)}"}
+              end
+
+            {:error, reason} ->
+              Logger.error("IntakeWorker: Failed to update video metadata: #{inspect(reason)}")
+              {:error, reason}
           end
 
         {:error, reason} ->
-          # If the python script fails, we record the error and let Oban retry.
+          # If the python script fails, we use the new state management to record the error
           Logger.error(
             "IntakeWorker: PythonRunner failed for source_video_id: #{source_video_id}, reason: #{inspect(reason)}"
           )
 
-          error_message = inspect(reason)
-
-          Ingest.update_source_video(source_video, %{
-            ingest_state: "download_failed",
-            last_error: error_message
-          })
-
-          {:error, reason}
+          case Ingest.mark_failed(updated_video, "ingestion_failed", reason) do
+            {:ok, _} -> {:error, reason}
+            {:error, db_error} ->
+              Logger.error("IntakeWorker: Failed to mark video as failed: #{inspect(db_error)}")
+              {:error, reason}
+          end
       end
     else
       # Handles errors from the `with` statement (e.g., video not found or already processed)
@@ -61,22 +69,18 @@ defmodule Heaters.Video.Ingest.IntakeWorker do
         Logger.info(
           "IntakeWorker: source_video_id #{source_video_id} already processed, skipping"
         )
-
-        # Gracefully exit, not an error.
         :ok
 
       {:error, reason} ->
         Logger.error(
-          "IntakeWorker: Error getting source video #{source_video_id}: #{inspect(reason)}"
+          "IntakeWorker: Error in workflow for source video #{source_video_id}: #{inspect(reason)}"
         )
-
-        # Propagate other errors for Oban to retry
         {:error, reason}
     end
   end
 
   # Idempotency Check: Ensures we don't re-process completed work.
   defp check_idempotency(%{ingest_state: "new"}), do: :ok
-  defp check_idempotency(%{ingest_state: "download_failed"}), do: :ok
+  defp check_idempotency(%{ingest_state: "ingestion_failed"}), do: :ok
   defp check_idempotency(_), do: {:error, :already_processed}
 end

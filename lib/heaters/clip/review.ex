@@ -11,7 +11,7 @@ defmodule Heaters.Clip.Review do
   alias Heaters.Repo
   alias Heaters.Clips.Clip
   alias Heaters.Clip.Review.ClipEvent
-  alias Heaters.Clip.Edit.{MergeWorker, SplitWorker}
+  alias Heaters.Clip.Review.{MergeWorker, SplitWorker}
 
   require Logger
 
@@ -390,4 +390,150 @@ defmodule Heaters.Clip.Review do
       nil
     end
   end
+
+  # -------------------------------------------------------------------------
+  # Sprite Generation for Review Preparation
+  # -------------------------------------------------------------------------
+
+  @doc """
+  Transition a clip to "generating_sprite" state for review preparation.
+  """
+  @spec start_sprite_generation(integer()) :: {:ok, Clip.t()} | {:error, any()}
+  def start_sprite_generation(clip_id) do
+    with {:ok, clip} <- get_clip_for_update(clip_id),
+         :ok <- validate_sprite_transition(clip.ingest_state) do
+      update_clip(clip, %{
+        ingest_state: "generating_sprite",
+        last_error: nil
+      })
+    end
+  end
+
+  @doc """
+  Mark sprite generation as complete and transition to pending_review.
+  """
+  @spec complete_sprite_generation(integer(), map()) :: {:ok, Clip.t()} | {:error, any()}
+  def complete_sprite_generation(clip_id, sprite_data \\ %{}) do
+    Repo.transaction(fn ->
+      with {:ok, clip} <- get_clip_for_update(clip_id),
+           {:ok, updated_clip} <- update_clip(clip, %{
+             ingest_state: "pending_review",
+             last_error: nil
+           }),
+           {:ok, _artifacts} <- maybe_create_sprite_artifacts(clip_id, sprite_data) do
+        updated_clip
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
+
+  @doc """
+  Mark sprite generation as failed.
+  """
+  @spec mark_sprite_failed(integer(), any()) :: {:ok, Clip.t()} | {:error, any()}
+  def mark_sprite_failed(clip_id, error_reason) do
+    with {:ok, clip} <- get_clip_for_update(clip_id) do
+      error_message = format_error_message(error_reason)
+
+      update_clip(clip, %{
+        ingest_state: "sprite_failed",
+        last_error: error_message,
+        retry_count: (clip.retry_count || 0) + 1
+      })
+    end
+  end
+
+  @doc """
+  Build S3 prefix for sprite outputs.
+  """
+  @spec build_sprite_prefix(Clip.t()) :: String.t()
+  def build_sprite_prefix(%Clip{id: id, source_video_id: source_video_id}) do
+    "source_videos/#{source_video_id}/clips/#{id}/sprites"
+  end
+
+  @doc """
+  Process successful sprite generation results from Python task.
+  """
+  @spec process_sprite_success(Clip.t(), map()) :: {:ok, Clip.t()} | {:error, any()}
+  def process_sprite_success(%Clip{} = clip, result) do
+    complete_sprite_generation(clip.id, result)
+  end
+
+  # -------------------------------------------------------------------------
+  # Private Helper Functions for Sprite Generation
+  # -------------------------------------------------------------------------
+
+  defp get_clip_for_update(clip_id) do
+    case Repo.get(Clip, clip_id) do
+      nil -> {:error, :not_found}
+      clip -> {:ok, clip}
+    end
+  end
+
+  defp update_clip(%Clip{} = clip, attrs) do
+    clip
+    |> Clip.changeset(attrs)
+    |> Repo.update()
+  end
+
+  defp validate_sprite_transition(current_state) do
+    case current_state do
+      "spliced" -> :ok
+      "sprite_failed" -> :ok
+      _ -> {:error, :invalid_state_transition}
+    end
+  end
+
+  defp maybe_create_sprite_artifacts(clip_id, sprite_data) when map_size(sprite_data) > 0 do
+    artifacts_data = Map.get(sprite_data, "artifacts", [])
+
+    if Enum.any?(artifacts_data) do
+      create_sprite_artifacts(clip_id, artifacts_data)
+    else
+      {:ok, []}
+    end
+  end
+
+  defp maybe_create_sprite_artifacts(_clip_id, _sprite_data), do: {:ok, []}
+
+  defp create_sprite_artifacts(clip_id, artifacts_data) when is_list(artifacts_data) do
+    Logger.info("Creating #{length(artifacts_data)} sprite artifacts for clip_id: #{clip_id}")
+
+    artifacts_attrs =
+      artifacts_data
+      |> Enum.map(fn artifact_data ->
+        build_sprite_artifact_attrs(clip_id, artifact_data)
+      end)
+
+    case Repo.insert_all(Heaters.Clip.Transform.ClipArtifact, artifacts_attrs, returning: true) do
+      {count, artifacts} when count > 0 ->
+        Logger.info("Successfully created #{count} sprite artifacts for clip_id: #{clip_id}")
+        {:ok, artifacts}
+
+      {0, _} ->
+        Logger.error("Failed to create sprite artifacts for clip_id: #{clip_id}")
+        {:error, "No artifacts were created"}
+    end
+  rescue
+    e ->
+      Logger.error("Error creating sprite artifacts for clip_id #{clip_id}: #{Exception.message(e)}")
+      {:error, Exception.message(e)}
+  end
+
+  defp build_sprite_artifact_attrs(clip_id, artifact_data) do
+    now = DateTime.utc_now()
+
+    %{
+      clip_id: clip_id,
+      artifact_type: Map.get(artifact_data, :artifact_type, "sprite_sheet"),
+      s3_key: Map.fetch!(artifact_data, :s3_key),
+      metadata: Map.get(artifact_data, :metadata, %{}),
+      inserted_at: now,
+      updated_at: now
+    }
+  end
+
+  defp format_error_message(error_reason) when is_binary(error_reason), do: error_reason
+  defp format_error_message(error_reason), do: inspect(error_reason)
 end

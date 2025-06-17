@@ -1,62 +1,94 @@
+"""
+Refactored Splice Task - "Dumber" Python focused on video processing only.
+
+This version:
+- Receives explicit S3 paths and detection parameters from Elixir
+- Focuses only on scene detection and video splitting
+- Returns structured data about clips instead of managing database state
+- No database connections or state management
+"""
+
+import argparse
+import json
+import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
-import re
-import time
+
+import boto3
 import cv2
 import numpy as np
-import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
-import psycopg2
-from psycopg2 import sql
-from psycopg2 import extras
-import sys
-import logging
-import json
-import argparse
-
-# --- Local Imports ---
-try:
-    from python.utils.db import get_db_connection
-    from python.utils.process_utils import run_ffmpeg_command
-except ImportError:
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
-    from python.utils.db import get_db_connection
-    from python.utils.process_utils import run_ffmpeg_command
 
 # --- Logging Configuration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 # --- Task Configuration ---
-CLIP_S3_PREFIX = "clips/"
-SCENE_DETECT_THRESHOLD = float(os.getenv("SCENE_DETECT_THRESHOLD", 0.6))
-_hist_methods_map = { "CORREL": cv2.HISTCMP_CORREL, "CHISQR": cv2.HISTCMP_CHISQR, "INTERSECT": cv2.HISTCMP_INTERSECT, "BHATTACHARYYA": cv2.HISTCMP_BHATTACHARYYA }
-_hist_method_str = os.getenv("SCENE_DETECT_METHOD", "CORREL").upper()
-SCENE_DETECT_METHOD = _hist_methods_map.get(_hist_method_str, cv2.HISTCMP_CORREL)
-if _hist_method_str not in _hist_methods_map:
-    logger.warning(f"Invalid SCENE_DETECT_METHOD '{_hist_method_str}'. Defaulting to CORREL.")
+MIN_CLIP_DURATION_SECONDS = 1.0
+FFMPEG_CRF = "23"
+FFMPEG_PRESET = "medium"
+FFMPEG_AUDIO_BITRATE = "128k"
 
-MIN_CLIP_DURATION_SECONDS = float(os.getenv("MIN_CLIP_DURATION_SECONDS", 1.0))
-FFMPEG_CRF = os.getenv("FFMPEG_CRF", "23")
-FFMPEG_PRESET = os.getenv("FFMPEG_PRESET", "medium")
-FFMPEG_AUDIO_BITRATE = os.getenv("FFMPEG_AUDIO_BITRATE", "128k")
+# Histogram comparison methods
+HIST_METHODS_MAP = {
+    "CORREL": cv2.HISTCMP_CORREL,
+    "CHISQR": cv2.HISTCMP_CHISQR,
+    "INTERSECT": cv2.HISTCMP_INTERSECT,
+    "BHATTACHARYYA": cv2.HISTCMP_BHATTACHARYYA
+}
 
+class S3TransferProgress:
+    """Callback for boto3 reporting progress via logger"""
+    
+    def __init__(self, total_size, filename, logger_instance, throttle_percentage=10):
+        self._filename = filename
+        self._total_size = total_size
+        self._seen_so_far = 0
+        self._lock = threading.Lock()
+        self._logger = logger_instance
+        self._throttle_percentage = max(1, min(int(throttle_percentage), 100))
+        self._last_logged_percentage = -1
+
+    def __call__(self, bytes_amount):
+        try:
+            with self._lock:
+                self._seen_so_far += bytes_amount
+                current_percentage = 0
+                if self._total_size > 0:
+                    current_percentage = int((self._seen_so_far / self._total_size) * 100)
+                
+                should_log = (
+                    current_percentage >= self._last_logged_percentage + self._throttle_percentage
+                    and current_percentage < 100
+                ) or (current_percentage == 100 and self._last_logged_percentage != 100)
+
+                if should_log:
+                    size_mb = self._seen_so_far / (1024 * 1024)
+                    total_size_mb = self._total_size / (1024 * 1024)
+                    self._logger.info(
+                        f"S3 Upload: {self._filename} - {current_percentage}% complete "
+                        f"({size_mb:.2f}/{total_size_mb:.2f} MiB)"
+                    )
+                    self._last_logged_percentage = current_percentage
+        except Exception as e:
+            self._logger.error(f"S3 Progress error: {e}")
 
 def sanitize_filename(name):
     """Removes potentially problematic characters for filenames and S3 keys."""
-    if not name: return "untitled"
+    if not name:
+        return "untitled"
     name = str(name)
     name = re.sub(r'[^\w\s\-.]', '', name)
     name = re.sub(r'\s+', '_', name).strip('_')
     return name[:150] if name else "sanitized_untitled"
 
-
-# --- OpenCV Scene Detection Functions ---
 def calculate_histogram(frame, bins=256, ranges=[0, 256]):
     """Calculates and normalizes the BGR histogram for a frame."""
     b, g, r = cv2.split(frame)
@@ -67,9 +99,13 @@ def calculate_histogram(frame, bins=256, ranges=[0, 256]):
     cv2.normalize(hist, hist)
     return hist
 
-def detect_scenes(video_path: str, threshold: float, hist_method: int):
+def detect_scenes(video_path: str, threshold: float, method_name: str = "CORREL"):
     """Detects scene cuts in a video file using histogram comparison."""
     logger.info(f"Opening video for scene detection: {video_path}")
+    
+    # Get histogram comparison method
+    hist_method = HIST_METHODS_MAP.get(method_name.upper(), cv2.HISTCMP_CORREL)
+    
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise IOError(f"Could not open video file: {video_path}")
@@ -80,6 +116,7 @@ def detect_scenes(video_path: str, threshold: float, hist_method: int):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     if not fps or fps <= 0 or not total_frames or total_frames <= 0:
+        cap.release()
         raise ValueError(f"Invalid video properties: FPS={fps}, Frames={total_frames}")
 
     logger.info(f"Video Info: {width}x{height}, {fps:.2f} FPS, {total_frames} Frames")
@@ -112,146 +149,197 @@ def detect_scenes(video_path: str, threshold: float, hist_method: int):
     
     scenes = [(cut_frames[i], cut_frames[i+1]) for i in range(len(cut_frames) - 1) if cut_frames[i] < cut_frames[i+1]]
     logger.info(f"Detected {len(scenes)} potential scenes.")
+    
     return scenes, fps, (width, height), total_frames
 
+def run_ffmpeg_command(cmd_args, description="FFmpeg command"):
+    """Runs an FFmpeg command with proper error handling."""
+    cmd = ["ffmpeg"] + cmd_args
+    logger.info(f"{description}: {' '.join(cmd)}")
+    
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.error(f"FFmpeg command failed: {result.stderr}")
+        raise RuntimeError(f"FFmpeg failed: {result.stderr}")
+    
+    return result
 
-# --- Main Splice Task ---
-def run_splice(source_video_id: int, environment: str, **kwargs):
+def run_splice(
+    source_video_id: int,
+    input_s3_path: str,
+    output_s3_prefix: str,
+    detection_params: dict,
+    **kwargs
+):
     """
-    Downloads source video, detects scenes, splices, uploads clips, and creates records.
+    Downloads source video, detects scenes, splices into clips, and uploads to S3.
+    Returns structured data about the created clips instead of managing database state.
+    
+    Args:
+        source_video_id: The ID of the source video (for reference only)
+        input_s3_path: S3 path to the source video file
+        output_s3_prefix: S3 prefix where to upload clip files
+        detection_params: Scene detection parameters (threshold, method, etc.)
+        **kwargs: Additional options
+    
+    Returns:
+        dict: Structured data about the created clips including S3 paths and timing info
     """
-    logger.info(f"RUNNING SPLICE for source_video_id: {source_video_id}, Env: {environment}")
-
+    logger.info(f"RUNNING SPLICE for source_video_id: {source_video_id}")
+    logger.info(f"Input: {input_s3_path}, Output prefix: {output_s3_prefix}")
+    
+    # Extract detection parameters
+    threshold = detection_params.get("threshold", 0.6)
+    method = detection_params.get("method", "CORREL")
+    min_duration = detection_params.get("min_duration_seconds", MIN_CLIP_DURATION_SECONDS)
+    
+    # Get S3 resources from environment (provided by Elixir)
     s3_bucket_name = os.getenv("S3_BUCKET_NAME")
     if not s3_bucket_name:
-        raise ValueError("S3_BUCKET_NAME environment variable not set.")
-    
+        raise ValueError("S3_BUCKET_NAME environment variable not set")
+
     try:
         s3_client = boto3.client("s3")
     except NoCredentialsError:
-        logger.error("S3 credentials not found.")
+        logger.error("S3 credentials not found")
         raise
 
-    temp_dir_obj = None
-    created_clip_ids = []
+    # Check dependencies
+    if not shutil.which("ffmpeg"):
+        raise FileNotFoundError("ffmpeg not found in PATH")
 
-    try:
-        with get_db_connection() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            cur.execute("SELECT pg_advisory_xact_lock(4, %s)", (source_video_id,))
-            logger.info(f"Acquired DB lock for source_video_id: {source_video_id}")
-
-            cur.execute(
-                "SELECT filepath, title, ingest_state FROM source_videos WHERE id = %s",
-                (source_video_id,)
-            )
-            source_rec = cur.fetchone()
-            if not source_rec or not source_rec['filepath']:
-                raise ValueError(f"Source video {source_video_id} not found or has no filepath.")
-
-            if source_rec['ingest_state'] not in ['downloaded', 'splicing_failed']:
-                return {"status": "skipped_state", "source_video_id": source_video_id, "reason": f"State '{source_rec['ingest_state']}' not eligible."}
-
-            cur.execute("UPDATE source_videos SET ingest_state = 'splicing' WHERE id = %s", (source_video_id,))
-            conn.commit()
-            logger.info(f"Set source_video {source_video_id} state to 'splicing'")
-
-        temp_dir_obj = tempfile.TemporaryDirectory(prefix="splice_")
-        temp_dir = temp_dir_obj.name
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir_path = Path(temp_dir)
         
-        source_s3_key = source_rec['filepath']
-        local_video_path = os.path.join(temp_dir, os.path.basename(source_s3_key))
-        logger.info(f"Downloading s3://{s3_bucket_name}/{source_s3_key} to {local_video_path}")
-        s3_client.download_file(s3_bucket_name, source_s3_key, local_video_path)
-
-        scenes, fps, _, _ = detect_scenes(local_video_path, SCENE_DETECT_THRESHOLD, SCENE_DETECT_METHOD)
-
-        for i, (start_frame, end_frame) in enumerate(scenes):
-            start_time = start_frame / fps
-            end_time = end_frame / fps
-            duration = end_time - start_time
-
-            if duration < MIN_CLIP_DURATION_SECONDS:
-                logger.info(f"Skipping short scene {i+1} ({duration:.2f}s).")
-                continue
-
-            clip_identifier = f"source_{source_video_id}_scene_{i+1}"
-            safe_title = sanitize_filename(f"{source_rec['title']}_scene_{i+1}")
-            output_filename = f"{safe_title}.mp4"
-            output_path = os.path.join(temp_dir, output_filename)
-
-            ffmpeg_cmd = [
-                "-i", local_video_path,
-                "-ss", str(start_time), "-to", str(end_time),
-                "-c:v", "libx264", "-preset", FFMPEG_PRESET, "-crf", FFMPEG_CRF,
-                "-c:a", "aac", "-b:a", FFMPEG_AUDIO_BITRATE,
-                "-y", output_path
-            ]
-            run_ffmpeg_command(ffmpeg_cmd, f"Splicing scene {i+1}")
-            
-            clip_s3_key = f"{CLIP_S3_PREFIX}{output_filename}"
-            s3_client.upload_file(output_path, s3_bucket_name, clip_s3_key)
-            logger.info(f"Uploaded clip to s3://{s3_bucket_name}/{clip_s3_key}")
-            
-            with get_db_connection() as conn, conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO clips (source_video_id, clip_identifier, clip_filepath, start_time_seconds, end_time_seconds, ingest_state)
-                    VALUES (%s, %s, %s, %s, %s, 'spliced') RETURNING id
-                    """,
-                    (source_video_id, clip_identifier, clip_s3_key, start_time, end_time)
-                )
-                new_clip_id = cur.fetchone()[0]
-                created_clip_ids.append(new_clip_id)
-                conn.commit()
-                logger.info(f"Created clip record with ID: {new_clip_id}")
-
-        with get_db_connection() as conn, conn.cursor() as cur:
-            cur.execute("UPDATE source_videos SET ingest_state = 'spliced' WHERE id = %s", (source_video_id,))
-            conn.commit()
-            logger.info(f"Set source_video {source_video_id} state to 'spliced'")
-
-        return {
-            "status": "success",
-            "source_video_id": source_video_id,
-            "created_clips": len(created_clip_ids),
-            "clip_ids": created_clip_ids
-        }
-
-    except Exception as e:
-        logger.error(f"FATAL: Splicing failed for source_video_id {source_video_id}: {e}", exc_info=True)
         try:
-            with get_db_connection() as conn, conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE source_videos SET ingest_state = 'splicing_failed', last_error = %s WHERE id = %s",
-                    (str(e), source_video_id)
+            # Step 1: Download source video from S3
+            local_video_path = temp_dir_path / Path(input_s3_path).name
+            logger.info(f"Downloading s3://{s3_bucket_name}/{input_s3_path} to {local_video_path}")
+            s3_client.download_file(s3_bucket_name, input_s3_path, str(local_video_path))
+
+            # Step 2: Detect scenes
+            scenes, fps, (width, height), total_frames = detect_scenes(str(local_video_path), threshold, method)
+            
+            if not scenes:
+                logger.warning("No scenes detected, creating single clip from entire video")
+                scenes = [(0, total_frames)]
+
+            # Step 3: Process each scene into a clip
+            clips_data = []
+            for i, (start_frame, end_frame) in enumerate(scenes):
+                start_time = start_frame / fps
+                end_time = end_frame / fps
+                duration = end_time - start_time
+
+                if duration < min_duration:
+                    logger.info(f"Skipping short scene {i+1} ({duration:.2f}s)")
+                    continue
+
+                # Generate clip filename and identifier
+                clip_identifier = f"{source_video_id}_clip_{i+1:03d}"
+                output_filename = f"{clip_identifier}.mp4"
+                output_path = temp_dir_path / output_filename
+
+                # Extract clip using FFmpeg
+                ffmpeg_args = [
+                    "-i", str(local_video_path),
+                    "-ss", str(start_time),
+                    "-to", str(end_time),
+                    "-c:v", "libx264",
+                    "-preset", FFMPEG_PRESET,
+                    "-crf", FFMPEG_CRF,
+                    "-c:a", "aac",
+                    "-b:a", FFMPEG_AUDIO_BITRATE,
+                    "-y", str(output_path)
+                ]
+                
+                run_ffmpeg_command(ffmpeg_args, f"Extracting clip {i+1}")
+                
+                # Upload to S3
+                s3_key = f"{output_s3_prefix}/{output_filename}"
+                file_size = output_path.stat().st_size
+                progress_callback = S3TransferProgress(file_size, output_filename, logger)
+                
+                s3_client.upload_file(
+                    str(output_path), 
+                    s3_bucket_name, 
+                    s3_key,
+                    Callback=progress_callback
                 )
-                conn.commit()
-        except Exception as db_err:
-            logger.error(f"CRITICAL: Failed to update DB state to 'splicing_failed' for {source_video_id}: {db_err}")
-        raise
+                logger.info(f"Uploaded clip to s3://{s3_bucket_name}/{s3_key}")
 
-    finally:
-        if temp_dir_obj:
-            temp_dir_obj.cleanup()
-            logger.info("Cleaned up temporary directory.")
+                # Add clip data for Elixir to process
+                clips_data.append({
+                    "clip_identifier": clip_identifier,
+                    "clip_filepath": s3_key,
+                    "start_frame": start_frame,
+                    "end_frame": end_frame,
+                    "start_time_seconds": round(start_time, 3),
+                    "end_time_seconds": round(end_time, 3),
+                    "metadata": {
+                        "duration_seconds": round(duration, 3),
+                        "scene_index": i + 1,
+                        "fps": fps,
+                        "resolution": f"{width}x{height}",
+                        "detection_threshold": threshold,
+                        "detection_method": method
+                    }
+                })
 
+            # Return structured data for Elixir to process
+            return {
+                "status": "success",
+                "clips": clips_data,
+                "metadata": {
+                    "total_scenes_detected": len(scenes),
+                    "clips_created": len(clips_data),
+                    "detection_params": detection_params,
+                    "video_properties": {
+                        "fps": fps,
+                        "resolution": f"{width}x{height}",
+                        "total_frames": total_frames
+                    }
+                }
+            }
 
-# --- Direct invocation for testing ---
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Run video splicing for a source video.")
-    parser.add_argument("--source-id", required=True, type=int, help="The source_video_id from the database.")
-    parser.add_argument("--env", default="development", help="The environment.")
+        except Exception as e:
+            logger.error(f"Error processing video: {e}")
+            raise
+
+def main():
+    """Main entry point for standalone execution"""
+    parser = argparse.ArgumentParser(description="Splice video processing task")
+    parser.add_argument("--source-video-id", type=int, required=True)
+    parser.add_argument("--input-s3-path", required=True)
+    parser.add_argument("--output-s3-prefix", required=True)
+    parser.add_argument("--threshold", type=float, default=0.6)
+    parser.add_argument("--method", default="CORREL")
+    parser.add_argument("--min-duration", type=float, default=1.0)
     
     args = parser.parse_args()
-
+    
+    detection_params = {
+        "threshold": args.threshold,
+        "method": args.method,
+        "min_duration_seconds": args.min_duration
+    }
+    
     try:
         result = run_splice(
-            source_video_id=args.source_id,
-            environment=args.env
+            args.source_video_id,
+            args.input_s3_path,
+            args.output_s3_prefix,
+            detection_params
         )
-        print("Splicing finished successfully.")
         print(json.dumps(result, indent=2))
-        sys.exit(0)
     except Exception as e:
-        print(f"Splicing failed: {e}", file=sys.stderr)
-        sys.exit(1)
+        error_result = {
+            "status": "error",
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+        print(json.dumps(error_result, indent=2))
+        exit(1)
+
+if __name__ == "__main__":
+    main() 
