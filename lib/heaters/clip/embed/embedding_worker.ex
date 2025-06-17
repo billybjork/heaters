@@ -26,14 +26,14 @@ defmodule Heaters.Clip.Embed.EmbeddingWorker do
       Logger.info("EmbeddingWorker: Running PythonRunner for clip_id: #{clip_id}")
 
       # Python task receives explicit parameters for embedding generation
-      py_args = %{
+    py_args = %{
         clip_id: updated_clip.id,
         input_s3_path: updated_clip.clip_filepath,
-        model_name: model_name,
-        generation_strategy: generation_strategy
-      }
+      model_name: model_name,
+      generation_strategy: generation_strategy
+    }
 
-      case PythonRunner.run("embed", py_args) do
+    case PythonRunner.run("embed", py_args) do
         {:ok, result} ->
           Logger.info("EmbeddingWorker: PythonRunner succeeded for clip_id: #{clip_id}")
 

@@ -41,11 +41,11 @@ defmodule Heaters.Video.Ingest.IntakeWorker do
             {:ok, _updated_video} ->
               # Enqueue the next worker in the chain
               case Oban.insert(Heaters.Video.Ingest.SpliceWorker.new(%{source_video_id: updated_video.id})) do
-                {:ok, _job} -> :ok
-                {:error, reason} -> {:error, "Failed to enqueue splice worker: #{inspect(reason)}"}
-              end
+            {:ok, _job} -> :ok
+            {:error, reason} -> {:error, "Failed to enqueue splice worker: #{inspect(reason)}"}
+          end
 
-            {:error, reason} ->
+        {:error, reason} ->
               Logger.error("IntakeWorker: Failed to update video metadata: #{inspect(reason)}")
               {:error, reason}
           end
@@ -60,7 +60,7 @@ defmodule Heaters.Video.Ingest.IntakeWorker do
             {:ok, _} -> {:error, reason}
             {:error, db_error} ->
               Logger.error("IntakeWorker: Failed to mark video as failed: #{inspect(db_error)}")
-              {:error, reason}
+          {:error, reason}
           end
       end
     else

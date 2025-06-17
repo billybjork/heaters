@@ -31,7 +31,7 @@ defmodule Heaters.Clip.Transform.KeyframeWorker do
         strategy: strategy
       }
 
-      case PythonRunner.run("keyframe", py_args) do
+        case PythonRunner.run("keyframe", py_args) do
         {:ok, result} ->
           Logger.info("KeyframeWorker: PythonRunner succeeded for clip_id: #{clip_id}")
 
@@ -40,21 +40,21 @@ defmodule Heaters.Clip.Transform.KeyframeWorker do
             {:ok, final_clip} ->
               # Enqueue the next worker in the chain (sprite generation)
               case SpriteWorker.new(%{clip_id: final_clip.id}) |> Oban.insert() do
-                {:ok, _job} ->
+                  {:ok, _job} ->
                   Logger.info("KeyframeWorker: Enqueued sprite worker for clip_id: #{clip_id}")
-                  :ok
+                    :ok
 
-                {:error, reason} ->
+                  {:error, reason} ->
                   Logger.error("KeyframeWorker: Failed to enqueue sprite worker: #{inspect(reason)}")
                   {:error, "Failed to enqueue sprite worker: #{inspect(reason)}"}
-              end
+                end
 
             {:error, reason} ->
               Logger.error("KeyframeWorker: Failed to process keyframe success: #{inspect(reason)}")
               {:error, reason}
-          end
+            end
 
-        {:error, reason} ->
+          {:error, reason} ->
           Logger.error("KeyframeWorker: PythonRunner failed for clip_id: #{clip_id}, reason: #{inspect(reason)}")
 
           # Use the new Transform context to mark as failed
@@ -63,8 +63,8 @@ defmodule Heaters.Clip.Transform.KeyframeWorker do
             {:error, db_error} ->
               Logger.error("KeyframeWorker: Failed to mark clip as failed: #{inspect(db_error)}")
               {:error, reason}
-          end
-      end
+            end
+        end
     else
       {:error, :not_found} ->
         Logger.warning("KeyframeWorker: Clip #{clip_id} not found, likely deleted")
