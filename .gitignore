@@ -42,7 +42,7 @@ __pycache__/
 /priv/gettext/**/*.po~
 
 # Node.js & asset pipeline
-/assets/node_modules/
+**/node_modules/
 *.js.map
 *.css.map
 
@@ -57,4 +57,4 @@ __pycache__/
 # ───────────────────────────────
 .env
 .env.*
-.envrc
+.envrcnode_modules/
