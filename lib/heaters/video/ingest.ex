@@ -1,9 +1,10 @@
-defmodule Heaters.Intake do
+defmodule Heaters.Video.Ingest do
   @moduledoc """
   Pure-Elixir helper that inserts a **new** row into source_videos.
   """
 
   alias Heaters.Repo
+  alias Heaters.Video.Ingest.SourceVideo
   # For more detailed error logging
   require Logger
 
@@ -84,5 +85,14 @@ defmodule Heaters.Intake do
       )
 
       {:error, "DB error: #{Exception.message(e)}"}
+  end
+
+  @doc """
+  Update a source video with the given attributes.
+  """
+  def update_source_video(%SourceVideo{} = source_video, attrs) do
+    source_video
+    |> SourceVideo.changeset(attrs)
+    |> Repo.update()
   end
 end

@@ -1,11 +1,11 @@
-defmodule Heaters.PythonRunner.Config do
+defmodule Heaters.Infrastructure.PythonRunner.Config do
   @moduledoc """
   Centralized configuration for Python script execution.
   Handles environment-specific paths with runtime safety.
   """
 
   @app :heaters
-  @key Heaters.PythonRunner
+  @key Heaters.Infrastructure.PythonRunner
 
   @doc """
   Returns the configured Python executable path.

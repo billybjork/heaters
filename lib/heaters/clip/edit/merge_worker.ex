@@ -1,8 +1,8 @@
-defmodule Heaters.Workers.MergeWorker do
+defmodule Heaters.Clip.Edit.MergeWorker do
   use Oban.Worker, queue: :media_processing
 
-  alias Heaters.PythonRunner
-  alias Heaters.Workers.SpriteWorker
+  alias Heaters.Infrastructure.PythonRunner
+  alias Heaters.Clip.Transform.SpriteWorker
 
   # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, perform: 1}

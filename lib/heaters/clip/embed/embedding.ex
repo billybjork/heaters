@@ -1,5 +1,5 @@
-defmodule Heaters.Clips.Embedding do
-  use Ecto.Schema
+defmodule Heaters.Clip.Embed.Embedding do
+  use Heaters.Schema
   import Ecto.Changeset
 
   alias Heaters.Clips.Clip

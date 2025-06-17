@@ -1,8 +1,8 @@
-defmodule Heaters.Workers.EmbeddingWorker do
-  use Oban.Worker, queue: :embeddings
+defmodule Heaters.Clip.Embed.EmbeddingWorker do
+  use Oban.Worker, queue: :media_processing
 
-  alias Heaters.Clips
-  alias Heaters.PythonRunner
+  alias Heaters.Clip.Queries, as: ClipQueries
+  alias Heaters.Infrastructure.PythonRunner
 
   # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, [perform: 1, handle_embedding: 3]}
@@ -16,7 +16,7 @@ defmodule Heaters.Workers.EmbeddingWorker do
         }
       }) do
     try do
-      clip = Clips.get_clip!(clip_id)
+      clip = ClipQueries.get_clip!(clip_id)
       handle_embedding(clip, model_name, generation_strategy)
     rescue
       _e in Ecto.NoResultsError ->

@@ -1,5 +1,5 @@
-defmodule Heaters.Clips.SourceVideo do
-  use Heaters.Clips.Schema
+defmodule Heaters.Video.Ingest.SourceVideo do
+  use Heaters.Schema
 
   @type t() :: %__MODULE__{
           id: integer(),

@@ -1,8 +1,9 @@
-defmodule Heaters.Workers.IntakeWorker do
-  use Oban.Worker, queue: :media_processing
+defmodule Heaters.Video.Ingest.IntakeWorker do
+  use Oban.Worker, queue: :download
 
-  alias Heaters.Clips
-  alias Heaters.PythonRunner
+  alias Heaters.Video.Ingest
+  alias Heaters.Video.Queries, as: VideoQueries
+  alias Heaters.Infrastructure.PythonRunner
   require Logger
 
   # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
@@ -13,7 +14,7 @@ defmodule Heaters.Workers.IntakeWorker do
     Logger.info("IntakeWorker: Starting intake for source_video_id: #{source_video_id}")
 
     # Use a `with` statement for a clean, chained workflow
-    with {:ok, source_video} <- Clips.get_source_video(source_video_id),
+    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id),
          :ok <- check_idempotency(source_video) do
       Logger.info(
         "IntakeWorker: Running PythonRunner for source_video_id: #{source_video_id}, URL: #{source_video.original_url}"
@@ -34,7 +35,7 @@ defmodule Heaters.Workers.IntakeWorker do
           )
 
           # On success, enqueue the NEXT worker in the chain.
-          case Oban.insert(Heaters.Workers.SpliceWorker.new(%{source_video_id: source_video.id})) do
+          case Oban.insert(Heaters.Video.Process.SpliceWorker.new(%{source_video_id: source_video.id})) do
             {:ok, _job} -> :ok
             {:error, reason} -> {:error, "Failed to enqueue splice worker: #{inspect(reason)}"}
           end
@@ -47,7 +48,7 @@ defmodule Heaters.Workers.IntakeWorker do
 
           error_message = inspect(reason)
 
-          Clips.update_source_video(source_video, %{
+          Ingest.update_source_video(source_video, %{
             ingest_state: "download_failed",
             last_error: error_message
           })

@@ -1,11 +1,11 @@
-defmodule Heaters.PythonRunner do
+defmodule Heaters.Infrastructure.PythonRunner do
   @moduledoc """
   Spawn-and-monitor a Python task through an OS port, with
   environment injection and Phoenix-PubSub progress streaming.
   """
 
   alias HeatersWeb.Endpoint
-  alias Heaters.PythonRunner.Config
+  alias Heaters.Infrastructure.PythonRunner.Config
   require Logger
 
   @default_timeout :timer.minutes(30)

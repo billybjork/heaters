@@ -1,8 +1,8 @@
-defmodule Heaters.Workers.SpriteWorker do
+defmodule Heaters.Clip.Transform.SpriteWorker do
   use Oban.Worker, queue: :media_processing
 
-  alias Heaters.Clips
-  alias Heaters.PythonRunner
+  alias Heaters.Clip.Queries, as: ClipQueries
+  alias Heaters.Infrastructure.PythonRunner
 
   @complete_states ["pending_review", "sprite_failed"]
 
@@ -13,7 +13,7 @@ defmodule Heaters.Workers.SpriteWorker do
   def perform(%Oban.Job{args: %{"clip_id" => clip_id}}) do
     # Using try/rescue because get_clip! raises Ecto.NoResultsError if not found.
     try do
-      clip = Clips.get_clip!(clip_id)
+      clip = ClipQueries.get_clip!(clip_id)
       handle_sprite_generation(clip)
     rescue
       _e in Ecto.NoResultsError ->
@@ -33,7 +33,7 @@ defmodule Heaters.Workers.SpriteWorker do
 
       # Has sprite but not in final state - update state to pending_review
       has_sprite? and clip.ingest_state not in @complete_states ->
-        case Clips.update_clip(clip, %{ingest_state: "pending_review"}) do
+        case ClipQueries.update_clip(clip, %{ingest_state: "pending_review"}) do
           {:ok, _updated_clip} ->
             :ok
 

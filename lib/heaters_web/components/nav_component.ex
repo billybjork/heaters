@@ -4,19 +4,19 @@ defmodule HeatersWeb.NavComponent do
   use Phoenix.Component
   # <─ supplies the ~p sigil
   use HeatersWeb, :verified_routes
-  alias Heaters.Clips
+  alias Heaters.Clip.Queries, as: ClipQueries
 
-  # handy later for an “active” class; not used yet
+  # handy later for an "active" class; not used yet
   attr(:current_path, :string, required: true)
 
   def nav(assigns) do
     assigns =
-      assign_new(assigns, :pending_count, fn -> Clips.pending_review_count() end)
+      assign_new(assigns, :pending_count, fn -> ClipQueries.pending_review_count() end)
 
     ~H"""
     <header class="site-nav border-b">
       <nav class="container flex justify-center items-center gap-6 py-3">
-        
+
     <!-- Review link + badge (hidden when zero) -->
         <.link navigate={~p"/review"} class="nav-link relative">
           Review
@@ -30,7 +30,7 @@ defmodule HeatersWeb.NavComponent do
         <.link href="http://localhost:4200/" target="_blank" class="nav-link">
           Prefect
         </.link>
-        
+
     <!-- ───────── Quick-submit form ───────── -->
         <form action={~p"/submit_video"} method="post" class="submit-form flex gap-2">
           <input type="hidden" name="_csrf_token" value={Plug.CSRFProtection.get_csrf_token()} />

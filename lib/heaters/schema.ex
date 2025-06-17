@@ -1,6 +1,6 @@
-defmodule Heaters.Clips.Schema do
+defmodule Heaters.Schema do
   @moduledoc false
-  # Re-usable imports/aliases for every Clips schema
+  # Re-usable imports/aliases for every schema
   defmacro __using__(_) do
     quote do
       use Ecto.Schema

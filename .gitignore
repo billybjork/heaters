@@ -18,7 +18,7 @@ __pycache__/
 *.pyd
 *.pyo
 *.pyc
-**/.venv/
+**/venv/
 
 # ───────────────────────────────
 # Elixir & Phoenix-specific ignores

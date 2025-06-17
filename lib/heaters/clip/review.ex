@@ -1,102 +1,19 @@
-defmodule Heaters.Clips do
+defmodule Heaters.Clip.Review do
   @moduledoc """
-  The **Clips** context — everything about fetching, reviewing and annotating
-  clips.
+  Review queue management and composite actions for clips.
 
-  ### Responsibilities
-
-  * **Queue helpers** – return batches of `pending_review` clips that the
-    LiveView keeps in memory (`next_pending_review_clips/2`).
-
-  * **Event sourcing** – write `clip_events` rows for every UI action and flip
-    `reviewed_at` so the clip leaves the queue.
-
-  * **Composite actions** – *merge*, *group*, *split* all perform more than one
-    DB mutation but still return the "next job" in a single round-trip.
-
-  * **Sibling browsing** – `for_source_video_with_sprites/4` returns pages of other clips
-    from the same source video (used by the new merge/group-by-ID mode).
-
-  * **Source Video Management** - Functions for managing source videos and their states.
-
-  All public helpers either:
-
-    * return `{:ok, {next_clip_or_nil, context}}` (single-row helpers) **or**
-    * return `{next_clip_or_nil, context}` inside a DB transaction
-      (composite helpers).
-
-  `context` makes downstream telemetry / job-queueing simpler.
+  Handles the review workflow including queue management, event sourcing,
+  and composite actions like merge, group, and split.
   """
-
-  # -------------------------------------------------------------------------
-  # Imports / aliases
-  # -------------------------------------------------------------------------
 
   import Ecto.Query, warn: false
   alias Ecto.Query, as: Q
-
   alias Heaters.Repo
-  alias Heaters.Clips.{Clip, ClipEvent, Embedding, SourceVideo}
-  alias Heaters.Workers.{MergeWorker, SplitWorker}
+  alias Heaters.Clips.Clip
+  alias Heaters.Clip.Review.ClipEvent
+  alias Heaters.Clip.Edit.{MergeWorker, SplitWorker}
 
   require Logger
-
-  # -------------------------------------------------------------------------
-  # Public API - Source Video Management
-  # -------------------------------------------------------------------------
-
-  @doc """
-  Get a source video by ID. Returns {:ok, source_video} if found, {:error, :not_found} otherwise.
-  """
-  def get_source_video(id) do
-    case Repo.get(SourceVideo, id) do
-      nil -> {:error, :not_found}
-      source_video -> {:ok, source_video}
-    end
-  end
-
-  @doc """
-  Get all source videos with the given ingest state.
-  """
-  def get_videos_by_state(state) when is_binary(state) do
-    from(s in SourceVideo, where: s.ingest_state == ^state)
-    |> Repo.all()
-  end
-
-  @doc """
-  Get all clips with the given ingest state.
-  """
-  def get_clips_by_state(state) when is_binary(state) do
-    from(c in Clip, where: c.ingest_state == ^state)
-    |> Repo.all()
-  end
-
-  @doc """
-  Get a clip by ID with its associated artifacts preloaded.
-  Returns {:ok, clip} if found, {:error, :not_found} otherwise.
-  """
-  def get_clip_with_artifacts(id) do
-    case Repo.get(Clip, id) |> Repo.preload(:clip_artifacts) do
-      nil -> {:error, :not_found}
-      clip -> {:ok, clip}
-    end
-  end
-
-  @doc """
-  Returns a changeset for updating a clip with the given attributes.
-  """
-  def change_clip(%Clip{} = clip, attrs) do
-    Clip.changeset(clip, attrs)
-  end
-
-  @doc """
-  Update a source video with the given attributes.
-  """
-  def update_source_video(%SourceVideo{} = source_video, attrs) do
-    source_video
-    |> SourceVideo.changeset(attrs)
-    |> Repo.update()
-  end
 
   # -------------------------------------------------------------------------
   # Constants (UI → DB action map)
@@ -342,16 +259,6 @@ defmodule Heaters.Clips do
   end
 
   @doc """
-  Return **one** clip (with :source_video and :clip_artifacts preloaded)
-  or raise if it doesn't exist.
-
-  Used by *ReviewLive* when the reviewer types an explicit ID in merge/group-
-  by-ID mode.
-  """
-  @spec get_clip!(integer) :: Clip.t()
-  def get_clip!(id) when is_integer(id), do: load_clip_with_assocs(id)
-
-  @doc """
   Paged list of **other** clips that belong to the same source_video.
 
   * sv_id       – the source_video.id that all clips must share
@@ -375,160 +282,6 @@ defmodule Heaters.Clips do
     |> limit(^page_size)
     |> preload([c, ca], clip_artifacts: ca)
     |> Repo.all()
-  end
-
-  # -------------------------------------------------------------------------
-  # Public API – sibling browsing
-  # -------------------------------------------------------------------------
-
-  @doc "All available model names, generation strategies, and source videos for embedded clips"
-  def embedded_filter_opts do
-    model_names =
-      Embedding
-      |> where([e], not is_nil(e.generation_strategy))
-      |> distinct([e], e.model_name)
-      |> order_by([e], asc: e.model_name)
-      |> select([e], e.model_name)
-      |> Repo.all()
-
-    gen_strats =
-      Embedding
-      |> distinct([e], e.generation_strategy)
-      |> order_by([e], asc: e.generation_strategy)
-      |> select([e], e.generation_strategy)
-      |> Repo.all()
-
-    source_videos =
-      from(c in Clip,
-        where: c.ingest_state == "embedded",
-        join: sv in assoc(c, :source_video),
-        distinct: sv.id,
-        order_by: sv.title,
-        select: {sv.id, sv.title}
-      )
-      |> Repo.all()
-
-    %{model_names: model_names, generation_strategies: gen_strats, source_videos: source_videos}
-  end
-
-  @doc "Pick one random clip in state 'embedded', respecting optional filters"
-  def random_embedded_clip(%{model_name: m, generation_strategy: g, source_video_id: sv}) do
-    base =
-      Embedding
-      |> join(
-        :inner,
-        [e],
-        c in Clip,
-        on: c.id == e.clip_id and c.ingest_state == "embedded"
-      )
-
-    base =
-      if m do
-        from([e, c] in base, where: e.model_name == ^m)
-      else
-        base
-      end
-
-    base =
-      if g do
-        from([e, c] in base, where: e.generation_strategy == ^g)
-      else
-        base
-      end
-
-    base =
-      if sv do
-        from([e, c] in base, where: c.source_video_id == ^sv)
-      else
-        base
-      end
-
-    base
-    |> order_by(fragment("RANDOM()"))
-    |> limit(1)
-    |> select([_e, c], c)
-    |> Repo.one()
-    |> case do
-      nil -> nil
-      clip -> Repo.preload(clip, :source_video)
-    end
-  end
-
-  @doc """
-  Given a main clip and the active filters, return page `page` of its neighbors,
-  ordered by vector similarity (<=>), ascending or descending.
-  """
-  def similar_clips(
-        main_clip_id,
-        %{model_name: m, generation_strategy: g, source_video_id: sv_id},
-        asc?,
-        page,
-        per
-      ) do
-    main_vec =
-      Embedding
-      |> where([e], e.clip_id == ^main_clip_id)
-      |> maybe_filter(m, g)
-      |> select([e], e.embedding)
-      |> Repo.one!()
-
-    Embedding
-    |> where([e], e.clip_id != ^main_clip_id)
-    |> maybe_filter(m, g)
-    |> join(:inner, [e], c in Clip, on: c.id == e.clip_id and c.ingest_state == "embedded")
-    # only keep clips from the chosen source video, if any
-    |> (fn q -> if sv_id, do: where(q, [_, c], c.source_video_id == ^sv_id), else: q end).()
-    |> order_by_similarity(main_vec, asc?)
-    |> offset(^((page - 1) * per))
-    |> limit(^per)
-    |> select(
-      [e, c],
-      %{
-        clip: c,
-        similarity_pct: fragment("round((1 - (? <=> ?)) * 100)::int", e.embedding, ^main_vec)
-      }
-    )
-    |> Repo.all()
-    |> Enum.map(fn %{clip: clip} = row ->
-      %{row | clip: Repo.preload(clip, [:clip_artifacts])}
-    end)
-  end
-
-  defp maybe_filter(query, nil, nil), do: query
-
-  defp maybe_filter(query, m, g) do
-    query
-    |> (fn q -> if m, do: where(q, [e], e.model_name == ^m), else: q end).()
-    |> (fn q -> if g, do: where(q, [e], e.generation_strategy == ^g), else: q end).()
-  end
-
-  defp order_by_similarity(query, main_embedding, true = _asc?) do
-    order_by(query, [e, _c], asc: fragment("? <=> ?", e.embedding, ^main_embedding))
-  end
-
-  defp order_by_similarity(query, main_embedding, false = _desc?) do
-    order_by(query, [e, _c], desc: fragment("? <=> ?", e.embedding, ^main_embedding))
-  end
-
-  # -------------------------------------------------------------------------
-  # Public API – other helpers
-  # -------------------------------------------------------------------------
-
-  @doc "Fast count of clips still in `pending_review`."
-  def pending_review_count do
-    Clip
-    |> where([c], c.ingest_state == "pending_review" and is_nil(c.reviewed_at))
-    |> select([c], count("*"))
-    |> Repo.one()
-  end
-
-  @doc """
-  Update a clip with the given attributes.
-  """
-  def update_clip(%Clip{} = clip, attrs) do
-    clip
-    |> Clip.changeset(attrs)
-    |> Repo.update()
   end
 
   @doc """

@@ -22,7 +22,7 @@
 **/*.pyo
 **/*.pyd
 **/*.egg-info/
-**/.venv
+**/venv
 
 # ───────────────────────────────
 # Elixir / Phoenix-related

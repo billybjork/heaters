@@ -1,9 +1,9 @@
-defmodule Heaters.Workers.KeyframeWorker do
+defmodule Heaters.Clip.Transform.KeyframeWorker do
   use Oban.Worker, queue: :media_processing
 
-  alias Heaters.Clips
-  alias Heaters.PythonRunner
-  alias Heaters.Workers.EmbeddingWorker
+  alias Heaters.Clip.Queries, as: ClipQueries
+  alias Heaters.Infrastructure.PythonRunner
+  alias Heaters.Clip.Embed.EmbeddingWorker
 
   # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, [perform: 1, handle_keyframing: 2]}
@@ -11,7 +11,7 @@ defmodule Heaters.Workers.KeyframeWorker do
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"clip_id" => clip_id, "strategy" => strategy}}) do
     try do
-      clip = Clips.get_clip!(clip_id)
+      clip = ClipQueries.get_clip!(clip_id)
       handle_keyframing(clip, strategy)
     rescue
       _e in Ecto.NoResultsError ->
@@ -24,13 +24,13 @@ defmodule Heaters.Workers.KeyframeWorker do
   defp handle_keyframing(%{ingest_state: "embedding_failed"} = _clip, _strategy), do: :ok
 
   defp handle_keyframing(clip, strategy) do
-    case Clips.update_clip(clip, %{ingest_state: "keyframing"}) do
+    case ClipQueries.update_clip(clip, %{ingest_state: "keyframing"}) do
       {:ok, _updated_clip} ->
         py_args = %{clip_id: clip.id, strategy: strategy}
 
         case PythonRunner.run("keyframe", py_args) do
           {:ok, _} ->
-            case Clips.update_clip(clip, %{
+            case ClipQueries.update_clip(clip, %{
                    ingest_state: "keyframed",
                    keyframed_at: DateTime.utc_now()
                  }) do
@@ -55,7 +55,7 @@ defmodule Heaters.Workers.KeyframeWorker do
           {:error, reason} ->
             error_message = "Keyframe script failed: #{inspect(reason)}"
 
-            case Clips.update_clip(clip, %{
+            case ClipQueries.update_clip(clip, %{
                    ingest_state: "keyframe_failed",
                    last_error: error_message
                  }) do

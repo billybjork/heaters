@@ -1,5 +1,5 @@
 defmodule Heaters.Clips.Clip do
-  use Heaters.Clips.Schema
+  use Heaters.Schema
 
   @type t() :: %__MODULE__{
           id: integer(),
@@ -18,9 +18,9 @@ defmodule Heaters.Clips.Clip do
           processing_metadata: map() | nil,
           grouped_with_clip_id: integer() | nil,
           action_committed_at: NaiveDateTime.t() | nil,
-          source_video: Heaters.Clips.SourceVideo.t() | Ecto.Association.NotLoaded.t(),
-          clip_artifacts: [Heaters.Clips.ClipArtifact.t()] | Ecto.Association.NotLoaded.t(),
-          clip_events: [Heaters.Clips.ClipEvent.t()] | Ecto.Association.NotLoaded.t(),
+          source_video: Heaters.Video.Ingest.SourceVideo.t() | Ecto.Association.NotLoaded.t(),
+          clip_artifacts: [Heaters.Clip.Transform.ClipArtifact.t()] | Ecto.Association.NotLoaded.t(),
+          clip_events: [Heaters.Clip.Review.ClipEvent.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t(),
           updated_at: DateTime.t()
         }
@@ -43,9 +43,9 @@ defmodule Heaters.Clips.Clip do
     field(:grouped_with_clip_id, :integer)
     field(:action_committed_at, :naive_datetime)
 
-    belongs_to(:source_video, Heaters.Clips.SourceVideo)
-    has_many(:clip_artifacts, Heaters.Clips.ClipArtifact)
-    has_many(:clip_events, Heaters.Clips.ClipEvent)
+    belongs_to(:source_video, Heaters.Video.Ingest.SourceVideo)
+    has_many(:clip_artifacts, Heaters.Clip.Transform.ClipArtifact)
+    has_many(:clip_events, Heaters.Clip.Review.ClipEvent)
 
     timestamps(type: :utc_datetime)
   end

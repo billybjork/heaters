@@ -1,10 +1,10 @@
-defmodule Heaters.Workers.SpliceWorker do
+defmodule Heaters.Video.Process.SpliceWorker do
   use Oban.Worker, queue: :media_processing
 
-  alias Heaters.Clips
-  alias Heaters.Clips.SourceVideo
-  alias Heaters.PythonRunner
-  alias Heaters.Workers.SpriteWorker
+  alias Heaters.Video.Ingest.SourceVideo
+  alias Heaters.Video.Queries, as: VideoQueries
+  alias Heaters.Infrastructure.PythonRunner
+  alias Heaters.Clip.Transform.SpriteWorker
 
   @splicing_complete_states ["spliced", "splicing_failed"]
 
@@ -13,7 +13,7 @@ defmodule Heaters.Workers.SpliceWorker do
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"source_video_id" => source_video_id}}) do
-    with {:ok, source_video} <- Clips.get_source_video(source_video_id) do
+    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
       handle_splicing(source_video)
     else
       {:error, :not_found} ->
@@ -60,7 +60,7 @@ defmodule Heaters.Workers.SpliceWorker do
   end
 
   defp update_video_with_error(source_video, error_message) do
-    Clips.update_source_video(source_video, %{
+    Heaters.Video.Ingest.update_source_video(source_video, %{
       ingest_state: "splicing_failed",
       last_error: error_message
     })

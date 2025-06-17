@@ -1,9 +1,9 @@
-defmodule Heaters.Workers.ArchiveWorker do
-  use Oban.Worker, queue: :media_processing
+defmodule Heaters.Infrastructure.Orchestration.ArchiveWorker do
+  use Oban.Worker, queue: :background_jobs
 
-  alias Heaters.Clips
+  alias Heaters.Clip.Queries, as: ClipQueries
   alias Heaters.Repo
-  alias Heaters.PythonRunner
+  alias Heaters.Infrastructure.PythonRunner
   alias Ecto.Multi
 
   # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
@@ -11,7 +11,7 @@ defmodule Heaters.Workers.ArchiveWorker do
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"clip_id" => clip_id}}) do
-    with {:ok, clip} <- Clips.get_clip_with_artifacts(clip_id),
+    with {:ok, clip} <- ClipQueries.get_clip_with_artifacts(clip_id),
          :ok <- check_idempotency(clip) do
       # 1. Consolidate all S3 keys to be deleted
       artifact_keys = Enum.map(clip.clip_artifacts, & &1.s3_key)
@@ -25,7 +25,7 @@ defmodule Heaters.Workers.ArchiveWorker do
 
         {:error, reason} ->
           # If Python script fails, update the clip with an error and let Oban retry.
-          Clips.update_clip(clip, %{
+          ClipQueries.update_clip(clip, %{
             ingest_state: "archive_failed",
             last_error: "S3 Deletion Failed: #{inspect(reason)}"
           })
@@ -43,16 +43,18 @@ defmodule Heaters.Workers.ArchiveWorker do
     end
   end
 
-  defp check_idempotency(%{ingest_state: state}) when state in ["archived", "archive_failed"],
-    do: {:error, :already_processed}
-
-  defp check_idempotency(_clip),
-    do: :ok
+  defp check_idempotency(clip) do
+    if clip.ingest_state == "archived" do
+      {:error, :already_archived}
+    else
+      :ok
+    end
+  end
 
   defp archive_in_database(clip) do
     case Multi.new()
          |> Multi.delete_all(:delete_artifacts, Ecto.assoc(clip, :clip_artifacts))
-         |> Multi.update(:archive_clip, Clips.change_clip(clip, %{ingest_state: "archived"}))
+         |> Multi.update(:archive_clip, ClipQueries.change_clip(clip, %{ingest_state: "archived"}))
          |> Repo.transaction() do
       {:ok, _results} -> :ok
       {:error, _step, reason, _changes} -> {:error, reason}

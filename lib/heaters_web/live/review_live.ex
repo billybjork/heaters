@@ -8,7 +8,7 @@ defmodule HeatersWeb.ReviewLive do
   * **future**   – pre-fetched queue  (max 5 after the current one)
   * **history**  – last 5 reviewed clips (undo support)
 
-  ## “ID-mode”
+  ## "ID-mode"
 
   * **`id_mode?`**      – boolean; toggled by ⌘+Space (sent by JS)
   * **`sibling_page`**  – current page in the sibling-grid pagination
@@ -23,7 +23,8 @@ defmodule HeatersWeb.ReviewLive do
   # Components / helpers
   import HeatersWeb.SpritePlayer, only: [sprite_player: 1, sprite_url: 1]
 
-  alias Heaters.Clips
+  alias Heaters.Clip.Review, as: ClipReview
+  alias Heaters.Clip.Queries, as: ClipQueries
   alias Heaters.Clips.Clip
 
   # 1 current + 5 future
@@ -39,7 +40,7 @@ defmodule HeatersWeb.ReviewLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    clips = Clips.next_pending_review_clips(@prefetch)
+    clips = ClipReview.next_pending_review_clips(@prefetch)
 
     socket =
       socket
@@ -79,7 +80,7 @@ defmodule HeatersWeb.ReviewLive do
   # -------------------------------------------------------------------------
 
   # ─────────────────────────────────────────────────────────────────────────
-  # “ID-mode” toggle sent by JS (⌘ + Space)
+  # "ID-mode" toggle sent by JS (⌘ + Space)
   # ─────────────────────────────────────────────────────────────────────────
   @impl true
   def handle_event("toggle-id-mode", _params, socket) do
@@ -128,7 +129,7 @@ defmodule HeatersWeb.ReviewLive do
   end
 
   # ─────────────────────────────────────────────────────────────────────────
-  # MERGE & GROUP – explicit target_id variant (ID-mode)
+  # MERGE & GROUP – explicit target_id variant ("ID-mode")
   # ─────────────────────────────────────────────────────────────────────────
   for action <- ["merge", "group"] do
     @impl true
@@ -139,7 +140,7 @@ defmodule HeatersWeb.ReviewLive do
         )
         when is_binary(tgt_str) and tgt_str != "" do
       with {tgt_id, ""} <- Integer.parse(tgt_str),
-           %Clip{} = tgt <- Clips.get_clip!(tgt_id),
+           %Clip{} = tgt <- ClipQueries.get_clip!(tgt_id),
            true <- tgt.source_video_id == curr.source_video_id do
         socket =
           socket
@@ -159,7 +160,7 @@ defmodule HeatersWeb.ReviewLive do
   end
 
   # ─────────────────────────────────────────────────────────────────────────
-  # MERGE & GROUP (original “with previous clip” behaviour)
+  # MERGE & GROUP (original "with previous clip" behaviour)
   # ─────────────────────────────────────────────────────────────────────────
   @impl true
   def handle_event(
@@ -253,25 +254,25 @@ defmodule HeatersWeb.ReviewLive do
 
   defp persist_split_async(socket, clip, frame) do
     Phoenix.LiveView.start_async(socket, {:split, clip.id}, fn ->
-      Clips.request_split_and_fetch_next(clip, frame)
+      ClipReview.request_split_and_fetch_next(clip, frame)
     end)
   end
 
   defp persist_async(socket, {:merge, prev, curr}) do
     Phoenix.LiveView.start_async(socket, {:merge_pair, {prev.id, curr.id}}, fn ->
-      Clips.request_merge_and_fetch_next(prev, curr)
+      ClipReview.request_merge_and_fetch_next(prev, curr)
     end)
   end
 
   defp persist_async(socket, {:group, prev, curr}) do
     Phoenix.LiveView.start_async(socket, {:group_pair, {prev.id, curr.id}}, fn ->
-      Clips.request_group_and_fetch_next(prev, curr)
+      ClipReview.request_group_and_fetch_next(prev, curr)
     end)
   end
 
   defp persist_async(socket, clip_id, action) do
     Phoenix.LiveView.start_async(socket, {:persist, clip_id}, fn ->
-      Clips.select_clip_and_fetch_next(%Clip{id: clip_id}, action)
+      ClipReview.select_clip_and_fetch_next(%Clip{id: clip_id}, action)
     end)
   end
 
@@ -289,7 +290,7 @@ defmodule HeatersWeb.ReviewLive do
         |> Enum.map(& &1.id)
 
       needed = @prefetch - (length(assigns.future) + 1)
-      new_clips = Clips.next_pending_review_clips(needed, exclude_ids)
+      new_clips = ClipReview.next_pending_review_clips(needed, exclude_ids)
 
       update(socket, :future, &(&1 ++ new_clips))
     else
@@ -320,7 +321,7 @@ defmodule HeatersWeb.ReviewLive do
   @doc false
   defp assign_siblings(socket, %Clip{} = clip, page) do
     sibs =
-      Clips.for_source_video_with_sprites(
+      ClipReview.for_source_video_with_sprites(
         clip.source_video_id,
         clip.id,
         page,
