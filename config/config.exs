@@ -65,6 +65,19 @@ config :heaters, Heaters.PythonRunner,
   working_dir: System.get_env("PYTHON_WORKING_DIR") || File.cwd!(),
   runner_script: "python/runner.py"
 
+# Configure ExAws for S3 operations
+config :ex_aws,
+  access_key_id: [{:system, "AWS_ACCESS_KEY_ID"}, :instance_role],
+  secret_access_key: [{:system, "AWS_SECRET_ACCESS_KEY"}, :instance_role],
+  region: {:system, "AWS_REGION"}
+
+config :ex_aws, :s3,
+  scheme: "https://",
+  host: "s3.amazonaws.com",
+  region: {:system, "AWS_REGION"}
+
+
+
 # Configure esbuild (the bundler used for JS/CSS)
 config :esbuild,
   # Use the latest appropriate version

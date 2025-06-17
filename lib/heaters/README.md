@@ -128,13 +128,11 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 - `SpriteWorker` (`lib/heaters/clip/review/sprite_worker.ex`) - Sprite generation
 - `MergeWorker` (`lib/heaters/clip/review/merge_worker.ex`) - Review action
 - `SplitWorker` (`lib/heaters/clip/review/split_worker.ex`) - Review action
+- `ArchiveWorker` (`lib/heaters/clip/review/archive_worker.ex`) - Cleanup archived clips
 
 ### Post-Approval Workers
 - `KeyframeWorker` (`lib/heaters/clip/transform/keyframe_worker.ex`)
 - `EmbeddingWorker` (`lib/heaters/clip/embed/embedding_worker.ex`)
-
-### Utility Workers
-- `ArchiveWorker` (`lib/heaters/infrastructure/orchestration/archive_worker.ex`)
 
 ## Orchestration
 
@@ -172,6 +170,7 @@ def run_task_name(explicit_params, **kwargs) -> dict:
 - Return structured JSON data
 - Focus solely on media processing
 - Include progress reporting and error handling
+- Automatic S3 cleanup of source files after successful processing (merge/split operations)
 
 ## State Transition Rules
 
@@ -202,6 +201,24 @@ def run_task_name(explicit_params, **kwargs) -> dict:
 - **Comprehensive Logging**: All state transitions and errors logged
 - **Graceful Degradation**: Failed clips don't block other clips in the pipeline
 
+## S3 Operations
+
+### Elixir S3 Context (`lib/heaters/infrastructure/s3.ex`)
+- **Purpose**: Unified S3 operations interface, particularly for cleanup operations
+- **Used by**: `ArchiveWorker` for deleting archived clips and artifacts
+- **Benefits**: Environment-aware (dev/prod buckets), comprehensive error handling, batched operations
+
+### Python S3 Utils (`python/utils/s3_utils.py`)
+- **Purpose**: Common S3 deletion utilities for media processing tasks
+- **Used by**: `merge.py` and `split.py` for cleaning up source files after successful processing
+- **Benefits**: Reusable code, consistent error handling, atomic with media operations
+- **Features**: Batched deletion (respects S3 1000 object limit), comprehensive error reporting
+
+### S3 Deletion Strategy
+- **Archive operations**: Pure cleanup in Elixir (review_archived clips)
+- **Merge/Split operations**: Cleanup in Python as part of atomic media processing
+- **Environment handling**: Automatic dev/prod bucket selection via configuration
+
 ## Key Benefits
 
 1. **Clear Separation**: Media processing (Python) vs business logic (Elixir)
@@ -209,4 +226,5 @@ def run_task_name(explicit_params, **kwargs) -> dict:
 3. **Scalable**: Independent job processing with proper error handling
 4. **Flexible**: Easy to modify workflow or add new processing steps
 5. **Reliable**: Comprehensive state management and error recovery
-6. **Testable**: Pure functions with predictable inputs/outputs 
+6. **Testable**: Pure functions with predictable inputs/outputs
+7. **Environment-Aware**: Automatic dev/prod S3 bucket handling 

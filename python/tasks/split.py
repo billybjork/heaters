@@ -23,6 +23,9 @@ from pathlib import Path
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
+# Import our S3 utilities for cleanup operations
+from utils.s3_utils import delete_s3_objects, get_s3_client
+
 # --- Logging Configuration ---
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -328,11 +331,18 @@ def run_split(
                 }
                 uploaded_clips.append(uploaded_clip)
 
+            # Step 4: Clean up original source file from S3 after successful split
+            logger.info(f"Cleaning up original source file after successful split: {source_video_s3_path}")
+            
+            cleanup_result = delete_s3_objects(s3_client, s3_bucket_name, [source_video_s3_path])
+            logger.info(f"S3 cleanup completed: deleted {cleanup_result['deleted_count']} files, {cleanup_result['error_count']} errors")
+
             # Return structured data for Elixir to process
             return {
                 "status": "success",
                 "original_clip_id": clip_id,
                 "created_clips": uploaded_clips,
+                "cleanup": cleanup_result,
                 "metadata": {
                     "split_at_frame": split_params["split_at_frame"],
                     "clips_created": len(uploaded_clips),

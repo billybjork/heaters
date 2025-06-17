@@ -22,6 +22,9 @@ from pathlib import Path
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
+# Import our S3 utilities for cleanup operations
+from utils.s3_utils import delete_s3_objects, get_s3_client
+
 # --- Logging Configuration ---
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -216,6 +219,13 @@ def run_merge(
                 Callback=progress_callback
             )
 
+            # Step 4: Clean up source files from S3 after successful merge
+            source_files_to_delete = [target_s3_path, source_s3_path]
+            logger.info(f"Cleaning up source files after successful merge: {source_files_to_delete}")
+            
+            cleanup_result = delete_s3_objects(s3_client, s3_bucket_name, source_files_to_delete)
+            logger.info(f"S3 cleanup completed: deleted {cleanup_result['deleted_count']} files, {cleanup_result['error_count']} errors")
+
             # Return structured data for Elixir to process
             return {
                 "status": "success",
@@ -224,6 +234,7 @@ def run_merge(
                     "file_size": file_size,
                     "filename": merge_result['filename']
                 },
+                "cleanup": cleanup_result,
                 "metadata": {
                     "target_clip_id": target_clip_id,
                     "source_clip_id": source_clip_id,

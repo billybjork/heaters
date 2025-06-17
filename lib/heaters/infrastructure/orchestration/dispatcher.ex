@@ -9,7 +9,7 @@ defmodule Heaters.Infrastructure.Orchestration.Dispatcher do
   alias Heaters.Video.Ingest.IntakeWorker
   alias Heaters.Clip.Review.SpriteWorker
   alias Heaters.Clip.Transform.KeyframeWorker
-  alias Heaters.Infrastructure.Orchestration.ArchiveWorker
+  alias Heaters.Clip.Review.ArchiveWorker
 
   @impl Oban.Worker
   def perform(_job) do
