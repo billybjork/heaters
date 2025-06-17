@@ -23,6 +23,7 @@ import boto3
 import cv2
 import numpy as np
 from botocore.exceptions import ClientError, NoCredentialsError
+from utils.process_utils import run_ffmpeg_command
 
 # --- Logging Configuration ---
 logging.basicConfig(
@@ -80,14 +81,6 @@ class S3TransferProgress:
         except Exception as e:
             self._logger.error(f"S3 Progress error: {e}")
 
-def sanitize_filename(name):
-    """Removes potentially problematic characters for filenames and S3 keys."""
-    if not name:
-        return "untitled"
-    name = str(name)
-    name = re.sub(r'[^\w\s\-.]', '', name)
-    name = re.sub(r'\s+', '_', name).strip('_')
-    return name[:150] if name else "sanitized_untitled"
 
 def calculate_histogram(frame, bins=256, ranges=[0, 256]):
     """Calculates and normalizes the BGR histogram for a frame."""
@@ -152,17 +145,7 @@ def detect_scenes(video_path: str, threshold: float, method_name: str = "CORREL"
     
     return scenes, fps, (width, height), total_frames
 
-def run_ffmpeg_command(cmd_args, description="FFmpeg command"):
-    """Runs an FFmpeg command with proper error handling."""
-    cmd = ["ffmpeg"] + cmd_args
-    logger.info(f"{description}: {' '.join(cmd)}")
-    
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        logger.error(f"FFmpeg command failed: {result.stderr}")
-        raise RuntimeError(f"FFmpeg failed: {result.stderr}")
-    
-    return result
+
 
 def run_splice(
     source_video_id: int,
@@ -253,7 +236,7 @@ def run_splice(
                     "-y", str(output_path)
                 ]
                 
-                run_ffmpeg_command(ffmpeg_args, f"Extracting clip {i+1}")
+                run_ffmpeg_command(["ffmpeg"] + ffmpeg_args, f"Extracting clip {i+1}")
                 
                 # Upload to S3
                 s3_key = f"{output_s3_prefix}/{output_filename}"

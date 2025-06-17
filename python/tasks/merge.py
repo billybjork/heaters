@@ -24,6 +24,8 @@ from botocore.exceptions import ClientError, NoCredentialsError
 
 # Import our S3 utilities for cleanup operations
 from utils.s3_utils import delete_s3_objects, get_s3_client
+from utils import sanitize_filename
+from utils.process_utils import run_ffmpeg_command
 
 # --- Logging Configuration ---
 logging.basicConfig(
@@ -67,26 +69,9 @@ class S3TransferProgress:
         except Exception as e:
             self._logger.error(f"S3 Progress error: {e}")
 
-def sanitize_filename(name):
-    """Sanitizes a string to be a valid filename."""
-    if not name:
-        return "default_filename"
-    name = str(name)
-    name = re.sub(r'[^\w\.\-]+', '_', name)
-    name = re.sub(r'_+', '_', name).strip('_')
-    return name[:150]
 
-def run_ffmpeg_command(cmd_args, description="FFmpeg command"):
-    """Runs an FFmpeg command with proper error handling."""
-    cmd = ["ffmpeg"] + cmd_args
-    logger.info(f"{description}: {' '.join(cmd)}")
-    
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        logger.error(f"FFmpeg command failed: {result.stderr}")
-        raise RuntimeError(f"FFmpeg failed: {result.stderr}")
-    
-    return result
+
+
 
 def merge_videos(
     target_video_path: str,
@@ -116,7 +101,7 @@ def merge_videos(
         "-y", str(final_output_path)
     ]
     
-    run_ffmpeg_command(ffmpeg_cmd, "Merging videos")
+    run_ffmpeg_command(["ffmpeg"] + ffmpeg_cmd, "Merging videos")
     
     if not final_output_path.exists():
         raise RuntimeError("Video merge failed - output file not created")
@@ -165,7 +150,7 @@ def run_merge(
         raise ValueError("Cannot merge a clip with itself")
     
     # Extract merge metadata
-    new_identifier = merge_metadata.get("new_identifier", f"merged_{target_clip_id}_{source_clip_id}")
+    new_identifier = sanitize_filename(merge_metadata.get("new_identifier", f"merged_{target_clip_id}_{source_clip_id}"))
     
     # Get S3 resources from environment (provided by Elixir)
     s3_bucket_name = os.getenv("S3_BUCKET_NAME")

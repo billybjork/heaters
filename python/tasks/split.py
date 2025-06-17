@@ -25,6 +25,8 @@ from botocore.exceptions import ClientError, NoCredentialsError
 
 # Import our S3 utilities for cleanup operations
 from utils.s3_utils import delete_s3_objects, get_s3_client
+from utils import sanitize_filename
+from utils.process_utils import run_ffmpeg_command, run_ffprobe_command
 
 # --- Logging Configuration ---
 logging.basicConfig(
@@ -71,38 +73,9 @@ class S3TransferProgress:
         except Exception as e:
             self._logger.error(f"S3 Progress error: {e}")
 
-def sanitize_filename(name):
-    """Sanitizes a string to be a valid filename."""
-    if not name:
-        return "default_filename"
-    name = str(name)
-    name = re.sub(r'[^\w\.\-]+', '_', name)
-    name = re.sub(r'_+', '_', name).strip('_')
-    return name[:150]
 
-def run_ffmpeg_command(cmd_args, description="FFmpeg command"):
-    """Runs an FFmpeg command with proper error handling."""
-    cmd = ["ffmpeg"] + cmd_args
-    logger.info(f"{description}: {' '.join(cmd)}")
-    
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        logger.error(f"FFmpeg command failed: {result.stderr}")
-        raise RuntimeError(f"FFmpeg failed: {result.stderr}")
-    
-    return result
 
-def run_ffprobe_command(cmd_args, description="FFprobe command"):
-    """Runs an FFprobe command with proper error handling."""
-    cmd = ["ffprobe"] + cmd_args
-    logger.info(f"{description}: {' '.join(cmd)}")
-    
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        logger.error(f"FFprobe command failed: {result.stderr}")
-        raise RuntimeError(f"FFprobe failed: {result.stderr}")
-    
-    return result.stdout, result.stderr
+
 
 def get_video_fps(video_path: str) -> float:
     """Gets the FPS of a video file using ffprobe."""
@@ -185,7 +158,7 @@ def split_video(
             "-to", str(end_a_time)
         ] + ffmpeg_base_opts + [str(output_path_a)]
         
-        run_ffmpeg_command(cmd_a, "Creating clip A (before split)")
+        run_ffmpeg_command(["ffmpeg"] + cmd_a, "Creating clip A (before split)")
         
         if output_path_a.exists():
             file_size_a = output_path_a.stat().st_size
@@ -222,7 +195,7 @@ def split_video(
             "-to", str(end_b_time)
         ] + ffmpeg_base_opts + [str(output_path_b)]
         
-        run_ffmpeg_command(cmd_b, "Creating clip B (after split)")
+        run_ffmpeg_command(["ffmpeg"] + cmd_b, "Creating clip B (after split)")
         
         if output_path_b.exists():
             file_size_b = output_path_b.stat().st_size

@@ -23,6 +23,8 @@ from pathlib import Path
 
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
+from utils import sanitize_filename
+from utils.process_utils import run_ffmpeg_command, run_ffprobe_command
 
 # --- Logging Configuration ---
 logging.basicConfig(
@@ -73,38 +75,9 @@ class S3TransferProgress:
         except Exception as e:
             self._logger.error(f"S3 Progress error: {e}")
 
-def sanitize_filename(name):
-    """Sanitizes a string to be a valid filename."""
-    if not name:
-        return "default_filename"
-    name = str(name)
-    name = re.sub(r'[^\w\.\-]+', '_', name)
-    name = re.sub(r'_+', '_', name).strip('_')
-    return name[:150]
 
-def run_ffprobe_command(cmd_args, description="FFprobe command"):
-    """Runs an FFprobe command with proper error handling."""
-    cmd = ["ffprobe"] + cmd_args
-    logger.info(f"{description}: {' '.join(cmd)}")
-    
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        logger.error(f"FFprobe command failed: {result.stderr}")
-        raise RuntimeError(f"FFprobe failed: {result.stderr}")
-    
-    return result.stdout, result.stderr
 
-def run_ffmpeg_command(cmd_args, description="FFmpeg command"):
-    """Runs an FFmpeg command with proper error handling."""
-    cmd = ["ffmpeg"] + cmd_args
-    logger.info(f"{description}: {' '.join(cmd)}")
-    
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        logger.error(f"FFmpeg command failed: {result.stderr}")
-        raise RuntimeError(f"FFmpeg failed: {result.stderr}")
-    
-    return result
+
 
 def get_video_metadata(video_path: str) -> dict:
     """Extracts detailed video metadata using ffprobe."""
@@ -217,7 +190,7 @@ def generate_sprite_sheet(
         str(final_output_path)
     ]
     
-    run_ffmpeg_command(ffmpeg_cmd, f"Generating sprite sheet")
+    run_ffmpeg_command(["ffmpeg"] + ffmpeg_cmd, f"Generating sprite sheet")
     
     if not final_output_path.exists():
         raise RuntimeError("Sprite sheet generation failed - output file not created")

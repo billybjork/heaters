@@ -20,6 +20,7 @@ from pathlib import Path
 import boto3
 import cv2
 from botocore.exceptions import ClientError, NoCredentialsError
+from utils import sanitize_filename
 
 # --- Logging Configuration ---
 logging.basicConfig(
@@ -66,14 +67,7 @@ class S3TransferProgress:
         except Exception as e:
             self._logger.error(f"S3 Progress error: {e}")
 
-def sanitize_filename(name):
-    """Removes potentially problematic characters for filenames and S3 keys."""
-    if not name:
-        return "default_filename"
-    name = str(name)
-    name = re.sub(r'[^\w\.\-]+', '_', name)
-    name = re.sub(r'_+', '_', name).strip('_')
-    return name[:150] if name else "default_filename"
+
 
 def extract_keyframes(
     video_path: str,
