@@ -1,11 +1,11 @@
-defmodule Heaters.Infrastructure.PythonRunner do
+defmodule Heaters.Infrastructure.PyRunner do
   @moduledoc """
   Spawn-and-monitor a Python task through an OS port, with
   environment injection and Phoenix-PubSub progress streaming.
   """
 
   alias HeatersWeb.Endpoint
-  alias Heaters.Infrastructure.PythonRunner.Config
+  alias Heaters.Infrastructure.PyRunner.Config
   require Logger
 
   @default_timeout :timer.minutes(30)
@@ -78,7 +78,7 @@ defmodule Heaters.Infrastructure.PythonRunner do
           {:ok, port()} | {:error, String.t()}
   defp open_port(task_name, json_args, env) do
     tmp_file =
-      Path.join(System.tmp_dir!(), "python_args_#{System.unique_integer([:positive])}.json")
+      Path.join(System.tmp_dir!(), "py_args_#{System.unique_integer([:positive])}.json")
 
     with :ok <- File.write(tmp_file, json_args),
          {:ok, port} <- create_port(task_name, tmp_file, env) do
@@ -89,25 +89,25 @@ defmodule Heaters.Infrastructure.PythonRunner do
   @spec create_port(String.t(), String.t(), [{String.t(), String.t()}]) ::
           {:ok, port()} | {:error, String.t()}
   defp create_port(task_name, tmp_file, env) do
-    python_exe = Config.python_executable()
+    py_exe = Config.python_executable()
     working_dir = Config.working_dir()
     runner_script_path = Config.runner_script_path()
 
     args = [runner_script_path, task_name, "--args-file", tmp_file]
 
     Logger.info(
-      "PythonRunner: Creating port with python_exe=#{python_exe}, working_dir=#{working_dir}, script_exists=#{File.exists?(runner_script_path)}"
+      "PyRunner: Creating port with py_exe=#{py_exe}, working_dir=#{working_dir}, script_exists=#{File.exists?(runner_script_path)}"
     )
 
-    Logger.info("PythonRunner: Args: #{inspect(args)}")
-    Logger.info("PythonRunner: Env: #{inspect(env)}")
+    Logger.info("PyRunner: Args: #{inspect(args)}")
+    Logger.info("PyRunner: Env: #{inspect(env)}")
 
     Logger.info(
-      "PythonRunner: Args types: #{inspect(Enum.map(args, &{&1, :erlang.is_list(&1)}))}"
+      "PyRunner: Args types: #{inspect(Enum.map(args, &{&1, :erlang.is_list(&1)}))}"
     )
 
     Logger.info(
-      "PythonRunner: Python exe type: #{inspect({python_exe, :erlang.is_list(python_exe)})}"
+      "PyRunner: Python exe type: #{inspect({py_exe, :erlang.is_list(py_exe)})}"
     )
 
     # Convert environment variables to charlists (required by Port.open)
@@ -116,8 +116,8 @@ defmodule Heaters.Infrastructure.PythonRunner do
         {String.to_charlist(key), String.to_charlist(value)}
       end)
 
-    Logger.info("PythonRunner: Original env: #{inspect(env)}")
-    Logger.info("PythonRunner: Charlist env: #{inspect(charlist_env)}")
+    Logger.info("PyRunner: Original env: #{inspect(env)}")
+    Logger.info("PyRunner: Charlist env: #{inspect(charlist_env)}")
 
     port_options = [
       :binary,
@@ -129,29 +129,29 @@ defmodule Heaters.Infrastructure.PythonRunner do
       {:cd, working_dir}
     ]
 
-    Logger.info("PythonRunner: Port options: #{inspect(port_options)}")
-    Logger.info("PythonRunner: About to call Port.open with:")
-    Logger.info("PythonRunner:   First arg: #{inspect({:spawn_executable, python_exe})}")
-    Logger.info("PythonRunner:   Second arg: #{inspect(port_options)}")
+    Logger.info("PyRunner: Port options: #{inspect(port_options)}")
+    Logger.info("PyRunner: About to call Port.open with:")
+    Logger.info("PyRunner:   First arg: #{inspect({:spawn_executable, py_exe})}")
+    Logger.info("PyRunner:   Second arg: #{inspect(port_options)}")
 
     try do
       port =
         Port.open(
-          {:spawn_executable, python_exe},
+          {:spawn_executable, py_exe},
           port_options
         )
 
       Port.monitor(port)
-      Logger.info("PythonRunner: Port created successfully")
+      Logger.info("PyRunner: Port created successfully")
       {:ok, port}
     rescue
       e ->
         error_msg = "Failed to open port: #{Exception.message(e)}"
-        Logger.error("PythonRunner: #{error_msg}")
-        Logger.error("PythonRunner: Exception details: #{inspect(e)}")
-        Logger.error("PythonRunner: Python exe exists? #{File.exists?(python_exe)}")
-        Logger.error("PythonRunner: Working dir exists? #{File.exists?(working_dir)}")
-        Logger.error("PythonRunner: Runner script exists? #{File.exists?(runner_script_path)}")
+        Logger.error("PyRunner: #{error_msg}")
+        Logger.error("PyRunner: Exception details: #{inspect(e)}")
+        Logger.error("PyRunner: Python exe exists? #{File.exists?(py_exe)}")
+        Logger.error("PyRunner: Working dir exists? #{File.exists?(working_dir)}")
+        Logger.error("PyRunner: Runner script exists? #{File.exists?(runner_script_path)}")
         {:error, error_msg}
     end
   end
@@ -180,7 +180,7 @@ defmodule Heaters.Infrastructure.PythonRunner do
       {:ok, env}
     else
       {:error, reason} ->
-        Logger.error("PythonRunner: Failed to build environment: #{reason}")
+        Logger.error("PyRunner: Failed to build environment: #{reason}")
         {:error, reason}
     end
   end
@@ -211,13 +211,13 @@ defmodule Heaters.Infrastructure.PythonRunner do
     receive do
       {^port, {:data, {:eol, line}}} ->
         trimmed = String.trim(line)
-        Logger.info("[python] " <> trimmed)
+        Logger.info("[py] " <> trimmed)
         if pubsub_topic, do: Endpoint.broadcast(pubsub_topic, "progress", %{line: trimmed})
         handle_port_messages(port, [trimmed | buffer], pubsub_topic, timeout)
 
       {^port, {:data, line}} ->
         trimmed = String.trim(line)
-        Logger.info("[python] " <> trimmed)
+        Logger.info("[py] " <> trimmed)
         if pubsub_topic, do: Endpoint.broadcast(pubsub_topic, "progress", %{line: trimmed})
         handle_port_messages(port, [trimmed | buffer], pubsub_topic, timeout)
 
@@ -226,15 +226,15 @@ defmodule Heaters.Infrastructure.PythonRunner do
         # Log all output on non-zero exit for debugging
         if status != 0 do
           output = join_lines(buffer)
-          Logger.error("PythonRunner: Process exited with status #{status}")
-          Logger.error("PythonRunner: Full output: #{output}")
+          Logger.error("PyRunner: Process exited with status #{status}")
+          Logger.error("PyRunner: Full output: #{output}")
         end
 
         interpret_exit(status, buffer)
 
       {:DOWN, _ref, :port, ^port, reason} ->
         Port.close(port)
-        Logger.error("PythonRunner: Port died with reason: #{inspect(reason)}")
+        Logger.error("PyRunner: Port died with reason: #{inspect(reason)}")
         {:error, %{reason: :port_died, details: reason, output: join_lines(buffer)}}
 
       _other ->
@@ -242,7 +242,7 @@ defmodule Heaters.Infrastructure.PythonRunner do
     after
       timeout ->
         Port.close(port)
-        Logger.error("PythonRunner: Process timed out after #{timeout}ms")
+        Logger.error("PyRunner: Process timed out after #{timeout}ms")
         {:error, :timeout}
     end
   end
@@ -262,7 +262,7 @@ defmodule Heaters.Infrastructure.PythonRunner do
 
   defp interpret_exit(status, buffer) when status != 0 do
     output = join_lines(buffer)
-    Logger.error("PythonRunner: Process exited with status #{status}")
+    Logger.error("PyRunner: Process exited with status #{status}")
     {:error, %{exit_status: status, output: output}}
   end
 

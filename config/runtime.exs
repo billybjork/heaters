@@ -259,7 +259,7 @@ if config_env() == :prod do
     queues: queues,
     plugins: plugins
 
-  # Configure PythonRunner for production with strict validation
+  # Configure PyRunner for production with strict validation
   python_exe =
     System.get_env("PYTHON_EXECUTABLE") ||
       "/opt/venv/bin/python3"
@@ -278,10 +278,10 @@ if config_env() == :prod do
         end
       end)
 
-  config :heaters, Heaters.PythonRunner,
+  config :heaters, Heaters.PyRunner,
     python_executable: python_exe,
     working_dir: working_dir,
-    runner_script: "python/runner.py"
+    runner_script: "py/runner.py"
 end
 
 # General debug log at the end of runtime.exs

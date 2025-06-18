@@ -3,12 +3,12 @@ defmodule Heaters.Clip.Review.SpriteWorker do
 
   alias Heaters.Clip.Review
   alias Heaters.Clip.Queries, as: ClipQueries
-  alias Heaters.Infrastructure.PythonRunner
+  alias Heaters.Infrastructure.PyRunner
   require Logger
 
   @complete_states ["pending_review", "sprite_failed", "embedded", "review_approved", "review_archived"]
 
-  # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
+  # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, [perform: 1]}
 
   @impl Oban.Worker
@@ -19,7 +19,7 @@ defmodule Heaters.Clip.Review.SpriteWorker do
          :ok <- check_idempotency(clip),
          {:ok, updated_clip} <- Review.start_sprite_generation(clip_id) do
 
-      Logger.info("SpriteWorker: Running PythonRunner for clip_id: #{clip_id}")
+      Logger.info("SpriteWorker: Running PyRunner for clip_id: #{clip_id}")
 
       # Python task receives explicit S3 paths and processing parameters
       py_args = %{
@@ -29,9 +29,9 @@ defmodule Heaters.Clip.Review.SpriteWorker do
         overwrite: false
       }
 
-      case PythonRunner.run("sprite", py_args) do
+      case PyRunner.run("sprite", py_args) do
         {:ok, result} ->
-          Logger.info("SpriteWorker: PythonRunner succeeded for clip_id: #{clip_id}")
+          Logger.info("SpriteWorker: PyRunner succeeded for clip_id: #{clip_id}")
 
           # Use the Review context to process the success and transition to pending_review
           case Review.process_sprite_success(updated_clip, result) do
@@ -45,7 +45,7 @@ defmodule Heaters.Clip.Review.SpriteWorker do
           end
 
         {:error, reason} ->
-          Logger.error("SpriteWorker: PythonRunner failed for clip_id: #{clip_id}, reason: #{inspect(reason)}")
+          Logger.error("SpriteWorker: PyRunner failed for clip_id: #{clip_id}, reason: #{inspect(reason)}")
 
           # Use the Review context to mark as failed
           case Review.mark_sprite_failed(updated_clip.id, reason) do

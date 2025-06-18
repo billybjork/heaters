@@ -80,10 +80,10 @@ config :heaters, Oban,
 # Enable development-specific routes if you have them
 config :heaters, dev_routes: true
 
-# Configure PythonRunner for development
-config :heaters, Heaters.PythonRunner,
+# Configure PyRunner for development
+config :heaters, Heaters.PyRunner,
   python_executable:
     System.find_executable("python3") || System.find_executable("python") || "/usr/bin/python3",
   # Current directory for local dev
   working_dir: Path.expand("."),
-  runner_script: "python/runner.py"
+  runner_script: "py/runner.py"

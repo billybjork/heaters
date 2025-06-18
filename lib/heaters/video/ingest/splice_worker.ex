@@ -4,13 +4,13 @@ defmodule Heaters.Video.Ingest.SpliceWorker do
   alias Heaters.Video.Ingest
   alias Heaters.Video.Ingest.SourceVideo
   alias Heaters.Video.Queries, as: VideoQueries
-  alias Heaters.Infrastructure.PythonRunner
+  alias Heaters.Infrastructure.PyRunner
   alias Heaters.Clip.Review.SpriteWorker
   require Logger
 
   @splicing_complete_states ["spliced", "splicing_failed"]
 
-  # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
+  # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, [perform: 1, handle_splicing: 1]}
 
   @impl Oban.Worker
@@ -36,7 +36,7 @@ defmodule Heaters.Video.Ingest.SpliceWorker do
     # Use new state management pattern
     case Ingest.start_splicing(source_video.id) do
       {:ok, updated_video} ->
-        Logger.info("SpliceWorker: Running PythonRunner for source_video_id: #{updated_video.id}")
+        Logger.info("SpliceWorker: Running PyRunner for source_video_id: #{updated_video.id}")
 
         # Python task receives explicit S3 paths and detection parameters
         py_args = %{
@@ -46,8 +46,8 @@ defmodule Heaters.Video.Ingest.SpliceWorker do
           detection_params: %{threshold: 0.3}
         }
 
-        case PythonRunner.run("splice", py_args) do
-          {:ok, %{"clips" => clips_data}} when is_list(clips_data) ->
+        case PyRunner.run("splice", py_args) do
+          {:ok, %{"result" => %{"clips" => clips_data}}} when is_list(clips_data) ->
             Logger.info("SpliceWorker: Successfully received #{length(clips_data)} clips from Python")
 
             # Validate clips data before processing

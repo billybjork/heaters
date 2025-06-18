@@ -11,7 +11,7 @@
 /.elixir_ls/
 
 # ───────────────────────────────
-# Python-specific ignores
+# Py-specific ignores
 # ───────────────────────────────
 __pycache__/
 *.py[cod]

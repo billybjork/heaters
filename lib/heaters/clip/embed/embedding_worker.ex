@@ -3,10 +3,10 @@ defmodule Heaters.Clip.Embed.EmbeddingWorker do
 
   alias Heaters.Clip.Embed
   alias Heaters.Clip.Queries, as: ClipQueries
-  alias Heaters.Infrastructure.PythonRunner
+  alias Heaters.Infrastructure.PyRunner
   require Logger
 
-  # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
+  # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, [perform: 1]}
 
   @impl Oban.Worker
@@ -23,7 +23,7 @@ defmodule Heaters.Clip.Embed.EmbeddingWorker do
          :ok <- check_idempotency(clip),
          {:ok, updated_clip} <- Embed.start_embedding(clip_id) do
 
-      Logger.info("EmbeddingWorker: Running PythonRunner for clip_id: #{clip_id}")
+      Logger.info("EmbeddingWorker: Running PyRunner for clip_id: #{clip_id}")
 
       # Python task receives explicit parameters for embedding generation
     py_args = %{
@@ -33,9 +33,9 @@ defmodule Heaters.Clip.Embed.EmbeddingWorker do
       generation_strategy: generation_strategy
     }
 
-    case PythonRunner.run("embed", py_args) do
+    case PyRunner.run("embed", py_args) do
         {:ok, result} ->
-          Logger.info("EmbeddingWorker: PythonRunner succeeded for clip_id: #{clip_id}")
+          Logger.info("EmbeddingWorker: PyRunner succeeded for clip_id: #{clip_id}")
 
           # Use the new Embed context to process the success
           case Embed.process_embedding_success(updated_clip, result) do
@@ -49,7 +49,7 @@ defmodule Heaters.Clip.Embed.EmbeddingWorker do
           end
 
         {:error, reason} ->
-          Logger.error("EmbeddingWorker: PythonRunner failed for clip_id: #{clip_id}, reason: #{inspect(reason)}")
+          Logger.error("EmbeddingWorker: PyRunner failed for clip_id: #{clip_id}, reason: #{inspect(reason)}")
 
           # Use the new Embed context to mark as failed
           case Embed.mark_failed(updated_clip, "embedding_failed", reason) do

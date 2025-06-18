@@ -3,11 +3,11 @@ defmodule Heaters.Clip.Transform.KeyframeWorker do
 
   alias Heaters.Clip.Transform
   alias Heaters.Clip.Queries, as: ClipQueries
-  alias Heaters.Infrastructure.PythonRunner
+  alias Heaters.Infrastructure.PyRunner
   alias Heaters.Clip.Review.SpriteWorker
   require Logger
 
-  # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
+  # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, [perform: 1]}
 
   @impl Oban.Worker
@@ -21,7 +21,7 @@ defmodule Heaters.Clip.Transform.KeyframeWorker do
          :ok <- check_idempotency(clip),
          {:ok, updated_clip} <- Transform.start_keyframing_from_approved(clip_id) do
 
-      Logger.info("KeyframeWorker: Running PythonRunner for clip_id: #{clip_id}")
+      Logger.info("KeyframeWorker: Running PyRunner for clip_id: #{clip_id}")
 
       # Python task receives explicit S3 paths and processing parameters
       py_args = %{
@@ -31,9 +31,9 @@ defmodule Heaters.Clip.Transform.KeyframeWorker do
         strategy: strategy
       }
 
-        case PythonRunner.run("keyframe", py_args) do
+        case PyRunner.run("keyframe", py_args) do
         {:ok, result} ->
-          Logger.info("KeyframeWorker: PythonRunner succeeded for clip_id: #{clip_id}")
+          Logger.info("KeyframeWorker: PyRunner succeeded for clip_id: #{clip_id}")
 
           # Use the new Transform context to process the success
           case Transform.process_keyframe_success(updated_clip, result) do
@@ -55,7 +55,7 @@ defmodule Heaters.Clip.Transform.KeyframeWorker do
             end
 
           {:error, reason} ->
-          Logger.error("KeyframeWorker: PythonRunner failed for clip_id: #{clip_id}, reason: #{inspect(reason)}")
+          Logger.error("KeyframeWorker: PyRunner failed for clip_id: #{clip_id}, reason: #{inspect(reason)}")
 
           # Use the new Transform context to mark as failed
           case Transform.mark_failed(updated_clip, "keyframing_failed", reason) do

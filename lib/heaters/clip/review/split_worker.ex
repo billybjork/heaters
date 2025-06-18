@@ -1,10 +1,10 @@
 defmodule Heaters.Clip.Review.SplitWorker do
   use Oban.Worker, queue: :media_processing
 
-  alias Heaters.Infrastructure.PythonRunner
+  alias Heaters.Infrastructure.PyRunner
   alias Heaters.Clip.Review.SpriteWorker
 
-  # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
+  # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, perform: 1}
 
   @impl Oban.Worker
@@ -16,7 +16,7 @@ defmodule Heaters.Clip.Review.SplitWorker do
       }) do
     py_args = %{clip_id: clip_id, split_at_frame: split_at_frame}
 
-    case PythonRunner.run("split", py_args) do
+    case PyRunner.run("split", py_args) do
       {:ok, %{"result" => %{"new_clip_ids" => new_clip_ids}}} when is_list(new_clip_ids) ->
         # The split was successful. The original clip has been archived and two
         # new clips created. We'll enqueue SpriteWorker jobs for both to

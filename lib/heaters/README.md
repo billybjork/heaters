@@ -208,7 +208,7 @@ def run_task_name(explicit_params, **kwargs) -> dict:
 - **Used by**: `ArchiveWorker` for deleting archived clips and artifacts
 - **Benefits**: Environment-aware (dev/prod buckets), comprehensive error handling, batched operations
 
-### Python S3 Utils (`python/utils/s3_utils.py`)
+### Python S3 Utils (`py/utils/s3_utils.py`)
 - **Purpose**: Common S3 deletion utilities for media processing tasks
 - **Used by**: `merge.py` and `split.py` for cleaning up source files after successful processing
 - **Benefits**: Reusable code, consistent error handling, atomic with media operations

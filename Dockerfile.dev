@@ -24,8 +24,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # --- Install Python Dependencies into the Virtual Environment ---
 WORKDIR /app
-COPY python/requirements.txt ./python/requirements.txt
-RUN pip install --no-cache-dir -r python/requirements.txt
+COPY py/requirements.txt ./py/requirements.txt
+RUN pip install --no-cache-dir -r py/requirements.txt
 
 # --- Pre-install Elixir tools ---
 RUN mix local.hex --force && \

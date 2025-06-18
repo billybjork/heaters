@@ -6,7 +6,7 @@ import logging
 import importlib
 import traceback
 
-# Add the parent directory to Python path so we can import python
+# Add the parent directory to Python path so we can import py
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
@@ -63,11 +63,11 @@ def main():
             sys.exit(1)
 
     try:
-        # Dynamically import the task module from the `python.tasks` package
-        # e.g., if task_name is 'intake', this imports python.tasks.intake
-        task_module = importlib.import_module(f"python.tasks.{task_module_name}")
+        # Dynamically import the task module from the `py.tasks` package
+        # e.g., if task_name is 'intake', this imports py.tasks.intake
+        task_module = importlib.import_module(f"py.tasks.{task_module_name}")
     except ImportError as e:
-        logging.error(f"Error: Could not find or import task module 'python.tasks.{task_module_name}'.")
+        logging.error(f"Error: Could not find or import task module 'py.tasks.{task_module_name}'.")
         logging.error(f"Import error details: {e}")
         logging.error(f"Make sure the module exists and is properly named.")
         sys.exit(1)

@@ -3,10 +3,10 @@ defmodule Heaters.Video.Ingest.IntakeWorker do
 
   alias Heaters.Video.Ingest
   alias Heaters.Video.Queries, as: VideoQueries
-  alias Heaters.Infrastructure.PythonRunner
+  alias Heaters.Infrastructure.PyRunner
   require Logger
 
-  # Dialyzer cannot statically verify PythonRunner success paths due to external system dependencies
+  # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, perform: 1}
 
   @impl Oban.Worker
@@ -19,7 +19,7 @@ defmodule Heaters.Video.Ingest.IntakeWorker do
          {:ok, updated_video} <- Ingest.start_downloading(source_video_id) do
 
       Logger.info(
-        "IntakeWorker: Running PythonRunner for source_video_id: #{source_video_id}, URL: #{updated_video.original_url}"
+        "IntakeWorker: Running PyRunner for source_video_id: #{source_video_id}, URL: #{updated_video.original_url}"
       )
 
       # Python task now receives explicit S3 output prefix and returns data instead of managing state
@@ -30,10 +30,10 @@ defmodule Heaters.Video.Ingest.IntakeWorker do
         re_encode_for_qt: true
       }
 
-      case PythonRunner.run("intake", py_args, timeout: :timer.minutes(20)) do
+      case PyRunner.run("intake", py_args, timeout: :timer.minutes(20)) do
         {:ok, result} ->
           Logger.info(
-            "IntakeWorker: PythonRunner succeeded for source_video_id: #{source_video_id}, result: #{inspect(result)}"
+            "IntakeWorker: PyRunner succeeded for source_video_id: #{source_video_id}, result: #{inspect(result)}"
           )
 
           # Elixir handles the state transition and metadata update
@@ -53,7 +53,7 @@ defmodule Heaters.Video.Ingest.IntakeWorker do
         {:error, reason} ->
           # If the python script fails, we use the new state management to record the error
           Logger.error(
-            "IntakeWorker: PythonRunner failed for source_video_id: #{source_video_id}, reason: #{inspect(reason)}"
+            "IntakeWorker: PyRunner failed for source_video_id: #{source_video_id}, reason: #{inspect(reason)}"
           )
 
           case Ingest.mark_failed(updated_video, "ingestion_failed", reason) do
