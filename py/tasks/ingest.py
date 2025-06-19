@@ -1,5 +1,5 @@
 """
-Refactored Intake Task - "Dumber" Python focused on media processing only.
+Refactored Ingest Task - "Dumber" Python focused on media processing only.
 
 This version:
 - Receives explicit S3 paths and parameters from Elixir
@@ -73,7 +73,7 @@ class S3TransferProgress:
         except Exception as e:
             self._logger.error(f"S3 Progress error: {e}")
 
-def run_intake(
+def run_ingest(
     source_video_id: int, 
     input_source: str, 
     output_s3_prefix: str,
@@ -81,7 +81,7 @@ def run_intake(
     **kwargs
 ):
     """
-    Intake a source video: downloads/copies, re-encodes, uploads to S3.
+    Ingest a source video: downloads/copies, re-encodes, uploads to S3.
     Returns structured data about the processed video instead of managing database state.
     
     Args:
@@ -94,7 +94,7 @@ def run_intake(
     Returns:
         dict: Structured data about the processed video including S3 path and metadata
     """
-    logger.info(f"RUNNING INTAKE for source_video_id: {source_video_id}")
+    logger.info(f"RUNNING INGEST for source_video_id: {source_video_id}")
     logger.info(f"Input: '{input_source}', Output prefix: '{output_s3_prefix}'")
 
     # Get S3 resources from environment (provided by Elixir)
@@ -415,7 +415,7 @@ class YtdlpLogger:
 
 def main():
     """Main entry point for standalone execution"""
-    parser = argparse.ArgumentParser(description="Intake video processing task")
+    parser = argparse.ArgumentParser(description="Ingest video processing task")
     parser.add_argument("--source-video-id", type=int, required=True)
     parser.add_argument("--input-source", required=True)
     parser.add_argument("--output-s3-prefix", required=True)
@@ -424,7 +424,7 @@ def main():
     args = parser.parse_args()
     
     try:
-        result = run_intake(
+        result = run_ingest(
             args.source_video_id,
             args.input_source,
             args.output_s3_prefix,
