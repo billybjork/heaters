@@ -5,7 +5,7 @@ defmodule Heaters.Video.Ingest do
   """
 
   alias Heaters.Repo
-  alias Heaters.Video.Ingest.SourceVideo
+  alias Heaters.Video.Intake.SourceVideo
   alias Heaters.Video.Queries, as: VideoQueries
   alias Heaters.Clips.Clip
   require Logger

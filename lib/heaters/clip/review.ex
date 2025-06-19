@@ -11,7 +11,7 @@ defmodule Heaters.Clip.Review do
   alias Heaters.Repo
   alias Heaters.Clips.Clip
   alias Heaters.Clip.Review.ClipEvent
-  alias Heaters.Clip.Review.{MergeWorker, SplitWorker}
+  alias Heaters.Workers.Clip.{MergeWorker, SplitWorker}
 
   require Logger
 

@@ -68,6 +68,7 @@ defmodule Heaters.MixProject do
       {:ex_aws_s3, "~> 2.5"},
       {:hackney, "~> 1.20"},
       {:sweet_xml, "~> 0.7"},
+      {:ffmpex, "~> 0.11.0"},
       {:dialyxir, "~> 1.4", only: [:dev], runtime: false},
       {:spitfire, "~> 0.2.1", override: true}
     ]

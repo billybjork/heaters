@@ -1,9 +1,11 @@
-defmodule Heaters.Clip.Review.ArchiveWorker do
+defmodule Heaters.Workers.Clip.ArchiveWorker do
   use Oban.Worker, queue: :background_jobs
 
+  import Ecto.Query, warn: false
   alias Heaters.Clip.Queries, as: ClipQueries
   alias Heaters.Repo
   alias Heaters.Infrastructure.S3
+  alias Heaters.Clips.Clip
   alias Ecto.Multi
 
   require Logger
@@ -52,12 +54,25 @@ defmodule Heaters.Clip.Review.ArchiveWorker do
   end
 
   defp archive_in_database(clip) do
-    case Multi.new()
-         |> Multi.delete_all(:delete_artifacts, Ecto.assoc(clip, :clip_artifacts))
-         |> Multi.update(:archive_clip, ClipQueries.change_clip(clip, %{ingest_state: "archived"}))
-         |> Repo.transaction() do
-      {:ok, _results} -> :ok
-      {:error, _step, reason, _changes} -> {:error, reason}
+    Multi.new()
+    |> Multi.update_all(
+      :update_clip,
+      from(c in Clip, where: c.id == ^clip.id),
+      set: [ingest_state: "archived", action_committed_at: DateTime.utc_now()]
+    )
+    |> Repo.transaction()
+    |> case do
+      {:ok, %{update_clip: {1, _}}} ->
+        Logger.info("ArchiveWorker: Successfully archived clip #{clip.id}")
+        :ok
+
+      {:ok, %{update_clip: {0, _}}} ->
+        Logger.warning("ArchiveWorker: Clip #{clip.id} was not found during archiving")
+        :ok
+
+      {:error, operation, reason, _changes} ->
+        Logger.error("ArchiveWorker: Database transaction failed at #{operation}: #{inspect(reason)}")
+        {:error, reason}
     end
   end
 end

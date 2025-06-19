@@ -1,4 +1,4 @@
-defmodule Heaters.Video.Ingest.IntakeWorker do
+defmodule Heaters.Workers.Video.IngestWorker do
   use Oban.Worker, queue: :download
 
   alias Heaters.Video.Ingest
@@ -11,7 +11,7 @@ defmodule Heaters.Video.Ingest.IntakeWorker do
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"source_video_id" => source_video_id}}) do
-    Logger.info("IntakeWorker: Starting intake for source_video_id: #{source_video_id}")
+    Logger.info("IngestWorker: Starting ingest for source_video_id: #{source_video_id}")
 
     # Use new state management pattern
     with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id),
@@ -19,7 +19,7 @@ defmodule Heaters.Video.Ingest.IntakeWorker do
          {:ok, updated_video} <- Ingest.start_downloading(source_video_id) do
 
       Logger.info(
-        "IntakeWorker: Running PyRunner for source_video_id: #{source_video_id}, URL: #{updated_video.original_url}"
+        "IngestWorker: Running PyRunner for source_video_id: #{source_video_id}, URL: #{updated_video.original_url}"
       )
 
       # Python task now receives explicit S3 output prefix and returns data instead of managing state
@@ -30,36 +30,36 @@ defmodule Heaters.Video.Ingest.IntakeWorker do
         re_encode_for_qt: true
       }
 
-      case PyRunner.run("intake", py_args, timeout: :timer.minutes(20)) do
+      case PyRunner.run("ingest", py_args, timeout: :timer.minutes(20)) do
         {:ok, result} ->
           Logger.info(
-            "IntakeWorker: PyRunner succeeded for source_video_id: #{source_video_id}, result: #{inspect(result)}"
+            "IngestWorker: PyRunner succeeded for source_video_id: #{source_video_id}, result: #{inspect(result)}"
           )
 
           # Elixir handles the state transition and metadata update
           case Ingest.complete_downloading(source_video_id, result) do
             {:ok, _updated_video} ->
               # Enqueue the next worker in the chain
-              case Oban.insert(Heaters.Video.Ingest.SpliceWorker.new(%{source_video_id: updated_video.id})) do
+              case Oban.insert(Heaters.Workers.Video.SpliceWorker.new(%{source_video_id: updated_video.id})) do
             {:ok, _job} -> :ok
             {:error, reason} -> {:error, "Failed to enqueue splice worker: #{inspect(reason)}"}
           end
 
         {:error, reason} ->
-              Logger.error("IntakeWorker: Failed to update video metadata: #{inspect(reason)}")
+              Logger.error("IngestWorker: Failed to update video metadata: #{inspect(reason)}")
               {:error, reason}
           end
 
         {:error, reason} ->
           # If the python script fails, we use the new state management to record the error
           Logger.error(
-            "IntakeWorker: PyRunner failed for source_video_id: #{source_video_id}, reason: #{inspect(reason)}"
+            "IngestWorker: PyRunner failed for source_video_id: #{source_video_id}, reason: #{inspect(reason)}"
           )
 
           case Ingest.mark_failed(updated_video, "ingestion_failed", reason) do
             {:ok, _} -> {:error, reason}
             {:error, db_error} ->
-              Logger.error("IntakeWorker: Failed to mark video as failed: #{inspect(db_error)}")
+              Logger.error("IngestWorker: Failed to mark video as failed: #{inspect(db_error)}")
           {:error, reason}
           end
       end
@@ -67,13 +67,13 @@ defmodule Heaters.Video.Ingest.IntakeWorker do
       # Handles errors from the `with` statement (e.g., video not found or already processed)
       {:error, :already_processed} ->
         Logger.info(
-          "IntakeWorker: source_video_id #{source_video_id} already processed, skipping"
+          "IngestWorker: source_video_id #{source_video_id} already processed, skipping"
         )
         :ok
 
       {:error, reason} ->
         Logger.error(
-          "IntakeWorker: Error in workflow for source video #{source_video_id}: #{inspect(reason)}"
+          "IngestWorker: Error in workflow for source video #{source_video_id}: #{inspect(reason)}"
         )
         {:error, reason}
     end

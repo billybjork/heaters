@@ -30,16 +30,16 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 **States**: `new` → `downloading` → `downloaded` → `splicing` → `spliced`
 
 **Workers**: 
-- `IntakeWorker`: Downloads and processes source videos
+- `IngestWorker`: Downloads and processes source videos
 - `SpliceWorker`: Splits videos into clips to complete ingestion
 
 **Python Tasks**:
-- `intake.py`: Download, re-encode, upload to S3
+- `ingest.py`: Download, re-encode, upload to S3
 - `splice.py`: Split video into clips using scene detection
 
 **Process**:
 1. Source video created in `new` state
-2. `IntakeWorker` transitions to `downloading` → calls `intake.py` → transitions to `downloaded`
+2. `IngestWorker` transitions to `downloading` → calls `ingest.py` → transitions to `downloaded`
 3. `SpliceWorker` transitions to `splicing` → calls `splice.py` → transitions to `spliced`
 4. Clips created in `spliced` state, `SpriteWorker` jobs enqueued
 
@@ -51,7 +51,7 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 - `SpriteWorker`: Generates sprite sheets for human review
 
 **Python Tasks**:
-- `sprite.py`: Generate sprite sheets for frame-by-frame review
+- `sprite.py`: Generate sprite sheets for frame-by-frame review (located in `py_tasks/`)
 
 **Process**:
 1. Clips created in `spliced` state after video splicing
@@ -98,15 +98,17 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 - **Purpose**: Manage complete video ingestion workflow from download through clip creation
 - **States**: `new`, `downloading`, `downloaded`, `splicing`, `spliced`
 - **Key Functions**: `start_downloading/1`, `complete_downloading/2`, `start_splicing/1`, `complete_splicing/1`, `create_clips_from_splice/2`, `validate_clips_data/1`
-- **Workers**: `IntakeWorker`, `SpliceWorker`
+- **Workers**: `IngestWorker`, `SpliceWorker`
 
-
+### `Video.Intake` (`lib/heaters/video/intake.ex`)
+- **Purpose**: Simple interface for submitting new source videos
+- **Key Functions**: `submit/1` - Creates new source videos in "new" state
 
 ### `Clip.Review` (`lib/heaters/clip/review.ex`)
 - **Purpose**: Review preparation, human review workflow, and review actions
 - **States**: `spliced`, `generating_sprite`, `pending_review`, `review_approved`, `review_archived`
 - **Key Functions**: `start_sprite_generation/1`, `complete_sprite_generation/2`, event sourcing functions, review actions
-- **Workers**: `SpriteWorker`, `MergeWorker`, `SplitWorker`
+- **Workers**: `SpriteWorker`, `MergeWorker`, `SplitWorker` (organized in `lib/heaters/workers/`)
 
 ### `Clip.Transform` (`lib/heaters/clip/transform.ex`)
 - **Purpose**: Post-approval keyframe processing
@@ -120,27 +122,30 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 
 ## Worker Organization
 
-### Video Ingestion Workers
-- `IntakeWorker` (`lib/heaters/video/ingest/intake_worker.ex`)
-- `SpliceWorker` (`lib/heaters/video/ingest/splice_worker.ex`)
+Following Elixir/Phoenix best practices, all workers are organized in `lib/heaters/workers/` by domain:
 
-### Review Context Workers
-- `SpriteWorker` (`lib/heaters/clip/review/sprite_worker.ex`) - Sprite generation
-- `MergeWorker` (`lib/heaters/clip/review/merge_worker.ex`) - Review action
-- `SplitWorker` (`lib/heaters/clip/review/split_worker.ex`) - Review action
-- `ArchiveWorker` (`lib/heaters/clip/review/archive_worker.ex`) - Cleanup archived clips
+### Video Workers (`lib/heaters/workers/video/`)
+- `IngestWorker` - Downloads and processes source videos
+- `SpliceWorker` - Splits videos into clips based on scene detection
 
-### Post-Approval Workers
-- `KeyframeWorker` (`lib/heaters/clip/transform/keyframe_worker.ex`)
-- `EmbeddingWorker` (`lib/heaters/clip/embed/embedding_worker.ex`)
+### Clip Workers (`lib/heaters/workers/clip/`)
+- `SpriteWorker` - Generates sprite sheets for review preparation
+- `MergeWorker` - Merges two clips together (review action)
+- `SplitWorker` - Splits a clip at a specific frame (review action)
+- `ArchiveWorker` - Cleans up archived clips from S3 and database
+- `KeyframeWorker` - Extracts keyframes for embedding generation
+- `EmbeddingWorker` - Generates ML embeddings from clip content
+
+### Orchestration Workers (`lib/heaters/workers/`)
+- `Dispatcher` - Batch job orchestration and workflow management
 
 ## Orchestration
 
-### Dispatcher (`lib/heaters/infrastructure/orchestration/dispatcher.ex`)
+### Dispatcher (`lib/heaters/workers/dispatcher.ex`)
 
 Runs periodically to find work and enqueue jobs:
 
-1. **Step 1**: Find `new` videos → enqueue `IntakeWorker`
+1. **Step 1**: Find `new` videos → enqueue `IngestWorker`
 2. **Step 2**: Find `spliced` clips → enqueue `SpriteWorker` 
 3. **Step 3**: Process pending review actions (merge/split)
 4. **Step 4**: Find `review_approved` clips → enqueue `KeyframeWorker`
@@ -172,11 +177,26 @@ def run_task_name(explicit_params, **kwargs) -> dict:
 - Include progress reporting and error handling
 - Automatic S3 cleanup of source files after successful processing (merge/split operations)
 
+## Python Task Organization
+
+### Core Tasks (`py/tasks/`)
+- `ingest.py`: Video download and re-encoding
+- `splice.py`: Video scene detection and splitting
+- `keyframe.py`: Keyframe extraction using OpenCV
+- `embed.py`: ML embedding generation using CLIP/DINOv2
+
+### Legacy Tasks (`py_tasks/`)
+- `sprite.py`: Sprite sheet generation (referenced by SpriteWorker)
+
+### Runner Infrastructure
+- `py/runner.py`: Main entry point for all Python task execution
+- `py/utils/`: Shared utilities for S3 operations and common functions
+
 ## State Transition Rules
 
 ### Source Video States
-- `new` → `downloading` (via `IntakeWorker`)
-- `downloading` → `downloaded` (via `intake.py` success)
+- `new` → `downloading` (via `IngestWorker`)
+- `downloading` → `downloaded` (via `ingest.py` success)
 - `downloaded` → `splicing` (via `SpliceWorker`)
 - `splicing` → `spliced` (via `splice.py` success)
 

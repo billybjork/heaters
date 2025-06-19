@@ -209,6 +209,18 @@ defmodule Heaters.Clip.Embed do
     complete_embedding(clip.id, result)
   end
 
+  @doc """
+  Check if an embedding already exists for a clip with specific model and strategy.
+  """
+  @spec has_embedding?(integer(), String.t(), String.t()) :: boolean()
+  def has_embedding?(clip_id, model_name, generation_strategy) do
+    Embedding
+    |> where([e], e.clip_id == ^clip_id)
+    |> where([e], e.model_name == ^model_name)
+    |> where([e], e.generation_strategy == ^generation_strategy)
+    |> Repo.exists?()
+  end
+
   # Private helper functions
 
   defp update_clip(%Clip{} = clip, attrs) do

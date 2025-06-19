@@ -1,4 +1,4 @@
-defmodule Heaters.Clip.Review.SpriteWorker do
+defmodule Heaters.Workers.Clip.SpriteWorker do
   use Oban.Worker, queue: :media_processing
 
   alias Heaters.Clip.Review
