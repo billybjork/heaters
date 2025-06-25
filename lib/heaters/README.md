@@ -43,7 +43,7 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 3. `Videos.SpliceWorker` transitions to `splicing` → calls `splice.py` → transitions to `spliced`
 4. Clips created in `spliced` state, `Clips.SpriteWorker` jobs enqueued
 
-### 2. Clip Review Preparation (`Clips.Review` Context)
+### 2. Clip Review Preparation (`Clips.Transform` Context)
 
 **States**: `spliced` → `generating_sprite` → `pending_review`
 
@@ -55,7 +55,7 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 
 **Process**:
 1. Clips created in `spliced` state after video splicing
-2. `Clips.SpriteWorker` transitions to `generating_sprite` → calls `Clips.Transform.Sprite.run_sprite/1` → transitions to `pending_review`
+2. `Clips.SpriteWorker` uses `Transform` context to transition to `generating_sprite` → calls `Clips.Transform.Sprite.run_sprite/1` → transitions to `pending_review`
 3. Clips now ready for human review with sprite sheets
 
 ### 3. Human Review Process (`Clips.Review` Context)
@@ -115,13 +115,13 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 ### `Clips.Review` (`lib/heaters/clips/review.ex`)
 - **Purpose**: Human review workflow coordination and review actions
 - **States**: `pending_review`, `review_approved`, `review_archived`
-- **Key Functions**: Review action orchestration, fetching clips for review
-- **Related Contexts**: Uses `Events` for action logging, coordinates with `Transform` for sprite/merge/split operations
+- **Key Functions**: Review action orchestration, fetching clips for review, review-specific queries
+- **Related Contexts**: Uses `Events` for action logging, coordinates with `Transform` for merge/split operations
 
 ### `Clips.Transform` (`lib/heaters/clips/transform.ex`)
-- **Purpose**: Coordination layer for all clip transformation operations
+- **Purpose**: Coordination layer for all clip transformation operations and state management
 - **States**: `spliced`, `generating_sprite`, `pending_review`, `keyframing`, `keyframed` (various transformation states)
-- **Key Functions**: Shared utilities for error handling, artifact management, S3 path generation
+- **Key Functions**: Sprite state management, error handling, artifact management, S3 path generation
 - **Specialized Modules**:
   - `Clips.Transform.Sprite`: Sprite sheet generation (native Elixir with FFmpeg)
   - `Clips.Transform.Merge`: Clip merging operations (native Elixir with FFmpeg)  
@@ -162,7 +162,8 @@ Runs periodically to find work and enqueue jobs:
 2. **Step 2**: Find `spliced` clips → enqueue `Clips.SpriteWorker` 
 3. **Step 3**: Process pending review actions via `EventProcessor.commit_pending_actions()` (merge/split)
 4. **Step 4**: Find `review_approved` clips → enqueue `Clips.KeyframeWorker`
-5. **Step 5**: Find `review_archived` clips → enqueue `Clips.ArchiveWorker`
+5. **Step 5**: Find `keyframed` clips → enqueue `Clips.EmbeddingWorker`
+6. **Step 6**: Find `review_archived` clips → enqueue `Clips.ArchiveWorker`
 
 ## Python Task Interface
 

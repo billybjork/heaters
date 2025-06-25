@@ -1,7 +1,7 @@
 defmodule Heaters.Workers.Clips.SpriteWorker do
   use Oban.Worker, queue: :media_processing
 
-  alias Heaters.Clips.Review
+  alias Heaters.Clips.Transform
   alias Heaters.Clips.Transform.Sprite
   alias Heaters.Clips.Queries, as: ClipQueries
   require Logger
@@ -14,7 +14,7 @@ defmodule Heaters.Workers.Clips.SpriteWorker do
 
     with {:ok, clip} <- ClipQueries.get_clip_with_artifacts(clip_id),
          :ok <- check_idempotency(clip),
-         {:ok, updated_clip} <- Review.start_sprite_generation(clip_id) do
+         {:ok, updated_clip} <- Transform.start_sprite_generation(clip_id) do
 
       Logger.info("SpriteWorker: Running Elixir sprite generation for clip_id: #{clip_id}")
 
@@ -23,8 +23,8 @@ defmodule Heaters.Workers.Clips.SpriteWorker do
         {:ok, result} ->
           Logger.info("SpriteWorker: Sprite generation succeeded for clip_id: #{clip_id}")
 
-          # Use the Review context to process the success and transition to pending_review
-          case Review.process_sprite_success(updated_clip, result) do
+          # Use the Transform context to process the success and transition to pending_review
+          case Transform.process_sprite_success(updated_clip, result) do
             {:ok, _final_clip} ->
               Logger.info("SpriteWorker: Clip #{clip_id} transitioned to pending_review state")
               :ok
@@ -37,8 +37,8 @@ defmodule Heaters.Workers.Clips.SpriteWorker do
         {:error, reason} ->
           Logger.error("SpriteWorker: Sprite generation failed for clip_id: #{clip_id}, reason: #{inspect(reason)}")
 
-          # Use the Review context to mark as failed
-          case Review.mark_sprite_failed(updated_clip.id, reason) do
+          # Use the Transform context to mark as failed
+          case Transform.mark_sprite_failed(updated_clip.id, reason) do
             {:ok, _} -> {:error, reason}
             {:error, db_error} ->
               Logger.error("SpriteWorker: Failed to mark clip as failed: #{inspect(db_error)}")

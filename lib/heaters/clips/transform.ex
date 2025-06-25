@@ -198,4 +198,136 @@ defmodule Heaters.Clips.Transform do
 
   defp format_error_message(error_reason) when is_binary(error_reason), do: error_reason
   defp format_error_message(error_reason), do: inspect(error_reason)
+
+  @doc """
+  Transition a clip to "generating_sprite" state for sprite generation.
+  """
+  @spec start_sprite_generation(integer()) :: {:ok, Clip.t()} | {:error, any()}
+  def start_sprite_generation(clip_id) do
+    with {:ok, clip} <- ClipQueries.get_clip(clip_id),
+         :ok <- validate_sprite_transition(clip.ingest_state) do
+      update_clip(clip, %{
+        ingest_state: "generating_sprite",
+        last_error: nil
+      })
+    end
+  end
+
+  @doc """
+  Mark sprite generation as complete and transition to pending_review.
+
+  This function handles the successful completion of sprite generation,
+  creates sprite artifacts, and transitions the clip to pending_review state.
+  """
+  @spec complete_sprite_generation(integer(), map()) :: {:ok, Clip.t()} | {:error, any()}
+  def complete_sprite_generation(clip_id, sprite_data \\ %{}) do
+    Repo.transaction(fn ->
+      with {:ok, clip} <- ClipQueries.get_clip(clip_id),
+           {:ok, updated_clip} <- update_clip(clip, %{
+             ingest_state: "pending_review",
+             last_error: nil
+           }),
+           {:ok, _artifacts} <- maybe_create_sprite_artifacts(clip_id, sprite_data) do
+        updated_clip
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
+
+  @doc """
+  Mark sprite generation as failed.
+
+  This is a convenience function that calls the generic mark_failed/3
+  with sprite-specific parameters.
+  """
+  @spec mark_sprite_failed(integer(), any()) :: {:ok, Clip.t()} | {:error, any()}
+  def mark_sprite_failed(clip_id, error_reason) do
+    mark_failed(clip_id, "sprite_failed", error_reason)
+  end
+
+  @doc """
+  Process successful sprite generation results.
+
+  This is a convenience function for processing sprite success results
+  from workers or direct calls.
+  """
+  @spec process_sprite_success(Clip.t(), map()) :: {:ok, Clip.t()} | {:error, any()}
+  def process_sprite_success(%Clip{} = clip, result) do
+    complete_sprite_generation(clip.id, result)
+  end
+
+  # Private helper functions
+
+  defp validate_sprite_transition(current_state) do
+    case current_state do
+      "spliced" -> :ok
+      "sprite_failed" -> :ok
+      _ -> {:error, :invalid_state_transition}
+    end
+  end
+
+  defp maybe_create_sprite_artifacts(clip_id, sprite_data) when map_size(sprite_data) > 0 do
+    artifacts_data = Map.get(sprite_data, "artifacts", [])
+
+    if Enum.any?(artifacts_data) do
+      create_artifacts(clip_id, "sprite_sheet", artifacts_data)
+    else
+      {:ok, []}
+    end
+  end
+
+  defp maybe_create_sprite_artifacts(_clip_id, _sprite_data), do: {:ok, []}
+
+  @doc """
+  Transition a clip to "keyframing" state for keyframe extraction.
+  """
+  @spec start_keyframing(integer()) :: {:ok, Clip.t()} | {:error, any()}
+  def start_keyframing(clip_id) do
+    with {:ok, clip} <- ClipQueries.get_clip(clip_id),
+         :ok <- validate_keyframe_transition(clip.ingest_state) do
+      update_clip(clip, %{
+        ingest_state: "keyframing",
+        last_error: nil
+      })
+    end
+  end
+
+  @doc """
+  Mark keyframe extraction as complete and transition to keyframed state.
+
+  This function handles the successful completion of keyframe extraction
+  and transitions the clip to keyframed state.
+  """
+  @spec complete_keyframing(integer()) :: {:ok, Clip.t()} | {:error, any()}
+  def complete_keyframing(clip_id) do
+    with {:ok, clip} <- ClipQueries.get_clip(clip_id) do
+      update_clip(clip, %{
+        ingest_state: "keyframed",
+        keyframed_at: DateTime.utc_now(),
+        last_error: nil
+      })
+    end
+  end
+
+  @doc """
+  Mark keyframe extraction as failed.
+
+  This is a convenience function that calls the generic mark_failed/3
+  with keyframe-specific parameters.
+  """
+  @spec mark_keyframe_failed(integer(), any()) :: {:ok, Clip.t()} | {:error, any()}
+  def mark_keyframe_failed(clip_id, error_reason) do
+    mark_failed(clip_id, "keyframe_failed", error_reason)
+  end
+
+  # Private helper functions for keyframing
+
+  defp validate_keyframe_transition(current_state) do
+    case current_state do
+      "review_approved" -> :ok
+      "keyframe_failed" -> :ok
+      _ -> {:error, :invalid_state_transition}
+    end
+  end
 end

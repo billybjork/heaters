@@ -47,6 +47,17 @@ defmodule Heaters.Clips do
   defdelegate build_artifact_prefix(clip, artifact_type), to: Transform
   defdelegate create_artifacts(clip_id, artifact_type, artifacts_data), to: Transform
 
+  # Sprite state management (delegated to Transform)
+  defdelegate start_sprite_generation(clip_id), to: Transform
+  defdelegate complete_sprite_generation(clip_id, sprite_data \\ %{}), to: Transform
+  defdelegate mark_sprite_failed(clip_id, error_reason), to: Transform
+  defdelegate process_sprite_success(clip, result), to: Transform
+
+  # Keyframe state management (delegated to Transform)
+  defdelegate start_keyframing(clip_id), to: Transform
+  defdelegate complete_keyframing(clip_id), to: Transform
+  defdelegate mark_keyframe_failed(clip_id, error_reason), to: Transform
+
   # Embed operations
   defdelegate start_embedding(clip_id), to: Embed
   defdelegate complete_embedding(clip_id, embedding_data), to: Embed

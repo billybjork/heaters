@@ -282,36 +282,46 @@ lib/heaters/
 ### Phase 4: Refactor Review Context (Medium Risk)
 **Goal**: Slim down Review context to focus only on workflow coordination
 
-#### Task 4.1: Extract Sprite State Management
-- [ ] Move sprite state management functions from `review.ex` to `transform.ex`:
-  - [ ] `start_sprite_generation/1`
-  - [ ] `complete_sprite_generation/2`
-  - [ ] `mark_sprite_failed/2`
-  - [ ] `process_sprite_success/2`
-  - [ ] `build_sprite_prefix/1`
+#### Task 4.1: Extract Sprite State Management ✅ COMPLETE
+- [x] Move sprite state management functions from `review.ex` to `transform.ex`:
+  - [x] `start_sprite_generation/1`
+  - [x] `complete_sprite_generation/2`
+  - [x] `mark_sprite_failed/2`
+  - [x] `process_sprite_success/2`
+  - [x] `build_sprite_prefix/1` (consolidated with `build_artifact_prefix/2`)
+- [x] Update `SpriteWorker` to use `Transform` context instead of `Review`
+- [x] Keep review-specific query `for_source_video_with_sprites/4` in Review context
+- [x] Add sprite functions to main `Clips` context delegation
+- [x] Verify compilation and type safety
 
-#### Task 4.2: Update Review Context to Use Events
-- [ ] Update `select_clip_and_fetch_next/2` to use `Events.log_review_action/4`
-- [ ] Update `request_merge_and_fetch_next/2` to use `Events.log_merge_action/3`
-- [ ] Update `request_split_and_fetch_next/2` to use `Events.log_split_action/3`
-- [ ] Update `request_group_and_fetch_next/2` to use `Events.log_group_action/3`
-- [ ] Remove event creation logic from Review context
+#### Task 4.2: Update Review Context to Use Events ✅ COMPLETE
+- [x] Update `select_clip_and_fetch_next/2` to use `Events.log_review_action/4`
+- [x] Update `request_merge_and_fetch_next/2` to use `Events.log_merge_action/3`
+- [x] Update `request_split_and_fetch_next/2` to use `Events.log_split_action/3`
+- [x] Update `request_group_and_fetch_next/2` to use `Events.log_group_action/3`
+- [x] Remove direct event creation logic from Review context
+- [x] Add proper error handling for event logging
+- [x] Verify compilation and type safety
 
-#### Task 4.3: Update Transform Context Coordination
-- [ ] Add state management functions to `transform.ex`:
-  - [ ] `start_sprite_generation/1`
-  - [ ] `complete_sprite_generation/2`
-  - [ ] `start_keyframing/1`
-  - [ ] `complete_keyframing/2`
-  - [ ] `mark_failed/3`
-- [ ] Add shared utility functions:
-  - [ ] `build_artifact_prefix/2`
-  - [ ] `create_artifacts/2`
+#### Task 4.3: Update Transform Context Coordination ✅ COMPLETE
+- [x] Add state management functions to `transform.ex`:
+  - [x] `start_sprite_generation/1` (completed in Task 4.1)
+  - [x] `complete_sprite_generation/2` (completed in Task 4.1)
+  - [x] `start_keyframing/1`
+  - [x] `complete_keyframing/2`
+  - [x] `mark_failed/3` (already existed)
+- [x] Add shared utility functions:
+  - [x] `build_artifact_prefix/2` (already existed)
+  - [x] `create_artifacts/2` (already existed)
+- [x] Add keyframe convenience functions:
+  - [x] `mark_keyframe_failed/2`
+- [x] Add keyframe functions to main `Clips` context delegation
+- [x] Verify compilation and type safety
 
-#### Task 4.4: Test Refactored Review Context
-- [ ] Test review workflow with new Events integration
-- [ ] Test sprite generation with Transform context
-- [ ] Ensure LiveView integration still works
+#### Task 4.4: Test Refactored Review Context ✅ COMPLETE
+- [x] Test review workflow with new Events integration
+- [x] Test sprite generation with Transform context
+- [ ] Ensure LiveView integration still works (deferred to Phase 6)
 
 ### Phase 5: Update Workers and Dependencies (Low Risk)
 **Goal**: Update all workers to use new context structure
