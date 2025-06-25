@@ -32,6 +32,9 @@ defmodule Heaters.Videos do
   defdelegate submit(url), to: Intake
   defdelegate update_source_video(source_video, attrs), to: Intake
 
-  # Query operations (if any exist in queries.ex)
-  # Note: We'll need to check what functions exist in videos/queries.ex
+  # Query operations
+  alias Heaters.Videos.Queries
+
+  defdelegate get_source_video(id), to: Queries
+  defdelegate get_videos_by_state(state), to: Queries
 end
