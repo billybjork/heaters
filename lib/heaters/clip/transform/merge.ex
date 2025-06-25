@@ -1,4 +1,4 @@
-defmodule Heaters.Clip.Review.Merge do
+defmodule Heaters.Clip.Transform.Merge do
   @moduledoc """
   Video merging operations using FFmpeg via ffmpex.
 
@@ -236,13 +236,13 @@ defmodule Heaters.Clip.Review.Merge do
 
     attrs = %{
       source_video_id: target_clip.source_video_id,
-      state: "spliced", # Back to spliced to generate a new sprite
+      ingest_state: "spliced", # Back to spliced to generate a new sprite
       start_frame: new_start_frame,
       end_frame: new_end_frame,
       start_time_seconds: new_start_time,
       end_time_seconds: new_end_time,
       clip_filepath: uploaded_clip_data.s3_key,
-      file_size: uploaded_clip_data.file_size,
+      clip_identifier: Path.basename(uploaded_clip_data.filename, ".mp4"),
       # Carry over metadata from the target clip
       processing_metadata: Map.merge(
         target_clip.processing_metadata || %{},
@@ -262,7 +262,7 @@ defmodule Heaters.Clip.Review.Merge do
     try do
       query = from(c in Clip, where: c.id in [^target_clip_id, ^source_clip_id])
       # Repo.update_all can raise an exception, so we wrap it in a try/rescue
-      case Repo.update_all(query, set: [state: "merged", clip_filepath: nil, file_size: 0]) do
+      case Repo.update_all(query, set: [ingest_state: "merged", clip_filepath: nil]) do
         {count, _} ->
           Logger.info("Merge: Updated #{count} source clips to merged state")
           # Return a consistent success tuple

@@ -1,4 +1,4 @@
-defmodule Heaters.Clip.Review.Sprite do
+defmodule Heaters.Clip.Transform.Sprite do
   @moduledoc """
   Sprite sheet generation operations using FFmpeg via ffmpex.
 

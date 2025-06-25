@@ -51,11 +51,11 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 - `SpriteWorker`: Generates sprite sheets for human review
 
 **Elixir Modules**:
-- `Heaters.Clip.Review.Sprite`: Generate sprite sheets using FFmpex (pure Elixir implementation)
+- `Heaters.Clip.Transform.Sprite`: Generate sprite sheets using FFmpex (pure Elixir implementation)
 
 **Process**:
 1. Clips created in `spliced` state after video splicing
-2. `SpriteWorker` transitions to `generating_sprite` → calls `Sprite.run_sprite/1` → transitions to `pending_review`
+2. `SpriteWorker` transitions to `generating_sprite` → calls `Transform.Sprite.run_sprite/1` → transitions to `pending_review`
 3. Clips now ready for human review with sprite sheets
 
 ### 3. Human Review Process (`Clip.Review` Context)
@@ -104,16 +104,29 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 - **Purpose**: Simple interface for submitting new source videos
 - **Key Functions**: `submit/1` - Creates new source videos in "new" state
 
+### `Events` (`lib/heaters/events/`)
+- **Purpose**: Event sourcing infrastructure for review actions using CQRS pattern
+- **Key Modules**:
+  - `Events.Events`: Write-side event creation API
+  - `Events.EventProcessor`: Read-side event processing and job orchestration
+- **Key Functions**: `log_review_action/4`, `log_merge_action/3`, `log_split_action/3`, `commit_pending_actions/0`
+- **Benefits**: Audit trail, reliable job queuing, separation of write/read operations
+
 ### `Clip.Review` (`lib/heaters/clip/review.ex`)
-- **Purpose**: Review preparation, human review workflow, and review actions
-- **States**: `spliced`, `generating_sprite`, `pending_review`, `review_approved`, `review_archived`
-- **Key Functions**: `start_sprite_generation/1`, `complete_sprite_generation/2`, event sourcing functions, review actions
-- **Workers**: `SpriteWorker`, `MergeWorker`, `SplitWorker` (organized in `lib/heaters/workers/`)
+- **Purpose**: Human review workflow coordination and review actions
+- **States**: `pending_review`, `review_approved`, `review_archived`
+- **Key Functions**: Review action orchestration, fetching clips for review
+- **Related Contexts**: Uses `Events` for action logging, coordinates with `Transform` for sprite/merge/split operations
 
 ### `Clip.Transform` (`lib/heaters/clip/transform.ex`)
-- **Purpose**: Post-approval keyframe processing
-- **States**: `review_approved`, `keyframing`, `keyframed`
-- **Key Functions**: `start_keyframing_from_approved/1`, `complete_keyframing/1`, `create_keyframe_artifacts/2`
+- **Purpose**: Coordination layer for all clip transformation operations
+- **States**: `spliced`, `generating_sprite`, `pending_review`, `keyframing`, `keyframed` (various transformation states)
+- **Key Functions**: Shared utilities for error handling, artifact management, S3 path generation
+- **Specialized Modules**:
+  - `Transform.Sprite`: Sprite sheet generation (native Elixir with FFmpeg)
+  - `Transform.Merge`: Clip merging operations (native Elixir with FFmpeg)  
+  - `Transform.Split`: Clip splitting operations (native Elixir with FFmpeg)
+  - `Transform.Keyframe`: Keyframe extraction (Python OpenCV integration)
 
 ### `Clip.Embed` (`lib/heaters/clip/embed.ex`)
 - **Purpose**: ML embedding generation and storage
@@ -129,12 +142,12 @@ Following Elixir/Phoenix best practices, all workers are organized in `lib/heate
 - `SpliceWorker` - Splits videos into clips based on scene detection
 
 ### Clip Workers (`lib/heaters/workers/clip/`)
-- `SpriteWorker` - Generates sprite sheets for review preparation
-- `MergeWorker` - Merges two clips together (review action)
-- `SplitWorker` - Splits a clip at a specific frame (review action)
+- `SpriteWorker` - Generates sprite sheets for review preparation (native Elixir with FFmpeg)
+- `MergeWorker` - Merges two clips together (review action, native Elixir with FFmpeg)
+- `SplitWorker` - Splits a clip at a specific frame (review action, native Elixir with FFmpeg)  
 - `ArchiveWorker` - Cleans up archived clips from S3 and database
-- `KeyframeWorker` - Extracts keyframes for embedding generation
-- `EmbeddingWorker` - Generates ML embeddings from clip content
+- `KeyframeWorker` - Extracts keyframes for embedding generation (Python OpenCV)
+- `EmbeddingWorker` - Generates ML embeddings from clip content (Python ML models)
 
 ### Orchestration Workers (`lib/heaters/workers/`)
 - `Dispatcher` - Batch job orchestration and workflow management
@@ -147,7 +160,7 @@ Runs periodically to find work and enqueue jobs:
 
 1. **Step 1**: Find `new` videos → enqueue `IngestWorker`
 2. **Step 2**: Find `spliced` clips → enqueue `SpriteWorker` 
-3. **Step 3**: Process pending review actions (merge/split)
+3. **Step 3**: Process pending review actions via `EventProcessor.commit_pending_actions()` (merge/split)
 4. **Step 4**: Find `review_approved` clips → enqueue `KeyframeWorker`
 5. **Step 5**: Find `review_archived` clips → enqueue `ArchiveWorker`
 
@@ -187,6 +200,7 @@ def run_task_name(explicit_params, **kwargs) -> dict:
 
 ### Legacy Tasks (`py_tasks/`)
 - (sprite.py was migrated to pure Elixir implementation)
+- (merge.py and split.py were never implemented - operations use native Elixir with FFmpeg)
 
 ### Runner Infrastructure
 - `py/runner.py`: Main entry point for all Python task execution

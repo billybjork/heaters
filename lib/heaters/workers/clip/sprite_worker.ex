@@ -2,7 +2,7 @@ defmodule Heaters.Workers.Clip.SpriteWorker do
   use Oban.Worker, queue: :media_processing
 
   alias Heaters.Clip.Review
-  alias Heaters.Clip.Review.Sprite
+  alias Heaters.Clip.Transform.Sprite
   alias Heaters.Clip.Queries, as: ClipQueries
   require Logger
 

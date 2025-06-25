@@ -1,4 +1,4 @@
-defmodule Heaters.Clip.Review.Split do
+defmodule Heaters.Clip.Transform.Split do
   @moduledoc """
   Video splitting operations using FFmpeg via ffmpex.
 
@@ -10,7 +10,7 @@ defmodule Heaters.Clip.Review.Split do
   - Managing clip state transitions
   """
 
-    import FFmpex
+  import FFmpex
   use FFmpex.Options
 
   alias Heaters.Repo
@@ -161,8 +161,6 @@ defmodule Heaters.Clip.Review.Split do
     end
   end
 
-
-
   @spec download_source_video(Clip.t(), String.t()) :: {:ok, String.t()} | {:error, any()}
   defp download_source_video(%Clip{clip_filepath: s3_path} = _clip, temp_dir) do
     local_filename = Path.basename(s3_path)
@@ -173,7 +171,7 @@ defmodule Heaters.Clip.Review.Split do
     bucket_name = get_s3_bucket_name()
     s3_key = String.trim_leading(s3_path, "/")
 
-            try do
+    try do
       # Use streaming download for better memory efficiency with large files
       file = File.open!(local_path, [:write, :binary])
 
@@ -313,7 +311,7 @@ defmodule Heaters.Clip.Review.Split do
     end
   end
 
-    @spec get_video_fps_with_ffprobe(String.t()) :: {:ok, float()} | {:error, any()}
+  @spec get_video_fps_with_ffprobe(String.t()) :: {:ok, float()} | {:error, any()}
   defp get_video_fps_with_ffprobe(video_path) do
     try do
       # Use System.cmd to call ffprobe directly since FFmpex doesn't expose ffprobe options
@@ -356,7 +354,7 @@ defmodule Heaters.Clip.Review.Split do
     end
   end
 
-    @spec create_video_clip(String.t(), String.t(), float(), float()) :: {:ok, integer()} | {:error, any()}
+  @spec create_video_clip(String.t(), String.t(), float(), float()) :: {:ok, integer()} | {:error, any()}
   defp create_video_clip(input_path, output_path, start_time, end_time) do
     try do
       # Create FFmpeg command matching the Python implementation exactly:
@@ -402,8 +400,6 @@ defmodule Heaters.Clip.Review.Split do
     end
   end
 
-
-
   @spec upload_split_clips(list(map()), Clip.t()) :: {:ok, list(map())} | {:error, any()}
   defp upload_split_clips(created_clips, %Clip{source_video_id: source_video_id, id: _clip_id}) do
     bucket_name = get_s3_bucket_name()
@@ -438,7 +434,7 @@ defmodule Heaters.Clip.Review.Split do
 
   @spec cleanup_original_file(Clip.t()) :: {:ok, map()} | {:error, any()}
   defp cleanup_original_file(%Clip{clip_filepath: s3_path}) do
-        Logger.info("Split: Cleaning up original source file: #{s3_path}")
+    Logger.info("Split: Cleaning up original source file: #{s3_path}")
 
     s3_key = String.trim_leading(s3_path, "/")
 
