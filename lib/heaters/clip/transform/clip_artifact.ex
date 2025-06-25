@@ -24,4 +24,11 @@ defmodule Heaters.Clip.Transform.ClipArtifact do
     belongs_to(:clip, Heaters.Clips.Clip)
     timestamps(type: :utc_datetime)
   end
+
+  @doc false
+  def changeset(artifact, attrs) do
+    artifact
+    |> cast(attrs, [:clip_id, :artifact_type, :strategy, :tag, :s3_key, :metadata])
+    |> validate_required([:clip_id, :artifact_type, :s3_key])
+  end
 end

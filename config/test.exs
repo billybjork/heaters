@@ -28,7 +28,12 @@ config :logger, level: :warning
 config :phoenix, :plug_init_mode, :runtime
 
 # Configure PyRunner for testing
-config :heaters, Heaters.PyRunner,
+config :heaters, Heaters.Infrastructure.PyRunner,
   python_executable: "/usr/bin/env python3",
   working_dir: System.tmp_dir!(),
   runner_script: "test/fixtures/mock_runner.py"
+
+# Configure S3/CloudFront for testing (minimal stubs)
+config :heaters, :app_env, "test"
+config :heaters, :cloudfront_domain, "test.cloudfront.test"
+config :heaters, :s3_bucket, "test-bucket"

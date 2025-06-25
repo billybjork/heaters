@@ -26,7 +26,8 @@ defmodule Heaters.Clip.Transform.Merge do
           status: String.t(),
           merged_clip_id: integer(),
           source_clip_ids: list(integer()),
-          cleanup: map()
+          cleanup: map(),
+          metadata: map()
         }
 
   @doc """
@@ -122,30 +123,38 @@ defmodule Heaters.Clip.Transform.Merge do
     local_path = Path.join(temp_dir, local_filename)
     Logger.info("Merge: Downloading #{s3_path} to #{local_path}")
 
-    bucket_name = get_s3_bucket_name()
-    s3_key = String.trim_leading(s3_path, "/")
+    with {:ok, bucket_name} <- get_s3_bucket_name() do
+      s3_key = String.trim_leading(s3_path, "/")
 
-    try do
-      # Use streaming download for better memory efficiency with large files
-      file = File.open!(local_path, [:write, :binary])
+      case File.open(local_path, [:write, :binary]) do
+        {:ok, file} ->
+          try do
+            # Use streaming download
+            case ExAws.S3.get_object(bucket_name, s3_key) |> ExAws.request() do
+              {:ok, %{body: body}} ->
+                IO.binwrite(file, body)
+                File.close(file)
 
-      try do
-        ExAws.S3.get_object(bucket_name, s3_key)
-        |> ExAws.stream!()
-        |> Enum.each(&IO.binwrite(file, &1))
-      after
-        File.close(file)
+                if File.exists?(local_path) do
+                  {:ok, local_path}
+                else
+                  {:error, "Downloaded file does not exist at #{local_path}"}
+                end
+              {:error, reason} ->
+                File.close(file)
+                Logger.error("Merge: Failed to download from S3: #{inspect(reason)}")
+                {:error, "Failed to download from S3: #{inspect(reason)}"}
+            end
+          rescue
+            error ->
+              File.close(file)
+              Logger.error("Merge: Failed during S3 download: #{Exception.message(error)}")
+              {:error, "Failed during S3 download: #{Exception.message(error)}"}
+          end
+        {:error, reason} ->
+          Logger.error("Merge: Failed to open local file for writing: #{inspect(reason)}")
+          {:error, "Failed to open local file for writing: #{inspect(reason)}"}
       end
-
-      if File.exists?(local_path) do
-        {:ok, local_path}
-      else
-        {:error, "Downloaded file does not exist at #{local_path}"}
-      end
-    rescue
-      error ->
-        Logger.error("Merge: Failed to stream download from S3: #{Exception.message(error)}")
-        {:error, "Failed to download from S3: #{Exception.message(error)}"}
     end
   end
 
@@ -158,51 +167,60 @@ defmodule Heaters.Clip.Transform.Merge do
     file '#{Path.expand(source_video_path)}'
     """
 
-    File.write!(concat_list_path, concat_content)
+    case File.write(concat_list_path, concat_content) do
+      :ok ->
+        # Generate output filename
+        new_identifier =
+          "merged_#{target_clip.id}_#{Path.basename(source_video_path, ".mp4") |> String.split("_") |> List.last()}"
 
-    # Generate output filename
-    new_identifier =
-      "merged_#{target_clip.id}_#{Path.basename(source_video_path, ".mp4") |> String.split("_") |> List.last()}"
+        sanitized_identifier = Utils.sanitize_filename(new_identifier)
+        output_filename = "#{sanitized_identifier}.mp4"
+        final_output_path = Path.join(output_dir, output_filename)
 
-    sanitized_identifier = Utils.sanitize_filename(new_identifier)
-    output_filename = "#{sanitized_identifier}.mp4"
-    final_output_path = Path.join(output_dir, output_filename)
+        Logger.info("Merge: Created concat list at #{concat_list_path}")
+        Logger.info("Merge: Concat content:\n#{concat_content}")
 
-    Logger.info("Merge: Created concat list at #{concat_list_path}")
-    Logger.info("Merge: Concat content:\n#{concat_content}")
+        # Use FFmpex to build the concat command
+        # ffmpeg -f concat -i concat_list.txt -c copy -y output.mp4
+        command =
+          FFmpex.new_command()
+          |> add_global_option(option_f("concat"))
+          |> add_input_file(concat_list_path)
+          |> add_output_file(final_output_path)
+          |> add_file_option(option_c("copy"))
+          |> add_file_option(option_y())
 
-    # Use FFmpex to build the concat command
-    # ffmpeg -f concat -i concat_list.txt -c copy -y output.mp4
-    command =
-      FFmpex.new_command()
-      |> add_global_option(option_f("concat"))
-      |> add_input_file(concat_list_path)
-      |> add_output_file(final_output_path)
-      |> add_file_option(option_c("copy"))
-      |> add_file_option(option_y())
+        case FFmpex.execute(command) do
+          {:ok, _output} ->
+            if File.exists?(final_output_path) do
+              case File.stat(final_output_path) do
+                {:ok, %{size: file_size}} ->
+                  Logger.info(
+                    "Merge: Successfully merged videos. Output size: #{file_size} bytes at #{final_output_path}"
+                  )
 
-    case FFmpex.execute(command) do
-      {:ok, _output} ->
-        if File.exists?(final_output_path) do
-          file_size = File.stat!(final_output_path).size
+                  {:ok, %{
+                    local_path: final_output_path,
+                    filename: output_filename,
+                    file_size: file_size
+                  }}
+                {:error, reason} ->
+                  Logger.error("Merge: Failed to get file stats: #{inspect(reason)}")
+                  {:error, "Failed to get file stats: #{inspect(reason)}"}
+              end
+            else
+              Logger.error("Merge: FFmpeg succeeded but output file not found at #{final_output_path}")
+              {:error, "Output file not created"}
+            end
 
-          Logger.info(
-            "Merge: Successfully merged videos. Output size: #{file_size} bytes at #{final_output_path}"
-          )
-
-          {:ok, %{
-            local_path: final_output_path,
-            filename: output_filename,
-            file_size: file_size
-          }}
-        else
-          Logger.error("Merge: FFmpeg succeeded but output file not found at #{final_output_path}")
-          {:error, "Output file not created"}
+          {:error, reason} ->
+            Logger.error("Merge: FFmpeg failed: #{inspect(reason)}")
+            {:error, "FFmpeg merge failed: #{inspect(reason)}"}
         end
 
       {:error, reason} ->
-        Logger.error("Merge: FFmpeg failed: #{inspect(reason)}")
-        {:error, "FFmpeg merge failed: #{inspect(reason)}"}
+        Logger.error("Merge: Failed to write concat list file: #{inspect(reason)}")
+        {:error, "Failed to write concat list file: #{inspect(reason)}"}
     end
   end
 
@@ -212,17 +230,19 @@ defmodule Heaters.Clip.Transform.Merge do
       |> String.trim_leading("/")
 
     s3_key = "#{output_s3_prefix}/#{merged_video_data.filename}"
-    bucket_name = get_s3_bucket_name()
-    Logger.info("Merge: Uploading merged video to s3://#{bucket_name}/#{s3_key}")
 
-    case ExAws.S3.Upload.stream_file(merged_video_data.local_path)
-         |> ExAws.S3.upload(bucket_name, s3_key)
-         |> ExAws.request() do
-      {:ok, _result} ->
-        {:ok, Map.put(merged_video_data, :s3_key, s3_key)}
-      {:error, reason} ->
-        Logger.error("Merge: Failed to upload merged video: #{inspect(reason)}")
-        {:error, "Failed to upload merged video: #{inspect(reason)}"}
+    with {:ok, bucket_name} <- get_s3_bucket_name() do
+      Logger.info("Merge: Uploading merged video to s3://#{bucket_name}/#{s3_key}")
+
+      case ExAws.S3.Upload.stream_file(merged_video_data.local_path)
+           |> ExAws.S3.upload(bucket_name, s3_key)
+           |> ExAws.request() do
+        {:ok, _result} ->
+          {:ok, Map.put(merged_video_data, :s3_key, s3_key)}
+        {:error, reason} ->
+          Logger.error("Merge: Failed to upload merged video: #{inspect(reason)}")
+          {:error, "Failed to upload merged video: #{inspect(reason)}"}
+      end
     end
   end
 
@@ -279,15 +299,23 @@ defmodule Heaters.Clip.Transform.Merge do
   defp cleanup_source_files(clips) do
     s3_keys = Enum.map(clips, &String.trim_leading(&1.clip_filepath, "/"))
     Logger.info("Merge: Cleaning up source files after successful merge: #{inspect(s3_keys)}")
-    S3.delete_s3_objects(s3_keys)
+
+    case S3.delete_s3_objects(s3_keys) do
+      {:ok, count} = result ->
+        Logger.info("Merge: Successfully deleted #{count} source files from S3")
+        result
+      {:error, reason} = error ->
+        Logger.error("Merge: Failed to delete source files from S3: #{inspect(reason)}")
+        error
+    end
   end
 
   defp get_s3_bucket_name do
     case Application.get_env(:heaters, :s3_bucket) do
       nil ->
-        raise "S3 bucket name not configured. Please set :s3_bucket in application config."
+        {:error, "S3 bucket name not configured. Please set :s3_bucket in application config."}
       bucket_name ->
-        bucket_name
+        {:ok, bucket_name}
     end
   end
 end

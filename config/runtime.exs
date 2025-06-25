@@ -10,12 +10,15 @@ if System.get_env("PHX_SERVER") do
 end
 
 # === S3/CloudFront Configuration (based on APP_ENV) ===
+# Skip external service configuration for test environment
 # APP_ENV is expected to be "development" for local Docker Compose runs (from .env)
 # and "production" for Render deployments (set in Render service environment).
-app_env_string = System.get_env("APP_ENV")
 
-# Make APP_ENV available in application config if needed
-config :heaters, :app_env, app_env_string
+if config_env() != :test do
+  app_env_string = System.get_env("APP_ENV")
+
+  # Make APP_ENV available in application config if needed
+  config :heaters, :app_env, app_env_string
 
 # Configure Cloudfront Domain
 current_cloudfront_domain =
@@ -86,18 +89,25 @@ current_s3_bucket =
       System.get_env("S3_BUCKET_NAME")
   end
 
-if current_s3_bucket do
-  config :heaters, :s3_bucket, current_s3_bucket
-  IO.puts("[Runtime.exs] Configured S3 Bucket: #{current_s3_bucket}")
+  if current_s3_bucket do
+    config :heaters, :s3_bucket, current_s3_bucket
+    IO.puts("[Runtime.exs] Configured S3 Bucket: #{current_s3_bucket}")
+  else
+    IO.puts("[Runtime.exs] S3 Bucket not configured via APP_ENV specific vars or S3_BUCKET_NAME.")
+  end
 else
-  IO.puts("[Runtime.exs] S3 Bucket not configured via APP_ENV specific vars or S3_BUCKET_NAME.")
+  # In test environment, configure minimal stubs for S3/CloudFront
+  config :heaters, :app_env, "test"
+  config :heaters, :cloudfront_domain, "test.cloudfront.test"
+  config :heaters, :s3_bucket, "test-bucket"
+  IO.puts("[Runtime.exs] Test environment - using minimal CloudFront/S3 configuration.")
 end
 
 # === Database Configuration ===
-# Only configure Repo from DATABASE_URL if MIX_ENV is not :dev (e.g., :prod, :test).
-# For :dev, config/dev.exs manages its own database configuration (app-db-dev Docker container).
-if config_env() != :dev do
-  # For production (or any non-dev MIX_ENV):
+# Only configure Repo from DATABASE_URL for production environment.
+# For :dev and :test, their respective config files manage database configuration.
+if config_env() == :prod do
+  # For production environment:
   # 1. Try PROD_DATABASE_URL (from .env, for local scripts targeting prod or specific prod-like envs).
   # 2. Fallback to DATABASE_URL (this is what Render injects for its managed DB).
   database_url =
@@ -105,8 +115,8 @@ if config_env() != :dev do
       System.get_env("DATABASE_URL") ||
       raise """
       environment variable PROD_DATABASE_URL or DATABASE_URL is missing.
-      It's required for environments other than :dev (e.g., :prod, :test).
-      For :dev, ensure your config/dev.exs sets up the Heaters.Repo configuration.
+      It's required for production environment.
+      For :dev and :test, their respective config files handle database configuration.
       """
 
   IO.puts(
@@ -186,9 +196,8 @@ if config_env() != :dev do
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
     socket_options: maybe_ipv6
 else
-  # In :dev environment (config_env() == :dev), config/dev.exs handles Repo config.
-  # The APP_ENV based CloudFront/S3 config at the top of this file already covers dev.
-  IO.puts("[Runtime.exs] Repo configuration for :dev is handled by config/dev.exs.")
+  # In :dev and :test environments, their respective config files handle Repo config.
+  IO.puts("[Runtime.exs] Repo configuration for #{config_env()} is handled by config/#{config_env()}.exs.")
 end
 
 # === Production Only settings (when MIX_ENV=prod) ===
@@ -278,7 +287,7 @@ if config_env() == :prod do
         end
       end)
 
-  config :heaters, Heaters.PyRunner,
+  config :heaters, Heaters.Infrastructure.PyRunner,
     python_executable: python_exe,
     working_dir: working_dir,
     runner_script: "py/runner.py"
