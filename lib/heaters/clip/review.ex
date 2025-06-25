@@ -10,8 +10,8 @@ defmodule Heaters.Clip.Review do
   alias Ecto.Query, as: Q
   alias Heaters.Repo
   alias Heaters.Clips.Clip
-  alias Heaters.Clip.Review.ClipEvent
-  alias Heaters.Workers.Clip.{MergeWorker, SplitWorker}
+  alias Heaters.Events.ClipEvent
+
 
   require Logger
 
@@ -115,12 +115,7 @@ defmodule Heaters.Clip.Review do
     {:ok, {next_clip, %{clip_id: clip_id, action: db_action}}}
   end
 
-  @doc "Convenience helper for ad-hoc writes outside the batched path."
-  def log_clip_action!(clip_id, action, reviewer_id) do
-    %ClipEvent{}
-    |> ClipEvent.changeset(%{clip_id: clip_id, action: action, reviewer_id: reviewer_id})
-    |> Repo.insert!()
-  end
+
 
   @doc "Handle a **merge** request between *prev ⇠ current* clips."
   def request_merge_and_fetch_next(%Clip{id: prev_id}, %Clip{id: curr_id}) do
@@ -284,112 +279,7 @@ defmodule Heaters.Clip.Review do
     |> Repo.all()
   end
 
-  @doc """
-  Finds unprocessed clip events and enqueues the appropriate worker jobs.
 
-  This function is designed to be called periodically by the Dispatcher. It looks
-  for "selected_split" and "selected_merge_source" events that haven't been
-  processed yet, enqueues the corresponding SplitWorker or MergeWorker, and
-  marks the events as processed in a single transaction.
-  """
-  def commit_pending_actions do
-    unprocessed_events_query =
-      from(e in ClipEvent,
-        where: is_nil(e.processed_at) and e.action in ["selected_split", "selected_merge_source"]
-      )
-
-    unprocessed_events = Repo.all(unprocessed_events_query)
-    event_count = Enum.count(unprocessed_events)
-
-    if event_count > 0 do
-      Logger.info("CommitActions: Found #{event_count} pending actions to process.")
-
-      jobs =
-        unprocessed_events
-        |> Enum.map(&build_job/1)
-        # Filter out nil jobs (invalid data)
-        |> Enum.reject(&is_nil/1)
-
-      event_ids = Enum.map(unprocessed_events, & &1.id)
-
-      Logger.info("CommitActions: Built #{length(jobs)} valid jobs, attempting to enqueue...")
-
-      # Enqueue all jobs in a single call
-      try do
-        inserted_jobs = Oban.insert_all(jobs)
-
-        if is_list(inserted_jobs) do
-          Logger.info("CommitActions: Successfully enqueued #{length(inserted_jobs)} jobs.")
-        else
-          Logger.error(
-            "CommitActions: Unexpected return format from Oban.insert_all: #{inspect(inserted_jobs, limit: 3)}"
-          )
-        end
-
-        # Mark all processed events in a single call
-        {update_count, _} =
-          from(e in ClipEvent, where: e.id in ^event_ids)
-          |> Repo.update_all(set: [processed_at: DateTime.utc_now()])
-
-        Logger.info("CommitActions: Marked #{update_count} events as processed.")
-      rescue
-        error ->
-          Logger.error("CommitActions: Oban.insert_all raised an exception: #{inspect(error)}")
-          Logger.error("CommitActions: Error details: #{Exception.message(error)}")
-      end
-    end
-
-    :ok
-  rescue
-    exception ->
-      Logger.error("CommitActions: Exception occurred: #{inspect(exception)}")
-      Logger.error("CommitActions: Stacktrace: #{Exception.format_stacktrace(__STACKTRACE__)}")
-      :error
-  end
-
-  defp build_job(%ClipEvent{action: "selected_split"} = event) do
-    # Use Access.key to handle both atom and string keys gracefully.
-    split_at_frame = get_in(event.event_data, [Access.key("split_at_frame")])
-
-    if split_at_frame do
-      Logger.debug(
-        "Building SplitWorker job for clip_id=#{event.clip_id}, split_at_frame=#{split_at_frame}"
-      )
-
-      SplitWorker.new(%{
-        clip_id: event.clip_id,
-        split_at_frame: split_at_frame
-      })
-    else
-      Logger.warning(
-        "Skipping SplitWorker job for clip_id=#{event.clip_id} - missing split_at_frame"
-      )
-
-      nil
-    end
-  end
-
-  defp build_job(%ClipEvent{action: "selected_merge_source"} = event) do
-    # Use Access.key to handle both atom and string keys gracefully.
-    target_clip_id = get_in(event.event_data, [Access.key("merge_target_clip_id")])
-
-    if target_clip_id do
-      Logger.debug(
-        "Building MergeWorker job for clip_id_source=#{event.clip_id}, clip_id_target=#{target_clip_id}"
-      )
-
-      MergeWorker.new(%{
-        clip_id_source: event.clip_id,
-        clip_id_target: target_clip_id
-      })
-    else
-      Logger.warning(
-        "Skipping MergeWorker job for clip_id=#{event.clip_id} - missing merge_target_clip_id"
-      )
-
-      nil
-    end
-  end
 
   # -------------------------------------------------------------------------
   # Sprite Generation for Review Preparation

@@ -1,4 +1,4 @@
-defmodule Heaters.Clip.Review.ClipEvent do
+defmodule Heaters.Events.ClipEvent do
   use Heaters.Schema
 
   @type t() :: %__MODULE__{

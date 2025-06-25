@@ -5,7 +5,7 @@ defmodule Heaters.Workers.Dispatcher do
 
   alias Heaters.Video.Queries, as: VideoQueries
   alias Heaters.Clip.Queries, as: ClipQueries
-  alias Heaters.Clip.Review, as: ClipReview
+  alias Heaters.Events.EventProcessor
   alias Heaters.Workers.Video.IngestWorker
   alias Heaters.Workers.Clip.SpriteWorker
   alias Heaters.Workers.Clip.KeyframeWorker
@@ -41,7 +41,7 @@ defmodule Heaters.Workers.Dispatcher do
 
     # 3. Process actions from the review UI (merge, split, etc.)
     Logger.info("Dispatcher[step 3]: Committing pending UI actions.")
-    ClipReview.commit_pending_actions()
+    EventProcessor.commit_pending_actions()
     Logger.info("Dispatcher[step 3]: Finished committing pending UI actions.")
 
     # 4. Look for approved clips to start the enrichment pipeline.

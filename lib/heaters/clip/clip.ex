@@ -20,7 +20,7 @@ defmodule Heaters.Clips.Clip do
           action_committed_at: NaiveDateTime.t() | nil,
           source_video: Heaters.Video.Intake.SourceVideo.t() | Ecto.Association.NotLoaded.t(),
           clip_artifacts: [Heaters.Clip.Transform.ClipArtifact.t()] | Ecto.Association.NotLoaded.t(),
-          clip_events: [Heaters.Clip.Review.ClipEvent.t()] | Ecto.Association.NotLoaded.t(),
+          clip_events: [Heaters.Events.ClipEvent.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t(),
           updated_at: DateTime.t()
         }
@@ -45,7 +45,7 @@ defmodule Heaters.Clips.Clip do
 
     belongs_to(:source_video, Heaters.Video.Intake.SourceVideo)
     has_many(:clip_artifacts, Heaters.Clip.Transform.ClipArtifact)
-    has_many(:clip_events, Heaters.Clip.Review.ClipEvent)
+    has_many(:clip_events, Heaters.Events.ClipEvent)
 
     timestamps(type: :utc_datetime)
   end
