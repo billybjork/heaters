@@ -4,7 +4,7 @@ defmodule Heaters.EventsTest do
   alias Heaters.Events
   alias Heaters.Events.ClipEvent
   alias Heaters.Clips.Clip
-  alias Heaters.Video.Intake.SourceVideo
+  alias Heaters.Videos.SourceVideo
 
   describe "log_review_action/4" do
     setup do

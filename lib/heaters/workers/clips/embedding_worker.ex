@@ -1,8 +1,8 @@
-defmodule Heaters.Workers.Clip.EmbeddingWorker do
+defmodule Heaters.Workers.Clips.EmbeddingWorker do
   use Oban.Worker, queue: :media_processing
 
-  alias Heaters.Clip.Embed
-  alias Heaters.Clip.Queries, as: ClipQueries
+  alias Heaters.Clips.Embed
+  alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Infrastructure.PyRunner
   require Logger
 

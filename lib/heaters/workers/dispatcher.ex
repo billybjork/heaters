@@ -3,13 +3,13 @@ defmodule Heaters.Workers.Dispatcher do
 
   require Logger
 
-  alias Heaters.Video.Queries, as: VideoQueries
-  alias Heaters.Clip.Queries, as: ClipQueries
+  alias Heaters.Videos.Queries, as: VideoQueries
+  alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Events.EventProcessor
-  alias Heaters.Workers.Video.IngestWorker
-  alias Heaters.Workers.Clip.SpriteWorker
-  alias Heaters.Workers.Clip.KeyframeWorker
-  alias Heaters.Workers.Clip.ArchiveWorker
+  alias Heaters.Workers.Videos.IngestWorker
+  alias Heaters.Workers.Clips.SpriteWorker
+  alias Heaters.Workers.Clips.KeyframeWorker
+  alias Heaters.Workers.Clips.ArchiveWorker
 
   @impl Oban.Worker
   def perform(_job) do

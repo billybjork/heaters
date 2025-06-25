@@ -1,11 +1,11 @@
-defmodule Heaters.Workers.Video.SpliceWorker do
+defmodule Heaters.Workers.Videos.SpliceWorker do
   use Oban.Worker, queue: :media_processing
 
-  alias Heaters.Video.Ingest
-  alias Heaters.Video.Intake.SourceVideo
-  alias Heaters.Video.Queries, as: VideoQueries
+  alias Heaters.Videos.Ingest
+  alias Heaters.Videos.SourceVideo
+  alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Infrastructure.PyRunner
-  alias Heaters.Workers.Clip.SpriteWorker
+  alias Heaters.Workers.Clips.SpriteWorker
   require Logger
 
   @splicing_complete_states ["spliced", "splicing_failed"]

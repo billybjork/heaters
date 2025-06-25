@@ -1,4 +1,4 @@
-defmodule Heaters.Clip.Transform.Sprite do
+defmodule Heaters.Clips.Transform.Sprite do
   @moduledoc """
   Sprite sheet generation operations using FFmpeg via ffmpex.
 
@@ -14,7 +14,7 @@ defmodule Heaters.Clip.Transform.Sprite do
   use FFmpex.Options
 
   alias Heaters.Clips.Clip
-  alias Heaters.Clip.Queries, as: ClipQueries
+  alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Utils
   require Logger
 

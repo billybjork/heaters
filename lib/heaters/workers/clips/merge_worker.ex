@@ -1,8 +1,8 @@
-defmodule Heaters.Workers.Clip.MergeWorker do
+defmodule Heaters.Workers.Clips.MergeWorker do
   use Oban.Worker, queue: :media_processing
 
-  alias Heaters.Clip.Transform.Merge
-  alias Heaters.Workers.Clip.SpriteWorker
+  alias Heaters.Clips.Transform.Merge
+  alias Heaters.Workers.Clips.SpriteWorker
   require Logger
 
   @impl Oban.Worker

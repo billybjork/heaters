@@ -4,8 +4,8 @@ defmodule Heaters.Events.EventProcessorTest do
   alias Heaters.Events.EventProcessor
   alias Heaters.Events.ClipEvent
   alias Heaters.Clips.Clip
-  alias Heaters.Video.Intake.SourceVideo
-  alias Heaters.Workers.Clip.{SplitWorker, MergeWorker}
+  alias Heaters.Videos.SourceVideo
+  alias Heaters.Workers.Clips.{SplitWorker, MergeWorker}
 
   describe "get_unprocessed_events/0" do
     setup do
@@ -114,7 +114,7 @@ defmodule Heaters.Events.EventProcessorTest do
 
       job = EventProcessor.build_worker_job(event)
 
-      assert %Oban.Job{worker: "Elixir.Heaters.Workers.Clip.SplitWorker"} = job
+      assert %Oban.Job{worker: "Elixir.Heaters.Workers.Clips.SplitWorker"} = job
       assert job.args == %{"clip_id" => clip.id, "split_at_frame" => 450}
     end
 
@@ -130,7 +130,7 @@ defmodule Heaters.Events.EventProcessorTest do
 
       job = EventProcessor.build_worker_job(event)
 
-      assert %Oban.Job{worker: "Elixir.Heaters.Workers.Clip.MergeWorker"} = job
+      assert %Oban.Job{worker: "Elixir.Heaters.Workers.Clips.MergeWorker"} = job
       assert job.args == %{"clip_id_source" => clip.id, "clip_id_target" => target_clip.id}
     end
 

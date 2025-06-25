@@ -1,8 +1,8 @@
-defmodule Heaters.Workers.Video.IngestWorker do
+defmodule Heaters.Workers.Videos.IngestWorker do
   use Oban.Worker, queue: :download
 
-  alias Heaters.Video.Ingest
-  alias Heaters.Video.Queries, as: VideoQueries
+  alias Heaters.Videos.Ingest
+  alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Infrastructure.PyRunner
   require Logger
 
@@ -40,7 +40,7 @@ defmodule Heaters.Workers.Video.IngestWorker do
           case Ingest.complete_downloading(source_video_id, result) do
             {:ok, _updated_video} ->
               # Enqueue the next worker in the chain
-              case Oban.insert(Heaters.Workers.Video.SpliceWorker.new(%{source_video_id: updated_video.id})) do
+              case Oban.insert(Heaters.Workers.Videos.SpliceWorker.new(%{source_video_id: updated_video.id})) do
             {:ok, _job} -> :ok
             {:error, reason} -> {:error, "Failed to enqueue splice worker: #{inspect(reason)}"}
           end

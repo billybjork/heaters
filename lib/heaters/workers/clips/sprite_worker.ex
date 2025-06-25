@@ -1,9 +1,9 @@
-defmodule Heaters.Workers.Clip.SpriteWorker do
+defmodule Heaters.Workers.Clips.SpriteWorker do
   use Oban.Worker, queue: :media_processing
 
-  alias Heaters.Clip.Review
-  alias Heaters.Clip.Transform.Sprite
-  alias Heaters.Clip.Queries, as: ClipQueries
+  alias Heaters.Clips.Review
+  alias Heaters.Clips.Transform.Sprite
+  alias Heaters.Clips.Queries, as: ClipQueries
   require Logger
 
   @complete_states ["pending_review", "sprite_failed", "embedded", "review_approved", "review_archived"]

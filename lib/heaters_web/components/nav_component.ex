@@ -4,7 +4,7 @@ defmodule HeatersWeb.NavComponent do
   use Phoenix.Component
   # <─ supplies the ~p sigil
   use HeatersWeb, :verified_routes
-  alias Heaters.Clip.Queries, as: ClipQueries
+  alias Heaters.Clips.Queries, as: ClipQueries
 
   # handy later for an "active" class; not used yet
   attr(:current_path, :string, required: true)

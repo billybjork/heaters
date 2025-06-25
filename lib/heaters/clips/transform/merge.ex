@@ -1,4 +1,4 @@
-defmodule Heaters.Clip.Transform.Merge do
+defmodule Heaters.Clips.Transform.Merge do
   @moduledoc """
   Video merging operations using FFmpeg via ffmpex.
 
@@ -17,7 +17,7 @@ defmodule Heaters.Clip.Transform.Merge do
 
   alias Heaters.Repo
   alias Heaters.Clips.Clip
-  alias Heaters.Clip.Queries, as: ClipQueries
+  alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Infrastructure.S3
   alias Heaters.Utils
   require Logger

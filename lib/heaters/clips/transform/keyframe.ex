@@ -1,4 +1,4 @@
-defmodule Heaters.Clip.Transform.Keyframe do
+defmodule Heaters.Clips.Transform.Keyframe do
   @moduledoc """
   Context for keyframe extraction operations.
 
@@ -11,8 +11,8 @@ defmodule Heaters.Clip.Transform.Keyframe do
 
   alias Heaters.Repo
   alias Heaters.Clips.Clip
-  alias Heaters.Clip.Queries, as: ClipQueries
-  alias Heaters.Clip.Transform.ClipArtifact
+  alias Heaters.Clips.Queries, as: ClipQueries
+  alias Heaters.Clips.Transform.ClipArtifact
   alias Heaters.Infrastructure.PyRunner
   require Logger
 

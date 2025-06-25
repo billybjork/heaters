@@ -23,23 +23,43 @@ lib/heaters/clip/
 ### Target Structure
 ```
 lib/heaters/
-├── events/                    (NEW)
-│   ├── events.ex             (Event creation - writes)
-│   ├── event_processor.ex    (Event processing - reads/execution)
-│   └── clip_event.ex         (Moved from clip/review/)
-├── clip/
-│   ├── review/
-│   │   └── review.ex         (FOCUSED - workflow coordination only)
-│   ├── transform/
-│   │   ├── transform.ex      (Coordination and shared utilities)
-│   │   ├── sprite.ex         (Moved from clip/review/)
-│   │   ├── merge.ex          (Moved from clip/review/)
-│   │   ├── split.ex          (Moved from clip/review/)
-│   │   ├── keyframe.ex       (NEW - extracted from transform.ex)
-│   │   └── clip_artifact.ex  (EXISTING)
-│   ├── embed/
-│   │   └── embed.ex          (Reorganized from clip/embed.ex)
-│   └── queries.ex            (UNCHANGED)
+├── clips.ex                    # Main Clips context entry point
+├── clips/
+│   ├── clip.ex                # Clip schema
+│   ├── queries.ex             # Clip queries
+│   ├── review.ex              # Review operations
+│   ├── transform.ex           # Transform coordination
+│   ├── embed.ex               # Embed operations
+│   ├── transform/             # Specialized transform operations
+│   │   ├── keyframe.ex
+│   │   ├── sprite.ex
+│   │   ├── merge.ex
+│   │   ├── split.ex
+│   │   └── clip_artifact.ex
+│   └── embed/                 # Embed domain
+│       └── embedding.ex       # Embedding schema
+├── videos.ex                  # Main Videos context entry point
+├── videos/
+│   ├── source_video.ex        # SourceVideo schema
+│   ├── queries.ex             # Video queries
+│   ├── intake.ex              # Intake operations
+│   └── ingest.ex              # Ingest operations
+├── events/                    # Event sourcing infrastructure
+│   ├── events.ex              # Event creation (writes)
+│   ├── event_processor.ex     # Event processing (reads)
+│   └── clip_event.ex          # Event schema
+└── workers/                   # Background job workers
+    ├── dispatcher.ex          # Job orchestration
+    ├── clips/                 # Clip-related workers
+    │   ├── archive_worker.ex
+    │   ├── embedding_worker.ex
+    │   ├── keyframe_worker.ex
+    │   ├── merge_worker.ex
+    │   ├── split_worker.ex
+    │   └── sprite_worker.ex
+    └── videos/                # Video-related workers
+        ├── ingest_worker.ex
+        └── splice_worker.ex
 ```
 
 ## Migration Tasks
@@ -118,17 +138,139 @@ lib/heaters/
 - [x] **VALIDATION**: All documentation is comprehensive
 - [x] **INFRASTRUCTURE**: Created validation script for future refactoring phases
 
-### Phase 3: Reorganize Embed Context (Low Risk)
-**Goal**: Move embed operations to proper directory structure
+#### Task 2.5.5: Test New Structure ✅ COMPLETE
+- [x] Compile project with new structure (`mix compile --warnings-as-errors`)
+- [x] Run test suite to ensure all imports work
+- [x] Verify Dialyzer passes with new module paths
+- [x] Test worker integration with updated paths
 
-#### Task 3.1: Create Embed Directory Structure
-- [ ] Create `lib/heaters/clip/embed/` directory
-- [ ] Move `lib/heaters/clip/embed.ex` to `lib/heaters/clip/embed/embed.ex`
-- [ ] Update module references in workers and other modules
+#### Task 2.5.6: Reorganize Worker Directories ✅ COMPLETE
+- [x] Move `lib/heaters/workers/clip/` to `lib/heaters/workers/clips/` for consistency
+- [x] Move `lib/heaters/workers/video/` to `lib/heaters/workers/videos/` for consistency
+- [x] Update all worker module names:
+  - [x] `Heaters.Workers.Clip.*` → `Heaters.Workers.Clips.*`
+  - [x] `Heaters.Workers.Video.*` → `Heaters.Workers.Videos.*`
+- [x] Update all references in dispatcher, event processor, and tests
+- [x] Remove old singular worker directories
+- [x] Verify compilation and type safety with Dialyzer
+
+### Phase 2.5: Idiomatic Directory Structure Reorganization (Medium Risk) ✅ COMPLETE
+**Goal**: Reorganize to follow Phoenix/Elixir best practices for context organization
+**Status**: ✅ Complete
+
+**Problem**: Current structure has confusing file/directory naming conflicts:
+- `clip/transform.ex` + `clip/transform/` directory
+- `clip/review.ex` + `clip/review/` directory  
+- `clip/embed.ex` + `clip/embed/` directory
+- `video/intake.ex` + `video/intake/` directory
+
+**Solution**: Move to idiomatic Phoenix context organization with clear separation.
+
+#### Task 2.5.1: Reorganize Clips Domain ✅ COMPLETE
+- [x] Create `lib/heaters/clips/` directory (plural, Phoenix convention)
+- [x] Move `lib/heaters/clip/clip.ex` to `lib/heaters/clips/clip.ex` (schema)
+- [x] Move `lib/heaters/clip/queries.ex` to `lib/heaters/clips/queries.ex`
+- [x] Move `lib/heaters/clip/review.ex` to `lib/heaters/clips/review.ex` (operations)
+- [x] Move `lib/heaters/clip/transform.ex` to `lib/heaters/clips/transform.ex` (coordination)
+- [x] Move `lib/heaters/clip/embed.ex` to `lib/heaters/clips/embed.ex` (operations)
+- [x] Move transform operations to `lib/heaters/clips/transform/`:
+  - [x] `clip/transform/keyframe.ex` → `clips/transform/keyframe.ex`
+  - [x] `clip/transform/sprite.ex` → `clips/transform/sprite.ex`
+  - [x] `clip/transform/merge.ex` → `clips/transform/merge.ex`
+  - [x] `clip/transform/split.ex` → `clips/transform/split.ex`
+  - [x] `clip/transform/clip_artifact.ex` → `clips/transform/clip_artifact.ex`
+- [x] Move embed operations to `lib/heaters/clips/embed/`:
+  - [x] `clip/embed/embedding.ex` → `clips/embed/embedding.ex`
+- [x] Create main `lib/heaters/clips.ex` context entry point
+- [x] Remove old `lib/heaters/clip/` directory
+
+#### Task 2.5.2: Reorganize Videos Domain ✅ COMPLETE
+- [x] Create `lib/heaters/videos/` directory (plural, Phoenix convention)
+- [x] Move `lib/heaters/video/intake/source_video.ex` to `lib/heaters/videos/source_video.ex` (schema)
+- [x] Move `lib/heaters/video/queries.ex` to `lib/heaters/videos/queries.ex`
+- [x] Move `lib/heaters/video/intake.ex` to `lib/heaters/videos/intake.ex` (operations)
+- [x] Move `lib/heaters/video/ingest.ex` to `lib/heaters/videos/ingest.ex` (operations)
+- [x] Create main `lib/heaters/videos.ex` context entry point
+- [x] Remove old `lib/heaters/video/` directory
+
+#### Task 2.5.3: Update All Module References ✅ COMPLETE
+- [x] Update all module names to use plural contexts:
+  - [x] `Heaters.Clip.*` → `Heaters.Clips.*`
+  - [x] `Heaters.Video.*` → `Heaters.Videos.*`
+- [x] Update all aliases and imports throughout codebase:
+  - [x] Workers (`lib/heaters/workers/`)
+  - [x] LiveViews (`lib/heaters_web/live/`)
+  - [x] Controllers (`lib/heaters_web/controllers/`)
+  - [x] Tests (`test/`)
+  - [x] Config files if any
+
+#### Task 2.5.4: Update Context Entry Points ✅ COMPLETE
+- [x] Create `lib/heaters/clips.ex` with main public API
+- [x] Create `lib/heaters/videos.ex` with main public API
+- [x] Ensure proper delegation to sub-modules
+- [x] Update documentation with new structure
+
+#### Task 2.5.5: Test New Structure ✅ COMPLETE
+- [x] Compile project with new structure (`mix compile --warnings-as-errors`)
+- [x] Run test suite to ensure all imports work
+- [x] Verify Dialyzer passes with new module paths
+- [x] Test worker integration with updated paths
+
+**Target Structure After Phase 2.5** ✅ ACHIEVED:
+```
+lib/heaters/
+├── clips.ex                    # Main Clips context entry point
+├── clips/
+│   ├── clip.ex                # Clip schema
+│   ├── queries.ex             # Clip queries
+│   ├── review.ex              # Review operations
+│   ├── transform.ex           # Transform coordination
+│   ├── embed.ex               # Embed operations
+│   ├── transform/             # Specialized transform operations
+│   │   ├── keyframe.ex
+│   │   ├── sprite.ex
+│   │   ├── merge.ex
+│   │   ├── split.ex
+│   │   └── clip_artifact.ex
+│   └── embed/                 # Embed domain
+│       └── embedding.ex       # Embedding schema
+├── videos.ex                  # Main Videos context entry point
+├── videos/
+│   ├── source_video.ex        # SourceVideo schema
+│   ├── queries.ex             # Video queries
+│   ├── intake.ex              # Intake operations
+│   └── ingest.ex              # Ingest operations
+├── events/                    # Event sourcing infrastructure
+│   ├── events.ex              # Event creation (writes)
+│   ├── event_processor.ex     # Event processing (reads)
+│   └── clip_event.ex          # Event schema
+└── workers/                   # Background job workers
+    ├── dispatcher.ex          # Job orchestration
+    ├── clips/                 # Clip-related workers
+    │   ├── archive_worker.ex
+    │   ├── embedding_worker.ex
+    │   ├── keyframe_worker.ex
+    │   ├── merge_worker.ex
+    │   ├── split_worker.ex
+    │   └── sprite_worker.ex
+    └── videos/                # Video-related workers
+        ├── ingest_worker.ex
+        └── splice_worker.ex
+```
+
+### Phase 3: Complete Embed Context Organization (Low Risk)
+**Goal**: Complete embed context organization within new idiomatic structure
+**Note**: Most embed reorganization completed in Phase 2.5
+
+#### Task 3.1: Finalize Embed Context
+- [ ] Verify `lib/heaters/clips/embed/` directory structure is complete
+- [ ] Ensure `lib/heaters/clips/embed.ex` properly coordinates embed operations
+- [ ] Update any remaining module references in workers and other modules
 
 #### Task 3.2: Test Embed Context
 - [ ] Ensure all embed operations continue to work
 - [ ] Update any broken imports/references
+- [ ] Test embedding generation workflow end-to-end
 
 ### Phase 4: Refactor Review Context (Medium Risk)
 **Goal**: Slim down Review context to focus only on workflow coordination

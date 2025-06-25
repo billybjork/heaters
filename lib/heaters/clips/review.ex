@@ -1,4 +1,4 @@
-defmodule Heaters.Clip.Review do
+defmodule Heaters.Clips.Review do
   @moduledoc """
   Review queue management and composite actions for clips.
 
@@ -11,7 +11,6 @@ defmodule Heaters.Clip.Review do
   alias Heaters.Repo
   alias Heaters.Clips.Clip
   alias Heaters.Events.ClipEvent
-
 
   require Logger
 
@@ -114,8 +113,6 @@ defmodule Heaters.Clip.Review do
 
     {:ok, {next_clip, %{clip_id: clip_id, action: db_action}}}
   end
-
-
 
   @doc "Handle a **merge** request between *prev ⇠ current* clips."
   def request_merge_and_fetch_next(%Clip{id: prev_id}, %Clip{id: curr_id}) do
@@ -279,8 +276,6 @@ defmodule Heaters.Clip.Review do
     |> Repo.all()
   end
 
-
-
   # -------------------------------------------------------------------------
   # Sprite Generation for Review Preparation
   # -------------------------------------------------------------------------
@@ -396,7 +391,7 @@ defmodule Heaters.Clip.Review do
         build_sprite_artifact_attrs(clip_id, artifact_data)
       end)
 
-    case Repo.insert_all(Heaters.Clip.Transform.ClipArtifact, artifacts_attrs, returning: true) do
+    case Repo.insert_all(Heaters.Clips.Transform.ClipArtifact, artifacts_attrs, returning: true) do
       {count, artifacts} when count > 0 ->
         Logger.info("Successfully created #{count} sprite artifacts for clip_id: #{clip_id}")
         {:ok, artifacts}

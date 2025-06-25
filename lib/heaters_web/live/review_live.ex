@@ -23,8 +23,8 @@ defmodule HeatersWeb.ReviewLive do
   # Components / helpers
   import HeatersWeb.SpritePlayer, only: [sprite_player: 1, sprite_url: 1]
 
-  alias Heaters.Clip.Review, as: ClipReview
-  alias Heaters.Clip.Queries, as: ClipQueries
+  alias Heaters.Clips.Review, as: ClipReview
+  alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Clips.Clip
 
   # 1 current + 5 future

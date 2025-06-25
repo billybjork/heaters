@@ -1,8 +1,8 @@
-defmodule Heaters.Workers.Clip.SplitWorker do
+defmodule Heaters.Workers.Clips.SplitWorker do
   use Oban.Worker, queue: :media_processing
 
-  alias Heaters.Clip.Transform.Split
-  alias Heaters.Workers.Clip.SpriteWorker
+  alias Heaters.Clips.Transform.Split
+  alias Heaters.Workers.Clips.SpriteWorker
   require Logger
 
   @impl Oban.Worker

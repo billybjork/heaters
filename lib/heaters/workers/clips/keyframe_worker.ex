@@ -1,8 +1,8 @@
-defmodule Heaters.Workers.Clip.KeyframeWorker do
+defmodule Heaters.Workers.Clips.KeyframeWorker do
   use Oban.Worker, queue: :media_processing
 
-  alias Heaters.Clip.Transform.Keyframe
-  alias Heaters.Clip.Queries, as: ClipQueries
+  alias Heaters.Clips.Transform.Keyframe
+  alias Heaters.Clips.Queries, as: ClipQueries
   require Logger
 
   @complete_states ["keyframed", "keyframe_failed", "embedded", "review_approved", "review_archived"]

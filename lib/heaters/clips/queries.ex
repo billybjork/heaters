@@ -1,4 +1,4 @@
-defmodule Heaters.Clip.Queries do
+defmodule Heaters.Clips.Queries do
   @moduledoc """
   Query functions for clips.
   """

@@ -1,8 +1,8 @@
-defmodule Heaters.Workers.Clip.ArchiveWorker do
+defmodule Heaters.Workers.Clips.ArchiveWorker do
   use Oban.Worker, queue: :background_jobs
 
   import Ecto.Query, warn: false
-  alias Heaters.Clip.Queries, as: ClipQueries
+  alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Repo
   alias Heaters.Infrastructure.S3
   alias Heaters.Clips.Clip

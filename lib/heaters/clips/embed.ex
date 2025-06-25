@@ -1,4 +1,4 @@
-defmodule Heaters.Clip.Embed do
+defmodule Heaters.Clips.Embed do
   @moduledoc """
   Embedding and similarity functions for clips.
 
@@ -10,8 +10,8 @@ defmodule Heaters.Clip.Embed do
   import Ecto.Query, warn: false
   alias Heaters.Repo
   alias Heaters.Clips.Clip
-  alias Heaters.Clip.Embed.Embedding
-  alias Heaters.Clip.Queries, as: ClipQueries
+  alias Heaters.Clips.Embed.Embedding
+  alias Heaters.Clips.Queries, as: ClipQueries
   require Logger
 
   @doc "All available model names, generation strategies, and source videos for embedded clips"

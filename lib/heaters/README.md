@@ -25,13 +25,13 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 
 ## Detailed Workflow
 
-### 1. Video Ingestion (`Video.Ingest` Context)
+### 1. Video Ingestion (`Videos.Ingest` Context)
 
 **States**: `new` → `downloading` → `downloaded` → `splicing` → `spliced`
 
 **Workers**: 
-- `IngestWorker`: Downloads and processes source videos
-- `SpliceWorker`: Splits videos into clips to complete ingestion
+- `Videos.IngestWorker`: Downloads and processes source videos
+- `Videos.SpliceWorker`: Splits videos into clips to complete ingestion
 
 **Python Tasks**:
 - `ingest.py`: Download, re-encode, upload to S3
@@ -39,26 +39,26 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 
 **Process**:
 1. Source video created in `new` state
-2. `IngestWorker` transitions to `downloading` → calls `ingest.py` → transitions to `downloaded`
-3. `SpliceWorker` transitions to `splicing` → calls `splice.py` → transitions to `spliced`
-4. Clips created in `spliced` state, `SpriteWorker` jobs enqueued
+2. `Videos.IngestWorker` transitions to `downloading` → calls `ingest.py` → transitions to `downloaded`
+3. `Videos.SpliceWorker` transitions to `splicing` → calls `splice.py` → transitions to `spliced`
+4. Clips created in `spliced` state, `Clips.SpriteWorker` jobs enqueued
 
-### 2. Clip Review Preparation (`Clip.Review` Context)
+### 2. Clip Review Preparation (`Clips.Review` Context)
 
 **States**: `spliced` → `generating_sprite` → `pending_review`
 
 **Workers**:
-- `SpriteWorker`: Generates sprite sheets for human review
+- `Clips.SpriteWorker`: Generates sprite sheets for human review
 
 **Elixir Modules**:
-- `Heaters.Clip.Transform.Sprite`: Generate sprite sheets using FFmpex (pure Elixir implementation)
+- `Heaters.Clips.Transform.Sprite`: Generate sprite sheets using FFmpex (pure Elixir implementation)
 
 **Process**:
 1. Clips created in `spliced` state after video splicing
-2. `SpriteWorker` transitions to `generating_sprite` → calls `Transform.Sprite.run_sprite/1` → transitions to `pending_review`
+2. `Clips.SpriteWorker` transitions to `generating_sprite` → calls `Clips.Transform.Sprite.run_sprite/1` → transitions to `pending_review`
 3. Clips now ready for human review with sprite sheets
 
-### 3. Human Review Process (`Clip.Review` Context)
+### 3. Human Review Process (`Clips.Review` Context)
 
 **States**: `pending_review` → `review_approved` | `review_archived`
 
@@ -71,16 +71,16 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 2. Review actions create events and update clip states
 3. **Merge/Split operations**:
    - Create new clips in `spliced` state
-   - Automatically enqueue `SpriteWorker` for new clips
+   - Automatically enqueue `Clips.SpriteWorker` for new clips
    - New clips flow back through sprite generation → review
 
-### 4. Post-Approval Processing (`Clip.Transform` + `Clip.Embed` Contexts)
+### 4. Post-Approval Processing (`Clips.Transform` + `Clips.Embed` Contexts)
 
 **States**: `review_approved` → `keyframing` → `keyframed` → `embedding` → `embedded`
 
 **Workers**:
-- `KeyframeWorker`: Extracts keyframes for embedding generation
-- `EmbeddingWorker`: Generates ML embeddings from keyframes
+- `Clips.KeyframeWorker`: Extracts keyframes for embedding generation
+- `Clips.EmbeddingWorker`: Generates ML embeddings from keyframes
 
 **Python Tasks**:
 - `keyframe.py`: Extract keyframes using OpenCV
@@ -88,19 +88,19 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 
 **Process**:
 1. Approved clips transition from `review_approved` to `keyframing`
-2. `KeyframeWorker` calls `keyframe.py` → transitions to `keyframed`
-3. `EmbeddingWorker` calls `embed.py` → transitions to `embedded`
+2. `Clips.KeyframeWorker` calls `keyframe.py` → transitions to `keyframed`
+3. `Clips.EmbeddingWorker` calls `embed.py` → transitions to `embedded`
 4. Clips now ready for final use with embeddings
 
 ## Context Organization
 
-### `Video.Ingest` (`lib/heaters/video/ingest.ex`)
+### `Videos.Ingest` (`lib/heaters/videos/ingest.ex`)
 - **Purpose**: Manage complete video ingestion workflow from download through clip creation
 - **States**: `new`, `downloading`, `downloaded`, `splicing`, `spliced`
 - **Key Functions**: `start_downloading/1`, `complete_downloading/2`, `start_splicing/1`, `complete_splicing/1`, `create_clips_from_splice/2`, `validate_clips_data/1`
-- **Workers**: `IngestWorker`, `SpliceWorker`
+- **Workers**: `Videos.IngestWorker`, `Videos.SpliceWorker`
 
-### `Video.Intake` (`lib/heaters/video/intake.ex`)
+### `Videos.Intake` (`lib/heaters/videos/intake.ex`)
 - **Purpose**: Simple interface for submitting new source videos
 - **Key Functions**: `submit/1` - Creates new source videos in "new" state
 
@@ -112,23 +112,23 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 - **Key Functions**: `log_review_action/4`, `log_merge_action/3`, `log_split_action/3`, `commit_pending_actions/0`
 - **Benefits**: Audit trail, reliable job queuing, separation of write/read operations
 
-### `Clip.Review` (`lib/heaters/clip/review.ex`)
+### `Clips.Review` (`lib/heaters/clips/review.ex`)
 - **Purpose**: Human review workflow coordination and review actions
 - **States**: `pending_review`, `review_approved`, `review_archived`
 - **Key Functions**: Review action orchestration, fetching clips for review
 - **Related Contexts**: Uses `Events` for action logging, coordinates with `Transform` for sprite/merge/split operations
 
-### `Clip.Transform` (`lib/heaters/clip/transform.ex`)
+### `Clips.Transform` (`lib/heaters/clips/transform.ex`)
 - **Purpose**: Coordination layer for all clip transformation operations
 - **States**: `spliced`, `generating_sprite`, `pending_review`, `keyframing`, `keyframed` (various transformation states)
 - **Key Functions**: Shared utilities for error handling, artifact management, S3 path generation
 - **Specialized Modules**:
-  - `Transform.Sprite`: Sprite sheet generation (native Elixir with FFmpeg)
-  - `Transform.Merge`: Clip merging operations (native Elixir with FFmpeg)  
-  - `Transform.Split`: Clip splitting operations (native Elixir with FFmpeg)
-  - `Transform.Keyframe`: Keyframe extraction (Python OpenCV integration)
+  - `Clips.Transform.Sprite`: Sprite sheet generation (native Elixir with FFmpeg)
+  - `Clips.Transform.Merge`: Clip merging operations (native Elixir with FFmpeg)  
+  - `Clips.Transform.Split`: Clip splitting operations (native Elixir with FFmpeg)
+  - `Clips.Transform.Keyframe`: Keyframe extraction (Python OpenCV integration)
 
-### `Clip.Embed` (`lib/heaters/clip/embed.ex`)
+### `Clips.Embed` (`lib/heaters/clips/embed.ex`)
 - **Purpose**: ML embedding generation and storage
 - **States**: `keyframed`, `embedding`, `embedded`
 - **Key Functions**: `start_embedding/1`, `complete_embedding/2`, embedding queries
@@ -137,11 +137,11 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 
 Following Elixir/Phoenix best practices, all workers are organized in `lib/heaters/workers/` by domain:
 
-### Video Workers (`lib/heaters/workers/video/`)
+### Videos Workers (`lib/heaters/workers/videos/`)
 - `IngestWorker` - Downloads and processes source videos
 - `SpliceWorker` - Splits videos into clips based on scene detection
 
-### Clip Workers (`lib/heaters/workers/clip/`)
+### Clips Workers (`lib/heaters/workers/clips/`)
 - `SpriteWorker` - Generates sprite sheets for review preparation (native Elixir with FFmpeg)
 - `MergeWorker` - Merges two clips together (review action, native Elixir with FFmpeg)
 - `SplitWorker` - Splits a clip at a specific frame (review action, native Elixir with FFmpeg)  
@@ -158,11 +158,11 @@ Following Elixir/Phoenix best practices, all workers are organized in `lib/heate
 
 Runs periodically to find work and enqueue jobs:
 
-1. **Step 1**: Find `new` videos → enqueue `IngestWorker`
-2. **Step 2**: Find `spliced` clips → enqueue `SpriteWorker` 
+1. **Step 1**: Find `new` videos → enqueue `Videos.IngestWorker`
+2. **Step 2**: Find `spliced` clips → enqueue `Clips.SpriteWorker` 
 3. **Step 3**: Process pending review actions via `EventProcessor.commit_pending_actions()` (merge/split)
-4. **Step 4**: Find `review_approved` clips → enqueue `KeyframeWorker`
-5. **Step 5**: Find `review_archived` clips → enqueue `ArchiveWorker`
+4. **Step 4**: Find `review_approved` clips → enqueue `Clips.KeyframeWorker`
+5. **Step 5**: Find `review_archived` clips → enqueue `Clips.ArchiveWorker`
 
 ## Python Task Interface
 

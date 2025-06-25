@@ -1,4 +1,4 @@
-defmodule Heaters.Clip.Transform do
+defmodule Heaters.Clips.Transform do
   @moduledoc """
   Context for managing clip transformation operations and coordination.
 
@@ -13,20 +13,20 @@ defmodule Heaters.Clip.Transform do
   ## Specific Transformation Modules
   Specialized operations are handled by dedicated modules within this context:
 
-  - **Keyframe extraction**: `Heaters.Clip.Transform.Keyframe`
+  - **Keyframe extraction**: `Heaters.Clips.Transform.Keyframe`
     - Extracts keyframes from video clips using Python OpenCV
     - Manages keyframing workflow state transitions
     - Creates keyframe artifacts for embedding generation
 
-  - **Sprite generation**: `Heaters.Clip.Transform.Sprite`
+  - **Sprite generation**: `Heaters.Clips.Transform.Sprite`
     - Generates video sprite sheets for preview
     - Handles sprite-specific artifact management
 
-  - **Merge operations**: `Heaters.Clip.Transform.Merge`
+  - **Merge operations**: `Heaters.Clips.Transform.Merge`
     - Merges multiple clips into a single clip
     - Native Elixir implementation using FFmpeg
 
-  - **Split operations**: `Heaters.Clip.Transform.Split`
+  - **Split operations**: `Heaters.Clips.Transform.Split`
     - Splits clips at specific frame boundaries
     - Native Elixir implementation using FFmpeg
 
@@ -62,8 +62,8 @@ defmodule Heaters.Clip.Transform do
 
   alias Heaters.Repo
   alias Heaters.Clips.Clip
-  alias Heaters.Clip.Queries, as: ClipQueries
-  alias Heaters.Clip.Transform.ClipArtifact
+  alias Heaters.Clips.Queries, as: ClipQueries
+  alias Heaters.Clips.Transform.ClipArtifact
   require Logger
 
   @doc """
