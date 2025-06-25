@@ -31,7 +31,7 @@ defmodule Heaters.Clips do
   """
 
   # Delegated functions for common operations
-  alias Heaters.Clips.{Review, Transform, Queries}
+  alias Heaters.Clips.{Review, Transform, Embed, Queries}
 
   # Review operations
   defdelegate next_pending_review_clips(limit, exclude_ids \\ []), to: Review
@@ -46,6 +46,15 @@ defmodule Heaters.Clips do
   defdelegate mark_failed(clip_or_id, failure_state, error_reason), to: Transform
   defdelegate build_artifact_prefix(clip, artifact_type), to: Transform
   defdelegate create_artifacts(clip_id, artifact_type, artifacts_data), to: Transform
+
+  # Embed operations
+  defdelegate start_embedding(clip_id), to: Embed
+  defdelegate complete_embedding(clip_id, embedding_data), to: Embed
+  defdelegate process_embedding_success(clip, result), to: Embed
+  defdelegate has_embedding?(clip_id, model_name, generation_strategy), to: Embed
+  defdelegate similar_clips(main_clip_id, filters, asc?, page, per), to: Embed
+  defdelegate random_embedded_clip(filters), to: Embed
+  defdelegate embedded_filter_opts(), to: Embed
 
   # Query operations
   defdelegate get_clip(id), to: Queries

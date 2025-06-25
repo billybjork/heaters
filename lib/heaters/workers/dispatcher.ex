@@ -9,6 +9,7 @@ defmodule Heaters.Workers.Dispatcher do
   alias Heaters.Workers.Videos.IngestWorker
   alias Heaters.Workers.Clips.SpriteWorker
   alias Heaters.Workers.Clips.KeyframeWorker
+  alias Heaters.Workers.Clips.EmbeddingWorker
   alias Heaters.Workers.Clips.ArchiveWorker
 
   @impl Oban.Worker
@@ -59,16 +60,35 @@ defmodule Heaters.Workers.Dispatcher do
       Logger.info("Dispatcher[step 4]: Finished enqueuing KeyframeWorker jobs.")
     end
 
-    # 5. Look for archived clips
-    Logger.info("Dispatcher[step 5]: Checking for clips to archive.")
+    # 5. Look for keyframed clips to start embedding generation
+    Logger.info("Dispatcher[step 5]: Checking for keyframed clips for embedding generation.")
+    keyframed_clips = ClipQueries.get_clips_by_state("keyframed")
+    Logger.info("Dispatcher[step 5]: Found #{Enum.count(keyframed_clips)} keyframed clips.")
+
+    if Enum.any?(keyframed_clips) do
+      Logger.info("Dispatcher[step 5]: Enqueuing EmbeddingWorker jobs.")
+
+      embedding_jobs =
+        Enum.map(keyframed_clips, &EmbeddingWorker.new(%{
+          clip_id: &1.id,
+          model_name: "clip-vit-base-patch32",
+          generation_strategy: "multi"
+        }))
+
+      Oban.insert_all(embedding_jobs, on_conflict: :raise)
+      Logger.info("Dispatcher[step 5]: Finished enqueuing EmbeddingWorker jobs.")
+    end
+
+    # 6. Look for archived clips
+    Logger.info("Dispatcher[step 6]: Checking for clips to archive.")
     archived_clips = ClipQueries.get_clips_by_state("review_archived")
-    Logger.info("Dispatcher[step 5]: Found #{Enum.count(archived_clips)} clips to archive.")
+    Logger.info("Dispatcher[step 6]: Found #{Enum.count(archived_clips)} clips to archive.")
 
     if Enum.any?(archived_clips) do
-      Logger.info("Dispatcher[step 5]: Enqueuing ArchiveWorker jobs.")
+      Logger.info("Dispatcher[step 6]: Enqueuing ArchiveWorker jobs.")
       archive_jobs = Enum.map(archived_clips, &ArchiveWorker.new(%{clip_id: &1.id}))
       Oban.insert_all(archive_jobs, on_conflict: :raise)
-      Logger.info("Dispatcher[step 5]: Finished enqueuing ArchiveWorker jobs.")
+      Logger.info("Dispatcher[step 6]: Finished enqueuing ArchiveWorker jobs.")
     end
 
     Logger.info("Dispatcher[finish]: Finished perform.")
