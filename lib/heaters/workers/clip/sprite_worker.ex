@@ -2,14 +2,11 @@ defmodule Heaters.Workers.Clip.SpriteWorker do
   use Oban.Worker, queue: :media_processing
 
   alias Heaters.Clip.Review
+  alias Heaters.Clip.Review.Sprite
   alias Heaters.Clip.Queries, as: ClipQueries
-  alias Heaters.Infrastructure.PyRunner
   require Logger
 
   @complete_states ["pending_review", "sprite_failed", "embedded", "review_approved", "review_archived"]
-
-  # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
-  @dialyzer {:nowarn_function, [perform: 1]}
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"clip_id" => clip_id}}) do
@@ -19,19 +16,12 @@ defmodule Heaters.Workers.Clip.SpriteWorker do
          :ok <- check_idempotency(clip),
          {:ok, updated_clip} <- Review.start_sprite_generation(clip_id) do
 
-      Logger.info("SpriteWorker: Running PyRunner for clip_id: #{clip_id}")
+      Logger.info("SpriteWorker: Running Elixir sprite generation for clip_id: #{clip_id}")
 
-      # Python task receives explicit S3 paths and processing parameters
-      py_args = %{
-        clip_id: updated_clip.id,
-        input_s3_path: updated_clip.clip_filepath,
-        output_s3_prefix: Review.build_sprite_prefix(updated_clip),
-        overwrite: false
-      }
-
-      case PyRunner.run("sprite", py_args) do
+      # Use the native Elixir sprite generation module
+      case Sprite.run_sprite(clip_id) do
         {:ok, result} ->
-          Logger.info("SpriteWorker: PyRunner succeeded for clip_id: #{clip_id}")
+          Logger.info("SpriteWorker: Sprite generation succeeded for clip_id: #{clip_id}")
 
           # Use the Review context to process the success and transition to pending_review
           case Review.process_sprite_success(updated_clip, result) do
@@ -45,7 +35,7 @@ defmodule Heaters.Workers.Clip.SpriteWorker do
           end
 
         {:error, reason} ->
-          Logger.error("SpriteWorker: PyRunner failed for clip_id: #{clip_id}, reason: #{inspect(reason)}")
+          Logger.error("SpriteWorker: Sprite generation failed for clip_id: #{clip_id}, reason: #{inspect(reason)}")
 
           # Use the Review context to mark as failed
           case Review.mark_sprite_failed(updated_clip.id, reason) do

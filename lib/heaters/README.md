@@ -50,12 +50,12 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 **Workers**:
 - `SpriteWorker`: Generates sprite sheets for human review
 
-**Python Tasks**:
-- `sprite.py`: Generate sprite sheets for frame-by-frame review (located in `py_tasks/`)
+**Elixir Modules**:
+- `Heaters.Clip.Review.Sprite`: Generate sprite sheets using FFmpex (pure Elixir implementation)
 
 **Process**:
 1. Clips created in `spliced` state after video splicing
-2. `SpriteWorker` transitions to `generating_sprite` → calls `sprite.py` → transitions to `pending_review`
+2. `SpriteWorker` transitions to `generating_sprite` → calls `Sprite.run_sprite/1` → transitions to `pending_review`
 3. Clips now ready for human review with sprite sheets
 
 ### 3. Human Review Process (`Clip.Review` Context)
@@ -186,7 +186,7 @@ def run_task_name(explicit_params, **kwargs) -> dict:
 - `embed.py`: ML embedding generation using CLIP/DINOv2
 
 ### Legacy Tasks (`py_tasks/`)
-- `sprite.py`: Sprite sheet generation (referenced by SpriteWorker)
+- (sprite.py was migrated to pure Elixir implementation)
 
 ### Runner Infrastructure
 - `py/runner.py`: Main entry point for all Python task execution
@@ -202,7 +202,7 @@ def run_task_name(explicit_params, **kwargs) -> dict:
 
 ### Clip States
 - `spliced` → `generating_sprite` (via `SpriteWorker`)
-- `generating_sprite` → `pending_review` (via `sprite.py` success)
+- `generating_sprite` → `pending_review` (via `Sprite.run_sprite/1` success)
 - `pending_review` → `review_approved` (via human action)
 - `pending_review` → `review_archived` (via human action)
 - `review_approved` → `keyframing` (via `KeyframeWorker`)
