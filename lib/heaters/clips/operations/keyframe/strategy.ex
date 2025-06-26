@@ -1,7 +1,7 @@
 defmodule Heaters.Clips.Operations.Keyframe.Strategy do
   @moduledoc """
-  Pure keyframe strategy functions with no side effects.
-  Used by Transform.Keyframe for business logic.
+  Pure domain functions for keyframe extraction strategy selection.
+  Used by Operations.Keyframe for business logic.
   """
 
   @valid_strategies ~w[midpoint multi]

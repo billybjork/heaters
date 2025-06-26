@@ -1,7 +1,7 @@
 defmodule Heaters.Clips.Operations.Merge.Calculations do
   @moduledoc """
-  Pure merge calculation functions with no side effects.
-  Used by Transform.Merge for business logic.
+  Pure domain functions for merge operation calculations.
+  Used by Operations.Merge for business logic.
   """
 
   @type merge_timeline :: %{

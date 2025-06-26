@@ -1,7 +1,7 @@
 defmodule Heaters.Clips.Operations.Split.FileNaming do
   @moduledoc """
-  Pure file naming functions for split operations.
-  Used by Transform.Split for business logic.
+  Pure domain functions for split operation file naming.
+  Used by Operations.Split for business logic.
   """
 
   alias Heaters.Utils

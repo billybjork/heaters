@@ -1,7 +1,7 @@
 defmodule Heaters.Clips.Operations.Split.Calculations do
   @moduledoc """
-  Pure split calculation functions with no side effects.
-  Used by Transform.Split for business logic.
+  Pure domain functions for split operation calculations.
+  Used by Operations.Split for business logic.
   """
 
   # Business configuration matching original split.py

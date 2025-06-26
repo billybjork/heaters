@@ -1,7 +1,7 @@
 defmodule Heaters.Clips.Operations.Keyframe.PythonArgs do
   @moduledoc """
-  Pure Python argument construction functions for keyframe extraction.
-  Used by Transform.Keyframe for business logic.
+  Pure domain functions for keyframe Python argument construction.
+  Used by Operations.Keyframe for business logic.
   """
 
   alias Heaters.Clips.Operations.Keyframe.Strategy

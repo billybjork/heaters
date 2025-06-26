@@ -1,9 +1,9 @@
 defmodule Heaters.Clips.Operations.Sprite.Calculations do
   @moduledoc """
-  Pure sprite calculation functions with no side effects.
+  Pure domain functions for sprite sheet calculations and grid layout.
 
-  This module contains the core business logic for sprite sheet calculations,
-  extracted from the Transform.Sprite module. All functions are pure - they take
+  This module contains business logic for sprite sheet generation
+  extracted from the Operations.Sprite module. All functions are pure - they take
   explicit inputs and return predictable outputs without any I/O operations.
   """
 

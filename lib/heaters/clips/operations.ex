@@ -81,10 +81,10 @@ defmodule Heaters.Clips.Operations do
   ## Examples
 
       # Mark keyframe extraction as failed
-      Transform.mark_failed(clip_id, "keyframe_failed", "OpenCV initialization error")
+      Operations.mark_failed(clip_id, "keyframe_failed", "OpenCV initialization error")
 
       # Mark merge operation as failed
-      Transform.mark_failed(clip, "merge_failed", {:ffmpeg_error, "Invalid codec"})
+      Operations.mark_failed(clip, "merge_failed", {:ffmpeg_error, "Invalid codec"})
   """
   @spec mark_failed(Clip.t() | integer(), String.t(), any()) :: {:ok, Clip.t()} | {:error, any()}
   def mark_failed(clip_or_id, failure_state, error_reason)
@@ -114,11 +114,11 @@ defmodule Heaters.Clips.Operations do
   ## Examples
 
       # For keyframes
-      prefix = Transform.build_artifact_prefix(clip, "keyframes")
+      prefix = Operations.build_artifact_prefix(clip, "keyframes")
       # Returns: "source_videos/123/clips/456/keyframes"
 
       # For sprites
-      prefix = Transform.build_artifact_prefix(clip, "sprites")
+      prefix = Operations.build_artifact_prefix(clip, "sprites")
       # Returns: "source_videos/123/clips/456/sprites"
   """
   @spec build_artifact_prefix(Clip.t(), String.t()) :: String.t()
@@ -149,13 +149,13 @@ defmodule Heaters.Clips.Operations do
         %{s3_key: "path/to/keyframe2.jpg", metadata: %{frame_index: 200}}
       ]
 
-      {:ok, artifacts} = Transform.create_artifacts(clip_id, "keyframe", artifacts_data)
+      {:ok, artifacts} = Operations.create_artifacts(clip_id, "keyframe", artifacts_data)
   """
   @spec create_artifacts(integer(), String.t(), list(map())) ::
           {:ok, list(ClipArtifact.t())} | {:error, any()}
   def create_artifacts(clip_id, artifact_type, artifacts_data) when is_list(artifacts_data) do
     Logger.info(
-      "Transform: Creating #{length(artifacts_data)} #{artifact_type} artifacts for clip_id: #{clip_id}"
+      "Operations: Creating #{length(artifacts_data)} #{artifact_type} artifacts for clip_id: #{clip_id}"
     )
 
     artifacts_attrs =
@@ -167,14 +167,14 @@ defmodule Heaters.Clips.Operations do
     case Repo.insert_all(ClipArtifact, artifacts_attrs, returning: true) do
       {count, artifacts} when count > 0 ->
         Logger.info(
-          "Transform: Successfully created #{count} #{artifact_type} artifacts for clip_id: #{clip_id}"
+          "Operations: Successfully created #{count} #{artifact_type} artifacts for clip_id: #{clip_id}"
         )
 
         {:ok, artifacts}
 
       {0, _} ->
         Logger.error(
-          "Transform: Failed to create #{artifact_type} artifacts for clip_id: #{clip_id}"
+          "Operations: Failed to create #{artifact_type} artifacts for clip_id: #{clip_id}"
         )
 
         {:error, "No artifacts were created"}
@@ -182,7 +182,7 @@ defmodule Heaters.Clips.Operations do
   rescue
     e ->
       Logger.error(
-        "Transform: Error creating #{artifact_type} artifacts for clip_id #{clip_id}: #{Exception.message(e)}"
+        "Operations: Error creating #{artifact_type} artifacts for clip_id #{clip_id}: #{Exception.message(e)}"
       )
 
       {:error, Exception.message(e)}

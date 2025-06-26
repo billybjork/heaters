@@ -9,7 +9,7 @@ defmodule Heaters.Clips.Embedding.Search do
   import Ecto.Query, warn: false
   alias Heaters.Repo
   alias Heaters.Clips.Clip
-  alias Heaters.Clips.Embed.Embedding
+  alias Heaters.Clips.Embedding.Schema, as: Embedding
 
   @doc "All available model names, generation strategies, and source videos for embedded clips"
   def embedded_filter_opts do

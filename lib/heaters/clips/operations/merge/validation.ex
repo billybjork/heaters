@@ -1,7 +1,7 @@
 defmodule Heaters.Clips.Operations.Merge.Validation do
   @moduledoc """
-  Pure merge validation functions with no side effects.
-  Used by Transform.Merge for business logic.
+  Pure domain functions for merge operation validation.
+  Used by Operations.Merge for business logic.
   """
 
   alias Heaters.Clips.Operations.Shared.ClipValidation

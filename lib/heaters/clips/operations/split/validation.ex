@@ -1,7 +1,7 @@
 defmodule Heaters.Clips.Operations.Split.Validation do
   @moduledoc """
-  Pure split validation functions with no side effects.
-  Used by Transform.Split for business logic.
+  Pure domain functions for split operation validation.
+  Used by Operations.Split for business logic.
   """
 
   alias Heaters.Clips.Operations.Shared.ClipValidation

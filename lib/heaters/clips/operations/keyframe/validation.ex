@@ -1,7 +1,7 @@
 defmodule Heaters.Clips.Operations.Keyframe.Validation do
   @moduledoc """
-  Pure keyframe validation functions with no side effects.
-  Used by Transform.Keyframe for business logic.
+  Pure domain functions for keyframe extraction validation.
+  Used by Operations.Keyframe for business logic.
   """
 
   alias Heaters.Clips.Operations.Shared.ClipValidation

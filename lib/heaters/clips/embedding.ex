@@ -15,9 +15,9 @@ defmodule Heaters.Clips.Embedding do
 
   alias Heaters.Clips.Embedding.Search
   alias Heaters.Clips.Embedding.Workflow
-  alias Heaters.Clips.Embedding.Embedding.EmbedResult
+  alias Heaters.Clips.Embedding.Types.EmbedResult
 
-  # Re-export the EmbedResult type for backward compatibility
+  # Re-export functions from specialized modules
   defdelegate embedded_filter_opts(), to: Search
   defdelegate random_embedded_clip(filters), to: Search
   defdelegate similar_clips(main_clip_id, filters, asc?, page, per), to: Search
@@ -31,13 +31,13 @@ defmodule Heaters.Clips.Embedding do
   # Re-export the EmbedResult type for backward compatibility
   defmodule EmbedResult do
     @moduledoc """
-    Legacy alias for Heaters.Clips.Embedding.Embedding.EmbedResult.
-    Use Heaters.Clips.Embedding.Embedding.EmbedResult directly for new code.
+    Legacy alias for Heaters.Clips.Embedding.Types.EmbedResult.
+    Use Heaters.Clips.Embedding.Types.EmbedResult directly for new code.
     """
-    defstruct Heaters.Clips.Embedding.Embedding.EmbedResult.__struct__()
+    defstruct Heaters.Clips.Embedding.Types.EmbedResult.__struct__()
               |> Map.keys()
               |> Enum.reject(&(&1 == :__struct__))
 
-    @type t :: Heaters.Clips.Embedding.Embedding.EmbedResult.t()
+    @type t :: Heaters.Clips.Embedding.Types.EmbedResult.t()
   end
 end
