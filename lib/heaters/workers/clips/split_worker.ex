@@ -1,8 +1,8 @@
 defmodule Heaters.Workers.Clips.SplitWorker do
   use Heaters.Workers.GenericWorker, queue: :media_processing
 
-  alias Heaters.Clips.Transform.Split
-  alias Heaters.Clips.Transform.Shared.Types
+  alias Heaters.Clips.Operations.Split
+  alias Heaters.Clips.Operations.Shared.Types
   alias Heaters.Workers.Clips.SpriteWorker
 
   @impl Heaters.Workers.GenericWorker

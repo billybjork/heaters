@@ -1,4 +1,4 @@
-defmodule Heaters.Clips.Embed do
+defmodule Heaters.Clips.Embedding do
   @moduledoc """
   Embedding and similarity functions for clips.
 
@@ -8,14 +8,14 @@ defmodule Heaters.Clips.Embed do
 
   This module serves as the main public API and delegates to specialized
   modules for specific functionality:
-  - `Heaters.Clips.Embed.Search` for similarity search and discovery
-  - `Heaters.Clips.Embed.Workflow` for state management and embedding workflow
-  - `Heaters.Clips.Embed.Types` for shared type definitions
+  - `Heaters.Clips.Embedding.Search` for similarity search and discovery
+  - `Heaters.Clips.Embedding.Workflow` for state management and embedding workflow
+  - `Heaters.Clips.Embedding.Types` for shared type definitions
   """
 
-  alias Heaters.Clips.Embed.Search
-  alias Heaters.Clips.Embed.Workflow
-  alias Heaters.Clips.Embed.Embedding.EmbedResult
+  alias Heaters.Clips.Embedding.Search
+  alias Heaters.Clips.Embedding.Workflow
+  alias Heaters.Clips.Embedding.Embedding.EmbedResult
 
   # Re-export the EmbedResult type for backward compatibility
   defdelegate embedded_filter_opts(), to: Search
@@ -31,13 +31,13 @@ defmodule Heaters.Clips.Embed do
   # Re-export the EmbedResult type for backward compatibility
   defmodule EmbedResult do
     @moduledoc """
-    Legacy alias for Heaters.Clips.Embed.Embedding.EmbedResult.
-    Use Heaters.Clips.Embed.Embedding.EmbedResult directly for new code.
+    Legacy alias for Heaters.Clips.Embedding.Embedding.EmbedResult.
+    Use Heaters.Clips.Embedding.Embedding.EmbedResult directly for new code.
     """
-    defstruct Heaters.Clips.Embed.Embedding.EmbedResult.__struct__()
+    defstruct Heaters.Clips.Embedding.Embedding.EmbedResult.__struct__()
               |> Map.keys()
               |> Enum.reject(&(&1 == :__struct__))
 
-    @type t :: Heaters.Clips.Embed.Embedding.EmbedResult.t()
+    @type t :: Heaters.Clips.Embedding.Embedding.EmbedResult.t()
   end
 end

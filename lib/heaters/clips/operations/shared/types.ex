@@ -1,4 +1,4 @@
-defmodule Heaters.Clips.Transform.Shared.Types do
+defmodule Heaters.Clips.Operations.Shared.Types do
   @moduledoc """
   Shared type definitions for the Transform context.
 
@@ -188,5 +188,5 @@ defmodule Heaters.Clips.Transform.Shared.Types do
           {:ok, Heaters.Clips.Clip.t()} | {:error, any()}
 
   @type artifacts_response ::
-          {:ok, [Heaters.Clips.Transform.ClipArtifact.t()]} | {:error, any()}
+          {:ok, [Heaters.Clips.Operations.ClipArtifact.t()]} | {:error, any()}
 end

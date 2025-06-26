@@ -1,4 +1,4 @@
-defmodule Heaters.Clips.Transform.Shared.FFmpegRunner do
+defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
   @moduledoc """
   Centralized FFmpeg operations for video transformations.
 

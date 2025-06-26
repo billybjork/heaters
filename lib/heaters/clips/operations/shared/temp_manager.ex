@@ -1,4 +1,4 @@
-defmodule Heaters.Clips.Transform.Shared.TempManager do
+defmodule Heaters.Clips.Operations.Shared.TempManager do
   @moduledoc """
   Centralized temporary directory management for transformation operations.
 

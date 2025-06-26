@@ -70,7 +70,8 @@ defmodule Heaters.MixProject do
       {:sweet_xml, "~> 0.7"},
       {:ffmpex, "~> 0.11.0"},
       {:dialyxir, "~> 1.4", only: [:dev], runtime: false},
-      {:spitfire, "~> 0.2.1", override: true}
+      {:spitfire, "~> 0.2.1", override: true},
+      {:stream_data, "~> 1.1", only: :test}
     ]
   end
 

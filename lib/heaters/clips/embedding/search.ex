@@ -1,4 +1,4 @@
-defmodule Heaters.Clips.Embed.Search do
+defmodule Heaters.Clips.Embedding.Search do
   @moduledoc """
   Search and discovery functions for embedded clips.
 

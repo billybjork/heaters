@@ -1,8 +1,8 @@
 defmodule Heaters.Workers.Clips.MergeWorker do
   use Heaters.Workers.GenericWorker, queue: :media_processing
 
-  alias Heaters.Clips.Transform.Merge
-  alias Heaters.Clips.Transform.Shared.Types
+  alias Heaters.Clips.Operations.Merge
+  alias Heaters.Clips.Operations.Shared.Types
   alias Heaters.Workers.Clips.SpriteWorker
   require Logger
 

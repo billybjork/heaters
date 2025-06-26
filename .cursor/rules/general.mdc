@@ -43,7 +43,7 @@ alwaysApply: true
 
   ```bash
   mix format     # consistent code style
-  mix check      # runs ex_check: dialyzer, credo, tests, etc.
+  mix dialyzer   # check for warnings
   ```
 ---
 

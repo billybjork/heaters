@@ -1,4 +1,4 @@
-defmodule Heaters.Clips.Embed.Workflow do
+defmodule Heaters.Clips.Embedding.Workflow do
   @moduledoc """
   State management and workflow functions for embedding generation.
 
@@ -9,8 +9,8 @@ defmodule Heaters.Clips.Embed.Workflow do
   import Ecto.Query, warn: false
   alias Heaters.Repo
   alias Heaters.Clips.Clip
-  alias Heaters.Clips.Embed.Embedding
-  alias Heaters.Clips.Embed.Embedding.EmbedResult
+  alias Heaters.Clips.Embedding.Embedding
+  alias Heaters.Clips.Embedding.Embedding.EmbedResult
   alias Heaters.Clips.Queries, as: ClipQueries
   require Logger
 

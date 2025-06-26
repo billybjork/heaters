@@ -1,32 +1,31 @@
-defmodule Heaters.Clips.Transform do
+defmodule Heaters.Clips.Operations do
   @moduledoc """
-  Main coordination context for video clip transformation operations.
+  Main coordination context for video clip processing operations.
 
-  After the Transform context refactor, this module serves as a clean delegation
-  facade providing shared utilities and coordination functions used across
-  all transformation operations.
+  This module serves as a clean delegation facade providing shared utilities
+  and coordination functions used across all video processing operations.
 
   ## Architecture
 
   This context follows a clean architecture with dedicated modules for each operation:
 
-  - **`Transform.Keyframe`** - Keyframe extraction using Python OpenCV
-  - **`Transform.Sprite`** - Sprite sheet generation using FFmpeg
-  - **`Transform.Split`** - Clip splitting using FFmpeg
-  - **`Transform.Merge`** - Clip merging using FFmpeg
+  - **`Operations.Keyframe`** - Keyframe extraction using Python OpenCV
+  - **`Operations.Sprite`** - Sprite sheet generation using FFmpeg
+  - **`Operations.Split`** - Clip splitting using FFmpeg
+  - **`Operations.Merge`** - Clip merging using FFmpeg
 
   ## Shared Infrastructure
 
-  All transformation modules use centralized shared infrastructure:
+  All operation modules use centralized shared infrastructure:
 
-  - **`Transform.Shared.Types`** - Common result structs and type definitions
-  - **`Transform.Shared.TempManager`** - Temporary directory management
-  - **`Transform.Shared.FFmpegRunner`** - FFmpeg operation standardization
+  - **`Operations.Shared.Types`** - Common result structs and type definitions
+  - **`Operations.Shared.TempManager`** - Temporary directory management
+  - **`Operations.Shared.FFmpegRunner`** - FFmpeg operation standardization
   - **`Infrastructure.S3`** - S3 upload/download operations
 
   ## This Module's Responsibilities
 
-  This module provides shared utilities used by all transformation modules:
+  This module provides shared utilities used by all operation modules:
 
   - **Error handling** - `mark_failed/3` for consistent failure tracking
   - **Artifact management** - `create_artifacts/3` for database artifact creation
@@ -35,37 +34,37 @@ defmodule Heaters.Clips.Transform do
 
   ## Usage
 
-  For specific transformations, use the dedicated modules:
+  For specific operations, use the dedicated modules:
 
       # Keyframe extraction
-      {:ok, result} = Transform.Keyframe.run_keyframe_extraction(clip_id, "multi")
+      {:ok, result} = Operations.Keyframe.run_keyframe_extraction(clip_id, "multi")
 
       # Sprite generation
-      {:ok, result} = Transform.Sprite.run_sprite(clip_id, %{})
+      {:ok, result} = Operations.Sprite.run_sprite(clip_id, %{})
 
       # Clip splitting
-      {:ok, result} = Transform.Split.run_split(clip_id, split_params)
+      {:ok, result} = Operations.Split.run_split(clip_id, split_params)
 
       # Clip merging
-      {:ok, result} = Transform.Merge.run_merge(target_clip_id, source_clip_id)
+      {:ok, result} = Operations.Merge.run_merge(target_clip_id, source_clip_id)
 
-  For shared utilities (used internally by transformation modules):
+  For shared utilities (used internally by operation modules):
 
       # Error handling
-      Transform.mark_failed(clip_id, "keyframe_failed", "OpenCV error")
+      Operations.mark_failed(clip_id, "keyframe_failed", "OpenCV error")
 
       # Artifact creation
-      Transform.create_artifacts(clip_id, "keyframe", artifacts_data)
+      Operations.create_artifacts(clip_id, "keyframe", artifacts_data)
 
       # S3 path management
-      prefix = Transform.build_artifact_prefix(clip, "keyframes")
+      prefix = Operations.build_artifact_prefix(clip, "keyframes")
   """
 
   alias Heaters.Repo
   alias Heaters.Clips.Clip
   alias Heaters.Clips.Queries, as: ClipQueries
-  alias Heaters.Clips.Transform.ClipArtifact
-  alias Heaters.Clips.Transform.Shared.Types
+  alias Heaters.Clips.Operations.ClipArtifact
+  alias Heaters.Clips.Operations.Shared.Types
   require Logger
 
   @doc """

@@ -2,10 +2,13 @@
 
 ## Overview
 
-Heaters is a video processing pipeline that ingests videos, splits them into clips, prepares them for human review, and processes approved clips for final use. The system follows a clean architecture with "dumb" Python tasks focused on media processing and "smart" Elixir contexts managing business logic and state transitions.
+Heaters is a video processing pipeline that ingests videos, splits them into clips, prepares them for human review, and processes approved clips for final use. The system follows a clean functional architecture with "I/O at the edges", "dumb" Python tasks focused on media processing, and "smart" Elixir contexts managing business logic and state transitions.
 
 ## Architecture Principles
 
+- **Functional Domain Modeling**: "I/O at the edges" architecture with pure business logic separated from I/O operations
+- **Pure Domain Functions**: Business logic implemented as pure functions with predictable inputs/outputs
+- **Infrastructure Adapters**: Clean I/O boundaries with consistent interfaces for database, S3, and FFmpeg operations
 - **Python Tasks**: Pure media processing functions (video/image/ML operations)
 - **Elixir Contexts**: Business logic, state management, and workflow orchestration
 - **Oban Workers**: Job orchestration and error handling with standardized patterns
@@ -45,20 +48,20 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 3. `Videos.SpliceWorker` transitions to `splicing` → calls `splice.py` → transitions to `spliced`
 4. Clips created in `spliced` state, `Clips.SpriteWorker` jobs enqueued
 
-### 2. Clip Review Preparation (`Clips.Transform` Context)
+### 2. Clip Review Preparation (`Clips.Operations` Context)
 
 **States**: `spliced` → `generating_sprite` → `pending_review`
 
 **Workers**:
 - `Clips.SpriteWorker`: Generates sprite sheets for human review
 
-**Transform Modules**:
-- `Heaters.Clips.Transform.Sprite`: Generate sprite sheets using FFmpex (pure Elixir implementation)
+**Operations Modules**:
+- `Heaters.Clips.Operations.Sprite`: Generate sprite sheets using FFmpeg (pure Elixir implementation)
 - Returns structured `SpriteResult` with status, artifacts, metadata, and performance timing
 
 **Process**:
 1. Clips created in `spliced` state after video splicing
-2. `Clips.SpriteWorker` uses `Transform` context to transition to `generating_sprite` → calls `Clips.Transform.Sprite.run_sprite/2` → transitions to `pending_review`
+2. `Clips.SpriteWorker` uses `Operations` context to transition to `generating_sprite` → calls `Clips.Operations.Sprite.run_sprite/2` → transitions to `pending_review`
 3. `SpriteResult` provides structured data including sprite artifacts and generation metadata
 4. Clips now ready for human review with sprite sheets
 
@@ -78,7 +81,7 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
    - Automatically enqueue `Clips.SpriteWorker` for new clips
    - New clips flow back through sprite generation → review
 
-### 4. Post-Approval Processing (`Clips.Transform` + `Clips.Embed` Contexts)
+### 4. Post-Approval Processing (`Clips.Operations` + `Clips.Embedding` Contexts)
 
 **States**: `review_approved` → `keyframing` → `keyframed` → `embedding` → `embedded`
 
@@ -86,10 +89,10 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 - `Clips.KeyframeWorker`: Extracts keyframes for embedding generation
 - `Clips.EmbeddingWorker`: Generates ML embeddings from keyframes
 
-**Transform Modules**:
-- `Heaters.Clips.Transform.Keyframe`: Keyframe extraction coordination (Python OpenCV integration)
+**Operations Modules**:
+- `Heaters.Clips.Operations.Keyframe`: Keyframe extraction coordination (Python OpenCV integration)
 - Returns structured `KeyframeResult` with status, artifacts, keyframe count, and strategy metadata
-- `Heaters.Clips.Embed`: Embedding generation coordination
+- `Heaters.Clips.Embedding`: Embedding generation coordination
 - Returns structured `EmbedResult` with status, embedding ID, model info, and dimensions
 
 **Python Tasks**:
@@ -98,10 +101,41 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 
 **Process**:
 1. Approved clips transition from `review_approved` to `keyframing`
-2. `Clips.KeyframeWorker` calls `Transform.Keyframe.run_keyframe_extraction/2` → returns `KeyframeResult` → transitions to `keyframed`
-3. `Clips.EmbeddingWorker` calls `Embed.process_embedding_success/2` → returns `EmbedResult` → transitions to `embedded`
+2. `Clips.KeyframeWorker` calls `Operations.Keyframe.run_keyframe_extraction/2` → returns `KeyframeResult` → transitions to `keyframed`
+3. `Clips.EmbeddingWorker` calls `Embedding.process_embedding_success/2` → returns `EmbedResult` → transitions to `embedded`
 4. Structured results provide rich metadata including keyframe counts, embedding dimensions, and model information
 5. Clips now ready for final use with embeddings
+
+## Functional Architecture
+
+### Domain-Driven Design with "I/O at the Edges"
+
+The system implements functional domain modeling principles inspired by "Domain Modeling Made Functional":
+
+**Pure Domain Layer**:
+- **Business Logic**: Pure functions with no I/O dependencies in `operations/*/` subdirectories
+- **Domain Types**: Shared types and validation logic in `operations/shared/`
+- **Calculations**: Mathematical operations (sprite grids, split boundaries, video metadata)
+- **Validation**: Business rule validation with structured error types
+- **File Naming**: Consistent naming conventions across operations
+
+**Infrastructure Layer**:
+- **I/O Adapters**: Clean interfaces for database, S3, FFmpeg, and Python operations
+- **Infrastructure Utilities**: Temp file management, FFmpeg runners, result builders
+- **Consistent Interfaces**: All adapters follow the same error handling and return patterns
+
+**I/O Orchestration Layer**:
+- **Operations Modules**: Coordinate between pure domain logic and infrastructure adapters
+- **State Management**: Handle clip state transitions with proper error handling
+- **Result Assembly**: Combine domain calculations with I/O operation results
+
+### Benefits of Functional Architecture
+
+1. **Testability**: Pure domain functions can be tested without I/O mocking
+2. **Reliability**: Predictable functions with clear inputs/outputs reduce bugs
+3. **Maintainability**: Clear separation of concerns makes code easier to understand
+4. **Performance**: Property-based testing validates business logic invariants
+5. **Composability**: Pure functions can be easily combined and reused
 
 ## Context Organization
 
@@ -127,20 +161,22 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 - **Purpose**: Human review workflow coordination and review actions
 - **States**: `pending_review`, `review_approved`, `review_archived`
 - **Key Functions**: Review action orchestration, fetching clips for review, review-specific queries
-- **Related Contexts**: Uses `Events` for action logging, coordinates with `Transform` for merge/split operations
+- **Related Contexts**: Uses `Events` for action logging, coordinates with `Operations` for merge/split operations
 
-### `Clips.Transform` (`lib/heaters/clips/transform.ex`)
-- **Purpose**: Coordination layer for all clip transformation operations and state management
+### `Clips.Operations` (`lib/heaters/clips/operations.ex`)
+- **Purpose**: I/O orchestration layer for all clip transformation operations and state management
 - **States**: `spliced`, `generating_sprite`, `pending_review`, `keyframing`, `keyframed` (various transformation states)
 - **Key Functions**: Sprite state management, error handling, artifact management, S3 path generation
-- **Architecture**: All transform modules return structured Result types for type safety and enhanced observability
+- **Architecture**: Functional "I/O at the edges" design with pure domain logic separated from I/O operations
 - **Specialized Modules**:
-  - `Clips.Transform.Sprite`: Sprite sheet generation (native Elixir with FFmpeg) → `SpriteResult`
-  - `Clips.Transform.Merge`: Clip merging operations (native Elixir with FFmpeg) → `MergeResult`
-  - `Clips.Transform.Split`: Clip splitting operations (native Elixir with FFmpeg) → `SplitResult`
-  - `Clips.Transform.Keyframe`: Keyframe extraction (Python OpenCV integration) → `KeyframeResult`
+  - `Clips.Operations.Sprite`: Sprite sheet generation (native Elixir with FFmpeg) → `SpriteResult`
+  - `Clips.Operations.Merge`: Clip merging operations (native Elixir with FFmpeg) → `MergeResult`
+  - `Clips.Operations.Split`: Clip splitting operations (native Elixir with FFmpeg) → `SplitResult`
+  - `Clips.Operations.Keyframe`: Keyframe extraction (Python OpenCV integration) → `KeyframeResult`
+- **Domain Logic**: Pure business functions in `operations/sprite/`, `operations/keyframe/`, `operations/split/`, `operations/merge/`
+- **Shared Infrastructure**: Common utilities and domain logic in `operations/shared/`
 
-### `Clips.Embed` (`lib/heaters/clips/embed.ex`)
+### `Clips.Embedding` (`lib/heaters/clips/embedding.ex`)
 - **Purpose**: ML embedding generation and storage
 - **States**: `keyframed`, `embedding`, `embedded`
 - **Key Functions**: `start_embedding/1`, `process_embedding_success/2`, embedding queries
@@ -300,8 +336,8 @@ All transform operations now return standardized Result structs for type safety 
 
 ## Key Benefits
 
-1. **Clear Separation**: Media processing (Python) vs business logic (Elixir)
-2. **Maintainable**: Each context has focused responsibilities with standardized patterns
+1. **Clear Separation**: Media processing (Python) vs business logic (Elixir) vs I/O operations (Infrastructure)
+2. **Maintainable**: Each context has focused responsibilities with standardized patterns and functional architecture
 3. **Scalable**: Independent job processing with proper error handling and centralized worker behavior
 4. **Flexible**: Data-driven dispatcher makes workflow modifications easy
 5. **Reliable**: Comprehensive state management and error recovery with structured Result types
@@ -311,4 +347,7 @@ All transform operations now return standardized Result structs for type safety 
 9. **Observable**: Enhanced logging with domain-specific metadata (keyframe counts, embedding dimensions, performance timing)
 10. **Consistent**: GenericWorker behavior eliminates boilerplate and ensures uniform error handling across all workers
 11. **Performance**: Optimized pattern matching without defensive programming (direct struct field access vs Map.get)
-12. **Developer Experience**: Reduced code complexity (98→42 lines in dispatcher) with improved maintainability 
+12. **Developer Experience**: Reduced code complexity with improved maintainability through functional architecture
+13. **Pure Domain Logic**: Business rules can be tested without I/O dependencies or mocking
+14. **Property-Based Testing**: Pure functions enable comprehensive property-based testing for business invariants
+15. **Clean Architecture**: "I/O at the edges" principle ensures clear boundaries between pure logic and side effects 

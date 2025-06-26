@@ -1,7 +1,7 @@
 defmodule Heaters.Workers.Clips.EmbeddingWorker do
   use Heaters.Workers.GenericWorker, queue: :media_processing
 
-  alias Heaters.Clips.Embed
+  alias Heaters.Clips.Embedding
   alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Infrastructure.PyRunner
   require Logger
@@ -21,7 +21,7 @@ defmodule Heaters.Workers.Clips.EmbeddingWorker do
 
     with {:ok, clip} <- ClipQueries.get_clip_with_artifacts(clip_id),
          :ok <- check_idempotency(clip, model_name, generation_strategy),
-         {:ok, updated_clip} <- Embed.start_embedding(clip_id) do
+         {:ok, updated_clip} <- Embedding.start_embedding(clip_id) do
       Logger.info("EmbeddingWorker: Running PyRunner for clip_id: #{clip_id}")
 
       # Python task receives explicit parameters for embedding generation
@@ -40,17 +40,17 @@ defmodule Heaters.Workers.Clips.EmbeddingWorker do
         {:ok, result} ->
           Logger.info("EmbeddingWorker: PyRunner succeeded for clip_id: #{clip_id}")
 
-          # Use the Embed context to process the success and create embedding records
-          case Embed.process_embedding_success(updated_clip, result) do
+          # Use the Embedding context to process the success and create embedding records
+          case Embedding.process_embedding_success(updated_clip, result) do
             {:ok,
-             %Embed.EmbedResult{status: "success", embedding_id: embedding_id, model_name: model}} ->
+             %Embedding.EmbedResult{status: "success", embedding_id: embedding_id, model_name: model}} ->
               Logger.info(
                 "EmbeddingWorker: Clip #{clip_id} embedding completed successfully (ID: #{embedding_id}, Model: #{model})"
               )
 
               :ok
 
-            {:ok, %Embed.EmbedResult{status: status}} ->
+            {:ok, %Embedding.EmbedResult{status: status}} ->
               Logger.error(
                 "EmbeddingWorker: Embedding finished with unexpected status: #{status}"
               )
@@ -70,8 +70,8 @@ defmodule Heaters.Workers.Clips.EmbeddingWorker do
             "EmbeddingWorker: PyRunner failed for clip_id: #{clip_id}, reason: #{inspect(reason)}"
           )
 
-          # Use the Embed context to mark as failed
-          case Embed.mark_failed(updated_clip.id, "embedding_failed", reason) do
+          # Use the Embedding context to mark as failed
+          case Embedding.mark_failed(updated_clip.id, "embedding_failed", reason) do
             {:ok, _} ->
               {:error, reason}
 
@@ -103,7 +103,7 @@ defmodule Heaters.Workers.Clips.EmbeddingWorker do
 
   defp check_idempotency(clip, model_name, generation_strategy) do
     # Check if embedding already exists for this specific model and strategy
-    case Embed.has_embedding?(clip.id, model_name, generation_strategy) do
+    case Embedding.has_embedding?(clip.id, model_name, generation_strategy) do
       true -> {:error, :already_processed}
       false -> :ok
     end
