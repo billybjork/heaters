@@ -1,5 +1,5 @@
 defmodule Heaters.Workers.Videos.IngestWorker do
-  use Oban.Worker, queue: :download
+  use Heaters.Workers.GenericWorker, queue: :download
 
   alias Heaters.Videos.Ingest
   alias Heaters.Videos.Queries, as: VideoQueries
@@ -7,10 +7,10 @@ defmodule Heaters.Workers.Videos.IngestWorker do
   require Logger
 
   # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
-  @dialyzer {:nowarn_function, perform: 1}
+  @dialyzer {:nowarn_function, handle: 1}
 
-  @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"source_video_id" => source_video_id}}) do
+  @impl Heaters.Workers.GenericWorker
+  def handle(%{"source_video_id" => source_video_id}) do
     Logger.info("IngestWorker: Starting ingest for source_video_id: #{source_video_id}")
 
     # Use new state management pattern
@@ -39,13 +39,11 @@ defmodule Heaters.Workers.Videos.IngestWorker do
           # Elixir handles the state transition and metadata update
           case Ingest.complete_downloading(source_video_id, result) do
             {:ok, _updated_video} ->
-              # Enqueue the next worker in the chain
-              case Oban.insert(Heaters.Workers.Videos.SpliceWorker.new(%{source_video_id: updated_video.id})) do
-            {:ok, _job} -> :ok
-            {:error, reason} -> {:error, "Failed to enqueue splice worker: #{inspect(reason)}"}
-          end
+              # Store the video ID for enqueue_next/1 to use
+              Process.put(:source_video_id, updated_video.id)
+              :ok
 
-        {:error, reason} ->
+            {:error, reason} ->
               Logger.error("IngestWorker: Failed to update video metadata: #{inspect(reason)}")
               {:error, reason}
           end
@@ -60,7 +58,7 @@ defmodule Heaters.Workers.Videos.IngestWorker do
             {:ok, _} -> {:error, reason}
             {:error, db_error} ->
               Logger.error("IngestWorker: Failed to mark video as failed: #{inspect(db_error)}")
-          {:error, reason}
+              {:error, reason}
           end
       end
     else
@@ -76,6 +74,21 @@ defmodule Heaters.Workers.Videos.IngestWorker do
           "IngestWorker: Error in workflow for source video #{source_video_id}: #{inspect(reason)}"
         )
         {:error, reason}
+    end
+  end
+
+  @impl Heaters.Workers.GenericWorker
+  def enqueue_next(_args) do
+    case Process.get(:source_video_id) do
+      source_video_id when is_integer(source_video_id) ->
+        # Enqueue the next worker in the chain
+        case Oban.insert(Heaters.Workers.Videos.SpliceWorker.new(%{source_video_id: source_video_id})) do
+          {:ok, _job} -> :ok
+          {:error, reason} -> {:error, "Failed to enqueue splice worker: #{inspect(reason)}"}
+        end
+
+      _ ->
+        {:error, "No source_video_id found to enqueue splice worker"}
     end
   end
 

@@ -1,5 +1,5 @@
 defmodule Heaters.Workers.Videos.SpliceWorker do
-  use Oban.Worker, queue: :media_processing
+  use Heaters.Workers.GenericWorker, queue: :media_processing
 
   alias Heaters.Videos.Ingest
   alias Heaters.Videos.SourceVideo
@@ -11,10 +11,10 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
   @splicing_complete_states ["spliced", "splicing_failed"]
 
   # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
-  @dialyzer {:nowarn_function, [perform: 1, handle_splicing: 1]}
+  @dialyzer {:nowarn_function, [handle: 1, handle_splicing: 1]}
 
-  @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"source_video_id" => source_video_id}}) do
+  @impl Heaters.Workers.GenericWorker
+  def handle(%{"source_video_id" => source_video_id}) do
     Logger.info("SpliceWorker: Starting splice for source_video_id: #{source_video_id}")
 
     with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
@@ -58,8 +58,9 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
                   {:ok, clips} ->
                     case Ingest.complete_splicing(updated_video.id) do
                       {:ok, _final_video} ->
-                        # Enqueue sprite workers for all created clips (for review preparation)
-                        enqueue_sprite_workers(clips)
+                        # Store clips for enqueue_next/1 to use
+                        Process.put(:clips, clips)
+                        :ok
 
                       {:error, reason} ->
                         Logger.error("SpliceWorker: Failed to mark splicing complete: #{inspect(reason)}")
@@ -102,32 +103,40 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
     end
   end
 
-  defp enqueue_sprite_workers(clips) do
-    jobs =
-      clips
-      |> Enum.map(fn clip ->
-        SpriteWorker.new(%{clip_id: clip.id})
-      end)
+  @impl Heaters.Workers.GenericWorker
+  def enqueue_next(_args) do
+    case Process.get(:clips) do
+      clips when is_list(clips) ->
+        # Enqueue sprite workers for all created clips (for review preparation)
+        jobs =
+          clips
+          |> Enum.map(fn clip ->
+            SpriteWorker.new(%{clip_id: clip.id})
+          end)
 
-    try do
-      case Oban.insert_all(jobs) do
-        inserted_jobs when is_list(inserted_jobs) and length(inserted_jobs) > 0 ->
-          Logger.info("SpliceWorker: Enqueued #{length(inserted_jobs)} sprite workers")
-          :ok
+        try do
+          case Oban.insert_all(jobs) do
+            inserted_jobs when is_list(inserted_jobs) and length(inserted_jobs) > 0 ->
+              Logger.info("SpliceWorker: Enqueued #{length(inserted_jobs)} sprite workers")
+              :ok
 
-        [] ->
-          Logger.error("SpliceWorker: Failed to enqueue sprite workers - no jobs inserted")
-          {:error, "No sprite jobs were enqueued"}
+            [] ->
+              Logger.error("SpliceWorker: Failed to enqueue sprite workers - no jobs inserted")
+              {:error, "No sprite jobs were enqueued"}
 
-        %Ecto.Multi{} = multi ->
-          Logger.error("SpliceWorker: Oban.insert_all returned Multi instead of jobs: #{inspect(multi)}")
-          {:error, "Unexpected Multi result from Oban.insert_all"}
-      end
-    rescue
-      error ->
-        error_message = "Failed to enqueue sprite workers: #{Exception.message(error)}"
-        Logger.error("SpliceWorker: #{error_message}")
-        {:error, error_message}
+            %Ecto.Multi{} = multi ->
+              Logger.error("SpliceWorker: Oban.insert_all returned Multi instead of jobs: #{inspect(multi)}")
+              {:error, "Unexpected Multi result from Oban.insert_all"}
+          end
+        rescue
+          error ->
+            error_message = "Failed to enqueue sprite workers: #{Exception.message(error)}"
+            Logger.error("SpliceWorker: #{error_message}")
+            {:error, error_message}
+        end
+
+      _ ->
+        {:error, "No clips found to enqueue sprite workers"}
     end
   end
 end

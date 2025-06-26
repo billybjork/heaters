@@ -1,5 +1,5 @@
 defmodule Heaters.Workers.Clips.EmbeddingWorker do
-  use Oban.Worker, queue: :media_processing
+  use Heaters.Workers.GenericWorker, queue: :media_processing
 
   alias Heaters.Clips.Embed
   alias Heaters.Clips.Queries, as: ClipQueries
@@ -9,15 +9,13 @@ defmodule Heaters.Workers.Clips.EmbeddingWorker do
   @complete_states ["embedded", "embedding_failed"]
 
   # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
-  @dialyzer {:nowarn_function, [perform: 1]}
+  @dialyzer {:nowarn_function, [handle: 1]}
 
-  @impl Oban.Worker
-  def perform(%Oban.Job{
-        args: %{
-          "clip_id" => clip_id,
-          "model_name" => model_name,
-          "generation_strategy" => generation_strategy
-        }
+  @impl Heaters.Workers.GenericWorker
+  def handle(%{
+        "clip_id" => clip_id,
+        "model_name" => model_name,
+        "generation_strategy" => generation_strategy
       }) do
     Logger.info("EmbeddingWorker: Starting embedding generation for clip_id: #{clip_id}")
 

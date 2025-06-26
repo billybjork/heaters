@@ -1,5 +1,5 @@
 defmodule Heaters.Workers.Clips.KeyframeWorker do
-  use Oban.Worker, queue: :media_processing
+  use Heaters.Workers.GenericWorker, queue: :media_processing
 
   alias Heaters.Clips.Transform.Keyframe
   alias Heaters.Clips.Queries, as: ClipQueries
@@ -7,8 +7,8 @@ defmodule Heaters.Workers.Clips.KeyframeWorker do
 
   @complete_states ["keyframed", "keyframe_failed", "embedded", "review_approved", "review_archived"]
 
-  @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"clip_id" => clip_id} = args}) do
+  @impl Heaters.Workers.GenericWorker
+  def handle(%{"clip_id" => clip_id} = args) do
     strategy = Map.get(args, "strategy", "multi")
     Logger.info("KeyframeWorker: Starting keyframe extraction for clip_id: #{clip_id}, strategy: #{strategy}")
 

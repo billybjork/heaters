@@ -1,5 +1,5 @@
 defmodule Heaters.Workers.Clips.SpriteWorker do
-  use Oban.Worker, queue: :media_processing
+  use Heaters.Workers.GenericWorker, queue: :media_processing
 
   alias Heaters.Clips.Transform
   alias Heaters.Clips.Transform.Sprite
@@ -8,8 +8,8 @@ defmodule Heaters.Workers.Clips.SpriteWorker do
 
   @complete_states ["pending_review", "sprite_failed", "embedded", "review_approved", "review_archived"]
 
-  @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"clip_id" => clip_id}}) do
+  @impl Heaters.Workers.GenericWorker
+  def handle(%{"clip_id" => clip_id}) do
     Logger.info("SpriteWorker: Starting sprite generation for clip_id: #{clip_id}")
 
     with {:ok, clip} <- ClipQueries.get_clip_with_artifacts(clip_id),

@@ -1,46 +1,43 @@
 defmodule Heaters.Workers.Clips.SplitWorker do
-  use Oban.Worker, queue: :media_processing
+  use Heaters.Workers.GenericWorker, queue: :media_processing
 
   alias Heaters.Clips.Transform.Split
   alias Heaters.Workers.Clips.SpriteWorker
-  require Logger
 
-  @impl Oban.Worker
-  def perform(%Oban.Job{
-        args: %{
-          "clip_id" => clip_id,
-          "split_at_frame" => split_at_frame
-        }
-      }) do
-    Logger.info("SplitWorker: Processing split for clip_id=#{clip_id}, split_at_frame=#{split_at_frame}")
-
+  @impl Heaters.Workers.GenericWorker
+  def handle(%{"clip_id" => clip_id, "split_at_frame" => split_at_frame}) do
     case Split.run_split(clip_id, split_at_frame) do
       {:ok, %{metadata: %{new_clip_ids: new_clip_ids}}} when is_list(new_clip_ids) ->
-        # The split was successful. The original clip has been archived and two
-        # new clips created. We'll enqueue SpriteWorker jobs for both to
-        # generate sprites and put them into the review queue.
-        Logger.info("SplitWorker: Split successful, enqueuing sprite workers for #{length(new_clip_ids)} new clips")
-        jobs = Enum.map(new_clip_ids, &SpriteWorker.new(%{clip_id: &1}))
-
-        try do
-          _inserted_jobs = Oban.insert_all(jobs)
-          Logger.info("SplitWorker: Successfully enqueued #{length(jobs)} sprite worker jobs")
-          :ok
-        rescue
-          error ->
-            Logger.error("SplitWorker: Failed to enqueue sprite workers: #{Exception.message(error)}")
-            {:error, "Failed to enqueue sprite workers: #{Exception.message(error)}"}
-        end
+        # Store the new clip IDs for enqueue_next/1 to use
+        Process.put(:new_clip_ids, new_clip_ids)
+        :ok
 
       {:ok, other} ->
-        # The split succeeded but returned an unexpected payload.
-        Logger.error("SplitWorker: Split finished with unexpected payload: #{inspect(other)}")
         {:error, "Split finished with unexpected payload: #{inspect(other)}"}
 
       {:error, reason} ->
-        # The split failed.
-        Logger.error("SplitWorker: Split failed: #{inspect(reason)}")
         {:error, reason}
+    end
+  end
+
+  @impl Heaters.Workers.GenericWorker
+  def enqueue_next(%{"clip_id" => _clip_id}) do
+    case Process.get(:new_clip_ids) do
+      new_clip_ids when is_list(new_clip_ids) ->
+        # The split was successful. The original clip has been archived and two
+        # new clips created. We'll enqueue SpriteWorker jobs for both to
+        # generate sprites and put them into the review queue.
+        jobs = Enum.map(new_clip_ids, &SpriteWorker.new(%{clip_id: &1}))
+
+        case Oban.insert_all(jobs) do
+          {count, _} when count > 0 ->
+            :ok
+          _ ->
+            {:error, "Failed to enqueue sprite worker jobs"}
+        end
+
+      _ ->
+        {:error, "No new_clip_ids found to enqueue sprite workers"}
     end
   end
 end

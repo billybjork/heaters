@@ -3,95 +3,46 @@ defmodule Heaters.Workers.Dispatcher do
 
   require Logger
 
-  alias Heaters.Videos.Queries, as: VideoQueries
-  alias Heaters.Clips.Queries, as: ClipQueries
-  alias Heaters.Events.EventProcessor
-  alias Heaters.Workers.Videos.IngestWorker
-  alias Heaters.Workers.Clips.SpriteWorker
-  alias Heaters.Workers.Clips.KeyframeWorker
-  alias Heaters.Workers.Clips.EmbeddingWorker
-  alias Heaters.Workers.Clips.ArchiveWorker
+  alias Heaters.Workers.PipelineConfig
 
   @impl Oban.Worker
   def perform(_job) do
     Logger.info("Dispatcher[start]: Starting perform.")
 
-    # 1. Look for new videos from external sources
-    Logger.info("Dispatcher[step 1]: Checking for new videos to ingest.")
-    new_videos = VideoQueries.get_videos_by_state("new")
-    Logger.info("Dispatcher[step 1]: Found #{Enum.count(new_videos)} new videos.")
-
-    if Enum.any?(new_videos) do
-      Logger.info("Dispatcher[step 1]: Enqueuing IngestWorker jobs.")
-      new_jobs = Enum.map(new_videos, &IngestWorker.new(%{source_video_id: &1.id}))
-      Oban.insert_all(new_jobs, on_conflict: :raise)
-      Logger.info("Dispatcher[step 1]: Finished enqueuing IngestWorker jobs.")
-    end
-
-    # 2. Look for spliced clips that need sprite generation
-    Logger.info("Dispatcher[step 2]: Checking for spliced clips needing sprite generation.")
-    spliced_clips = ClipQueries.get_clips_by_state("spliced")
-    Logger.info("Dispatcher[step 2]: Found #{Enum.count(spliced_clips)} spliced clips.")
-
-    if Enum.any?(spliced_clips) do
-      Logger.info("Dispatcher[step 2]: Enqueuing SpriteWorker jobs.")
-      sprite_jobs = Enum.map(spliced_clips, &SpriteWorker.new(%{clip_id: &1.id}))
-      Oban.insert_all(sprite_jobs, on_conflict: :raise)
-      Logger.info("Dispatcher[step 2]: Finished enqueuing SpriteWorker jobs.")
-    end
-
-    # 3. Process actions from the review UI (merge, split, etc.)
-    Logger.info("Dispatcher[step 3]: Committing pending UI actions.")
-    EventProcessor.commit_pending_actions()
-    Logger.info("Dispatcher[step 3]: Finished committing pending UI actions.")
-
-    # 4. Look for approved clips to start the enrichment pipeline.
-    Logger.info("Dispatcher[step 4]: Checking for approved clips for keyframing.")
-    approved_clips = ClipQueries.get_clips_by_state("review_approved")
-    Logger.info("Dispatcher[step 4]: Found #{Enum.count(approved_clips)} approved clips.")
-
-    if Enum.any?(approved_clips) do
-      Logger.info("Dispatcher[step 4]: Enqueuing KeyframeWorker jobs.")
-
-      keyframe_jobs =
-        Enum.map(approved_clips, &KeyframeWorker.new(%{clip_id: &1.id, strategy: "multi"}))
-
-      Oban.insert_all(keyframe_jobs, on_conflict: :raise)
-      Logger.info("Dispatcher[step 4]: Finished enqueuing KeyframeWorker jobs.")
-    end
-
-    # 5. Look for keyframed clips to start embedding generation
-    Logger.info("Dispatcher[step 5]: Checking for keyframed clips for embedding generation.")
-    keyframed_clips = ClipQueries.get_clips_by_state("keyframed")
-    Logger.info("Dispatcher[step 5]: Found #{Enum.count(keyframed_clips)} keyframed clips.")
-
-    if Enum.any?(keyframed_clips) do
-      Logger.info("Dispatcher[step 5]: Enqueuing EmbeddingWorker jobs.")
-
-      embedding_jobs =
-        Enum.map(keyframed_clips, &EmbeddingWorker.new(%{
-          clip_id: &1.id,
-          model_name: "clip-vit-base-patch32",
-          generation_strategy: "multi"
-        }))
-
-      Oban.insert_all(embedding_jobs, on_conflict: :raise)
-      Logger.info("Dispatcher[step 5]: Finished enqueuing EmbeddingWorker jobs.")
-    end
-
-    # 6. Look for archived clips
-    Logger.info("Dispatcher[step 6]: Checking for clips to archive.")
-    archived_clips = ClipQueries.get_clips_by_state("review_archived")
-    Logger.info("Dispatcher[step 6]: Found #{Enum.count(archived_clips)} clips to archive.")
-
-    if Enum.any?(archived_clips) do
-      Logger.info("Dispatcher[step 6]: Enqueuing ArchiveWorker jobs.")
-      archive_jobs = Enum.map(archived_clips, &ArchiveWorker.new(%{clip_id: &1.id}))
-      Oban.insert_all(archive_jobs, on_conflict: :raise)
-      Logger.info("Dispatcher[step 6]: Finished enqueuing ArchiveWorker jobs.")
-    end
+    # Process all pipeline stages using the declarative configuration
+    PipelineConfig.stages()
+    |> Enum.with_index(1)
+    |> Enum.each(fn {stage, step_num} ->
+      run_stage(stage, step_num)
+    end)
 
     Logger.info("Dispatcher[finish]: Finished perform.")
     :ok
+  end
+
+  # Handle stages that query the database and enqueue jobs
+  defp run_stage(%{query: query_fn, build: build_fn, label: label}, step_num) do
+    Logger.info("Dispatcher[step #{step_num}]: Checking for #{label}.")
+
+    items = query_fn.()
+    Logger.info("Dispatcher[step #{step_num}]: Found #{Enum.count(items)} items for #{label}.")
+
+    if Enum.any?(items) do
+      Logger.info("Dispatcher[step #{step_num}]: Enqueuing jobs for #{label}.")
+
+      jobs = Enum.map(items, build_fn)
+      Oban.insert_all(jobs, on_conflict: :raise)
+
+      Logger.info("Dispatcher[step #{step_num}]: Finished enqueuing #{Enum.count(jobs)} jobs for #{label}.")
+    end
+  end
+
+  # Handle stages that perform direct actions (like EventProcessor)
+  defp run_stage(%{call: call_fn, label: label}, step_num) do
+    Logger.info("Dispatcher[step #{step_num}]: #{String.capitalize(label)}.")
+
+    call_fn.()
+
+    Logger.info("Dispatcher[step #{step_num}]: Finished #{label}.")
   end
 end

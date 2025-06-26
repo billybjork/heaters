@@ -1,5 +1,5 @@
 defmodule Heaters.Workers.Clips.ArchiveWorker do
-  use Oban.Worker, queue: :background_jobs
+  use Heaters.Workers.GenericWorker, queue: :background_jobs
 
   import Ecto.Query, warn: false
   alias Heaters.Clips.Queries, as: ClipQueries
@@ -11,10 +11,10 @@ defmodule Heaters.Workers.Clips.ArchiveWorker do
   require Logger
 
   # Dialyzer cannot statically verify S3 operations due to external system dependencies
-  @dialyzer {:nowarn_function, [perform: 1, archive_in_database: 1]}
+  @dialyzer {:nowarn_function, [handle: 1, archive_in_database: 1]}
 
-  @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"clip_id" => clip_id}}) do
+  @impl Heaters.Workers.GenericWorker
+  def handle(%{"clip_id" => clip_id}) do
     with {:ok, clip} <- ClipQueries.get_clip_with_artifacts(clip_id),
          :ok <- check_idempotency(clip) do
       # 1. Delete files from S3 using Elixir S3 context
