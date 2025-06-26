@@ -6,7 +6,13 @@ defmodule Heaters.Workers.Clips.SpriteWorker do
   alias Heaters.Clips.Queries, as: ClipQueries
   require Logger
 
-  @complete_states ["pending_review", "sprite_failed", "embedded", "review_approved", "review_archived"]
+  @complete_states [
+    "pending_review",
+    "sprite_failed",
+    "embedded",
+    "review_approved",
+    "review_archived"
+  ]
 
   @impl Heaters.Workers.GenericWorker
   def handle(%{"clip_id" => clip_id}) do
@@ -15,7 +21,6 @@ defmodule Heaters.Workers.Clips.SpriteWorker do
     with {:ok, clip} <- ClipQueries.get_clip_with_artifacts(clip_id),
          :ok <- check_idempotency(clip),
          {:ok, updated_clip} <- Transform.start_sprite_generation(clip_id) do
-
       Logger.info("SpriteWorker: Running Elixir sprite generation for clip_id: #{clip_id}")
 
       # Use the native Elixir sprite generation module
@@ -35,11 +40,15 @@ defmodule Heaters.Workers.Clips.SpriteWorker do
           end
 
         {:error, reason} ->
-          Logger.error("SpriteWorker: Sprite generation failed for clip_id: #{clip_id}, reason: #{inspect(reason)}")
+          Logger.error(
+            "SpriteWorker: Sprite generation failed for clip_id: #{clip_id}, reason: #{inspect(reason)}"
+          )
 
           # Use the Transform context to mark as failed
           case Transform.mark_sprite_failed(updated_clip.id, reason) do
-            {:ok, _} -> {:error, reason}
+            {:ok, _} ->
+              {:error, reason}
+
             {:error, db_error} ->
               Logger.error("SpriteWorker: Failed to mark clip as failed: #{inspect(db_error)}")
               {:error, reason}
@@ -77,6 +86,7 @@ defmodule Heaters.Workers.Clips.SpriteWorker do
 
   defp check_idempotency(%{ingest_state: "spliced"}), do: :ok
   defp check_idempotency(%{ingest_state: "sprite_failed"}), do: :ok
+
   defp check_idempotency(%{ingest_state: state}) do
     Logger.warning("SpriteWorker: Unexpected clip state '#{state}' for sprite generation")
     {:error, :invalid_state}

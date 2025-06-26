@@ -5,23 +5,41 @@ defmodule Heaters.Workers.Clips.KeyframeWorker do
   alias Heaters.Clips.Queries, as: ClipQueries
   require Logger
 
-  @complete_states ["keyframed", "keyframe_failed", "embedded", "review_approved", "review_archived"]
+  @complete_states [
+    "keyframed",
+    "keyframe_failed",
+    "embedded",
+    "review_approved",
+    "review_archived"
+  ]
 
   @impl Heaters.Workers.GenericWorker
   def handle(%{"clip_id" => clip_id} = args) do
     strategy = Map.get(args, "strategy", "multi")
-    Logger.info("KeyframeWorker: Starting keyframe extraction for clip_id: #{clip_id}, strategy: #{strategy}")
+
+    Logger.info(
+      "KeyframeWorker: Starting keyframe extraction for clip_id: #{clip_id}, strategy: #{strategy}"
+    )
 
     with {:ok, clip} <- ClipQueries.get_clip_with_artifacts(clip_id),
          :ok <- check_idempotency(clip) do
-
       case Keyframe.run_keyframe_extraction(clip_id, strategy) do
-        {:ok, _updated_clip} ->
-          Logger.info("KeyframeWorker: Clip #{clip_id} keyframing completed successfully")
+        {:ok, %Keyframe.KeyframeResult{status: "success", keyframe_count: count}} ->
+          Logger.info(
+            "KeyframeWorker: Clip #{clip_id} keyframing completed successfully with #{count} keyframes"
+          )
+
           :ok
 
+        {:ok, %Keyframe.KeyframeResult{status: status}} ->
+          Logger.error("KeyframeWorker: Keyframe extraction failed with status: #{status}")
+          {:error, "Unexpected keyframe result status: #{status}"}
+
         {:error, reason} ->
-          Logger.error("KeyframeWorker: Keyframe extraction failed for clip #{clip_id}: #{inspect(reason)}")
+          Logger.error(
+            "KeyframeWorker: Keyframe extraction failed for clip #{clip_id}: #{inspect(reason)}"
+          )
+
           {:error, reason}
       end
     else
@@ -56,6 +74,7 @@ defmodule Heaters.Workers.Clips.KeyframeWorker do
 
   defp check_idempotency(%{ingest_state: "review_approved"}), do: :ok
   defp check_idempotency(%{ingest_state: "keyframe_failed"}), do: :ok
+
   defp check_idempotency(%{ingest_state: state}) do
     Logger.warning("KeyframeWorker: Unexpected clip state '#{state}' for keyframe extraction")
     {:error, :invalid_state}

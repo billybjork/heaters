@@ -7,13 +7,14 @@ defmodule Heaters.Workers.Clips.SplitWorker do
   @impl Heaters.Workers.GenericWorker
   def handle(%{"clip_id" => clip_id, "split_at_frame" => split_at_frame}) do
     case Split.run_split(clip_id, split_at_frame) do
-      {:ok, %{metadata: %{new_clip_ids: new_clip_ids}}} when is_list(new_clip_ids) ->
+      {:ok, %Split.SplitResult{status: "success", new_clip_ids: new_clip_ids}}
+      when is_list(new_clip_ids) ->
         # Store the new clip IDs for enqueue_next/1 to use
         Process.put(:new_clip_ids, new_clip_ids)
         :ok
 
-      {:ok, other} ->
-        {:error, "Split finished with unexpected payload: #{inspect(other)}"}
+      {:ok, %Split.SplitResult{status: status}} ->
+        {:error, "Split finished with unexpected status: #{status}"}
 
       {:error, reason} ->
         {:error, reason}
@@ -30,10 +31,16 @@ defmodule Heaters.Workers.Clips.SplitWorker do
         jobs = Enum.map(new_clip_ids, &SpriteWorker.new(%{clip_id: &1}))
 
         case Oban.insert_all(jobs) do
-          {count, _} when count > 0 ->
+          [_ | _] = job_list when is_list(job_list) ->
             :ok
-          _ ->
-            {:error, "Failed to enqueue sprite worker jobs"}
+
+          [] ->
+            {:error, "No jobs were inserted"}
+
+          %Ecto.Multi{} = _multi ->
+            # When used inside a transaction, Oban.insert_all returns an Ecto.Multi
+            # We treat this as success since the jobs will be inserted when the transaction commits
+            :ok
         end
 
       _ ->

@@ -33,7 +33,9 @@ defmodule Heaters.Workers.Dispatcher do
       jobs = Enum.map(items, build_fn)
       Oban.insert_all(jobs, on_conflict: :raise)
 
-      Logger.info("Dispatcher[step #{step_num}]: Finished enqueuing #{Enum.count(jobs)} jobs for #{label}.")
+      Logger.info(
+        "Dispatcher[step #{step_num}]: Finished enqueuing #{Enum.count(jobs)} jobs for #{label}."
+      )
     end
   end
 

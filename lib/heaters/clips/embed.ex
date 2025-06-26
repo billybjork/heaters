@@ -14,6 +14,37 @@ defmodule Heaters.Clips.Embed do
   alias Heaters.Clips.Queries, as: ClipQueries
   require Logger
 
+  defmodule EmbedResult do
+    @moduledoc """
+    Structured result type for Embed transform operations.
+    """
+
+    @enforce_keys [:status, :clip_id, :embedding_id]
+    defstruct [
+      :status,
+      :clip_id,
+      :embedding_id,
+      :model_name,
+      :generation_strategy,
+      :embedding_dim,
+      :metadata,
+      :duration_ms,
+      :processed_at
+    ]
+
+    @type t :: %__MODULE__{
+            status: String.t(),
+            clip_id: integer(),
+            embedding_id: integer() | nil,
+            model_name: String.t() | nil,
+            generation_strategy: String.t() | nil,
+            embedding_dim: integer() | nil,
+            metadata: map() | nil,
+            duration_ms: integer() | nil,
+            processed_at: DateTime.t() | nil
+          }
+  end
+
   @doc "All available model names, generation strategies, and source videos for embedded clips"
   def embedded_filter_opts do
     model_names =
@@ -162,21 +193,49 @@ defmodule Heaters.Clips.Embed do
   @doc """
   Mark a clip as successfully embedded and create embedding record.
   """
-  @spec complete_embedding(integer(), map()) :: {:ok, Clip.t()} | {:error, any()}
+  @spec complete_embedding(integer(), map()) :: {:ok, EmbedResult.t()} | {:error, any()}
   def complete_embedding(clip_id, embedding_data) do
-    Repo.transaction(fn ->
-      with {:ok, clip} <- ClipQueries.get_clip(clip_id),
-           {:ok, updated_clip} <- update_clip(clip, %{
-             ingest_state: "embedded",
-             embedded_at: DateTime.utc_now(),
-             last_error: nil
-           }),
-           {:ok, _embedding} <- create_embedding(clip_id, embedding_data) do
-        updated_clip
-      else
-        {:error, reason} -> Repo.rollback(reason)
-      end
-    end)
+    start_time = System.monotonic_time()
+
+    case Repo.transaction(fn ->
+           with {:ok, clip} <- ClipQueries.get_clip(clip_id),
+                {:ok, updated_clip} <-
+                  update_clip(clip, %{
+                    ingest_state: "embedded",
+                    embedded_at: DateTime.utc_now(),
+                    last_error: nil
+                  }),
+                {:ok, embedding} <- create_embedding(clip_id, embedding_data) do
+             {updated_clip, embedding}
+           else
+             {:error, reason} -> Repo.rollback(reason)
+           end
+         end) do
+      {:ok, {_updated_clip, embedding}} ->
+        duration_ms =
+          System.convert_time_unit(System.monotonic_time() - start_time, :native, :millisecond)
+
+        embed_result = %EmbedResult{
+          status: "success",
+          clip_id: clip_id,
+          embedding_id: embedding.id,
+          model_name: embedding_data["model_name"],
+          generation_strategy: embedding_data["generation_strategy"],
+          embedding_dim:
+            if(is_list(embedding_data["embedding"]),
+              do: length(embedding_data["embedding"]),
+              else: nil
+            ),
+          metadata: Map.get(embedding_data, "metadata", %{}),
+          duration_ms: duration_ms,
+          processed_at: DateTime.utc_now()
+        }
+
+        {:ok, embed_result}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   @doc """
@@ -204,7 +263,7 @@ defmodule Heaters.Clips.Embed do
   @doc """
   Process successful embedding results from Python task.
   """
-  @spec process_embedding_success(Clip.t(), map()) :: {:ok, Clip.t()} | {:error, any()}
+  @spec process_embedding_success(Clip.t(), map()) :: {:ok, EmbedResult.t()} | {:error, any()}
   def process_embedding_success(%Clip{} = clip, result) do
     complete_embedding(clip.id, result)
   end
@@ -232,9 +291,14 @@ defmodule Heaters.Clips.Embed do
   defp validate_state_transition(current_state, target_state) do
     case {current_state, target_state} do
       # Valid transitions for embedding
-      {"pending_review", "embedding"} -> :ok
-      {"review_approved", "embedding"} -> :ok
-      {"embedding_failed", "embedding"} -> :ok
+      {"pending_review", "embedding"} ->
+        :ok
+
+      {"review_approved", "embedding"} ->
+        :ok
+
+      {"embedding_failed", "embedding"} ->
+        :ok
 
       # Invalid transitions
       _ ->

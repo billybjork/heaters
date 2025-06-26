@@ -75,6 +75,7 @@ defmodule Heaters.TestHelper do
 
     # Check behavior is implemented
     behaviors = worker_module.__info__(:attributes)[:behaviour] || []
+
     assert Heaters.Workers.GenericWorker in behaviors,
            "#{worker_module} must use GenericWorker behavior"
   end

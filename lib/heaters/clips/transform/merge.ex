@@ -22,6 +22,33 @@ defmodule Heaters.Clips.Transform.Merge do
   alias Heaters.Utils
   require Logger
 
+  defmodule MergeResult do
+    @moduledoc """
+    Structured result type for Merge transform operations.
+    """
+
+    @enforce_keys [:status, :merged_clip_id, :source_clip_ids]
+    defstruct [
+      :status,
+      :merged_clip_id,
+      :source_clip_ids,
+      :cleanup,
+      :metadata,
+      :duration_ms,
+      :processed_at
+    ]
+
+    @type t :: %__MODULE__{
+            status: String.t(),
+            merged_clip_id: integer(),
+            source_clip_ids: [integer()],
+            cleanup: map() | nil,
+            metadata: map() | nil,
+            duration_ms: integer() | nil,
+            processed_at: DateTime.t() | nil
+          }
+  end
+
   @type merge_result :: %{
           status: String.t(),
           merged_clip_id: integer(),
@@ -40,8 +67,9 @@ defmodule Heaters.Clips.Transform.Merge do
   4. Cleans up original files
   5. Updates database state
   """
-  @spec run_merge(integer(), integer()) :: {:ok, merge_result()} | {:error, any()}
-  def run_merge(target_clip_id, source_clip_id) do
+  @spec run_merge(integer(), integer()) :: {:ok, MergeResult.t()} | {:error, any()}
+  def run_merge(target_clip_id, source_clip_id)
+      when is_integer(target_clip_id) and is_integer(source_clip_id) do
     Logger.info(
       "Merge: Starting merge for target_clip_id: #{target_clip_id} and source_clip_id: #{source_clip_id}"
     )
@@ -59,15 +87,17 @@ defmodule Heaters.Clips.Transform.Merge do
                create_merged_clip_record(uploaded_clip_data, target_clip, source_clip),
              {:ok, _updated_count} <- update_source_clips_state(target_clip_id, source_clip_id),
              {:ok, cleanup_result} <- cleanup_source_files([target_clip, source_clip]) do
-          result = %{
+          result = %MergeResult{
             status: "success",
             merged_clip_id: merged_clip_record.id,
             source_clip_ids: [target_clip_id, source_clip_id],
             cleanup: cleanup_result,
             metadata: %{
               new_clip_id: merged_clip_record.id,
-              new_duration: merged_clip_record.end_time_seconds - merged_clip_record.start_time_seconds
-            }
+              new_duration:
+                merged_clip_record.end_time_seconds - merged_clip_record.start_time_seconds
+            },
+            processed_at: DateTime.utc_now()
           }
 
           Logger.info(
@@ -80,12 +110,14 @@ defmodule Heaters.Clips.Transform.Merge do
             Logger.error(
               "Merge: Failed to merge clips #{target_clip_id}, #{source_clip_id}, error: #{inspect(reason)}"
             )
+
             error
 
           other_error ->
             Logger.error(
               "Merge: Failed to merge clips #{target_clip_id}, #{source_clip_id}, error: #{inspect(other_error)}"
             )
+
             {:error, other_error}
         end
       after
@@ -140,6 +172,7 @@ defmodule Heaters.Clips.Transform.Merge do
                 else
                   {:error, "Downloaded file does not exist at #{local_path}"}
                 end
+
               {:error, reason} ->
                 File.close(file)
                 Logger.error("Merge: Failed to download from S3: #{inspect(reason)}")
@@ -151,6 +184,7 @@ defmodule Heaters.Clips.Transform.Merge do
               Logger.error("Merge: Failed during S3 download: #{Exception.message(error)}")
               {:error, "Failed during S3 download: #{Exception.message(error)}"}
           end
+
         {:error, reason} ->
           Logger.error("Merge: Failed to open local file for writing: #{inspect(reason)}")
           {:error, "Failed to open local file for writing: #{inspect(reason)}"}
@@ -199,17 +233,22 @@ defmodule Heaters.Clips.Transform.Merge do
                     "Merge: Successfully merged videos. Output size: #{file_size} bytes at #{final_output_path}"
                   )
 
-                  {:ok, %{
-                    local_path: final_output_path,
-                    filename: output_filename,
-                    file_size: file_size
-                  }}
+                  {:ok,
+                   %{
+                     local_path: final_output_path,
+                     filename: output_filename,
+                     file_size: file_size
+                   }}
+
                 {:error, reason} ->
                   Logger.error("Merge: Failed to get file stats: #{inspect(reason)}")
                   {:error, "Failed to get file stats: #{inspect(reason)}"}
               end
             else
-              Logger.error("Merge: FFmpeg succeeded but output file not found at #{final_output_path}")
+              Logger.error(
+                "Merge: FFmpeg succeeded but output file not found at #{final_output_path}"
+              )
+
               {:error, "Output file not created"}
             end
 
@@ -239,6 +278,7 @@ defmodule Heaters.Clips.Transform.Merge do
            |> ExAws.request() do
         {:ok, _result} ->
           {:ok, Map.put(merged_video_data, :s3_key, s3_key)}
+
         {:error, reason} ->
           Logger.error("Merge: Failed to upload merged video: #{inspect(reason)}")
           {:error, "Failed to upload merged video: #{inspect(reason)}"}
@@ -252,11 +292,15 @@ defmodule Heaters.Clips.Transform.Merge do
     new_end_frame = target_clip.end_frame + (source_clip.end_frame - source_clip.start_frame)
 
     new_start_time = target_clip.start_time_seconds
-    new_end_time = target_clip.end_time_seconds + (source_clip.end_time_seconds - source_clip.start_time_seconds)
+
+    new_end_time =
+      target_clip.end_time_seconds +
+        (source_clip.end_time_seconds - source_clip.start_time_seconds)
 
     attrs = %{
       source_video_id: target_clip.source_video_id,
-      ingest_state: "spliced", # Back to spliced to generate a new sprite
+      # Back to spliced to generate a new sprite
+      ingest_state: "spliced",
       start_frame: new_start_frame,
       end_frame: new_end_frame,
       start_time_seconds: new_start_time,
@@ -264,13 +308,14 @@ defmodule Heaters.Clips.Transform.Merge do
       clip_filepath: uploaded_clip_data.s3_key,
       clip_identifier: Path.basename(uploaded_clip_data.filename, ".mp4"),
       # Carry over metadata from the target clip
-      processing_metadata: Map.merge(
-        target_clip.processing_metadata || %{},
-        %{
-          merged_from_clips: [target_clip.id, source_clip.id],
-          new_identifier: Path.basename(uploaded_clip_data.filename, ".mp4")
-        }
-      )
+      processing_metadata:
+        Map.merge(
+          target_clip.processing_metadata || %{},
+          %{
+            merged_from_clips: [target_clip.id, source_clip.id],
+            new_identifier: Path.basename(uploaded_clip_data.filename, ".mp4")
+          }
+        )
     }
 
     %Clip{}
@@ -304,6 +349,7 @@ defmodule Heaters.Clips.Transform.Merge do
       {:ok, count} = result ->
         Logger.info("Merge: Successfully deleted #{count} source files from S3")
         result
+
       {:error, reason} = error ->
         Logger.error("Merge: Failed to delete source files from S3: #{inspect(reason)}")
         error
@@ -314,6 +360,7 @@ defmodule Heaters.Clips.Transform.Merge do
     case Application.get_env(:heaters, :s3_bucket) do
       nil ->
         {:error, "S3 bucket name not configured. Please set :s3_bucket in application config."}
+
       bucket_name ->
         {:ok, bucket_name}
     end

@@ -20,74 +20,74 @@ if config_env() != :test do
   # Make APP_ENV available in application config if needed
   config :heaters, :app_env, app_env_string
 
-# Configure Cloudfront Domain
-current_cloudfront_domain =
-  case app_env_string do
-    "development" ->
-      # In local dev (docker-compose with APP_ENV="development"), expect CLOUDFRONT_DEV_DOMAIN from .env.
-      System.get_env("CLOUDFRONT_DEV_DOMAIN") ||
-        raise "CLOUDFRONT_DEV_DOMAIN not set for APP_ENV=development. Please set it in your .env file."
+  # Configure Cloudfront Domain
+  current_cloudfront_domain =
+    case app_env_string do
+      "development" ->
+        # In local dev (docker-compose with APP_ENV="development"), expect CLOUDFRONT_DEV_DOMAIN from .env.
+        System.get_env("CLOUDFRONT_DEV_DOMAIN") ||
+          raise "CLOUDFRONT_DEV_DOMAIN not set for APP_ENV=development. Please set it in your .env file."
 
-    "production" ->
-      # In production (Render with APP_ENV="production"), expect CLOUDFRONT_PROD_DOMAIN.
-      System.get_env("CLOUDFRONT_PROD_DOMAIN") ||
-        raise "CLOUDFRONT_PROD_DOMAIN not set for APP_ENV=production. Please set it in your Render environment variables."
+      "production" ->
+        # In production (Render with APP_ENV="production"), expect CLOUDFRONT_PROD_DOMAIN.
+        System.get_env("CLOUDFRONT_PROD_DOMAIN") ||
+          raise "CLOUDFRONT_PROD_DOMAIN not set for APP_ENV=production. Please set it in your Render environment variables."
 
-    _ ->
-      # APP_ENV not "development" or "production" (e.g., nil during compile time or local mix outside Docker).
-      # This case should ideally not be hit if APP_ENV is always correctly set.
-      # For safety during build or other contexts, try to infer, but log a significant warning.
-      effective_mix_env = config_env()
+      _ ->
+        # APP_ENV not "development" or "production" (e.g., nil during compile time or local mix outside Docker).
+        # This case should ideally not be hit if APP_ENV is always correctly set.
+        # For safety during build or other contexts, try to infer, but log a significant warning.
+        effective_mix_env = config_env()
 
-      IO.puts(
-        :stderr,
-        "Critical Warning: APP_ENV is '#{app_env_string || "not set"}'. Attempting to infer CloudFront domain using MIX_ENV=#{effective_mix_env}, but this is not recommended. Ensure APP_ENV is correctly set to 'development' or 'production'."
-      )
+        IO.puts(
+          :stderr,
+          "Critical Warning: APP_ENV is '#{app_env_string || "not set"}'. Attempting to infer CloudFront domain using MIX_ENV=#{effective_mix_env}, but this is not recommended. Ensure APP_ENV is correctly set to 'development' or 'production'."
+        )
 
-      cond do
-        effective_mix_env == :prod ->
-          System.get_env("CLOUDFRONT_PROD_DOMAIN") ||
-            raise "CLOUDFRONT_PROD_DOMAIN not set, and APP_ENV was not 'production' during a :prod mix_env context."
+        cond do
+          effective_mix_env == :prod ->
+            System.get_env("CLOUDFRONT_PROD_DOMAIN") ||
+              raise "CLOUDFRONT_PROD_DOMAIN not set, and APP_ENV was not 'production' during a :prod mix_env context."
 
-        effective_mix_env == :dev ->
-          System.get_env("CLOUDFRONT_DEV_DOMAIN") ||
-            raise "CLOUDFRONT_DEV_DOMAIN not set, and APP_ENV was not 'development' during a :dev mix_env context."
+          effective_mix_env == :dev ->
+            System.get_env("CLOUDFRONT_DEV_DOMAIN") ||
+              raise "CLOUDFRONT_DEV_DOMAIN not set, and APP_ENV was not 'development' during a :dev mix_env context."
 
-        # Default fallback if MIX_ENV is also something unexpected
-        true ->
-          raise "Cannot determine CloudFront domain: APP_ENV is '#{app_env_string || "not set"}' and MIX_ENV is '#{effective_mix_env}'. Please check your environment configuration."
-      end
-  end
+          # Default fallback if MIX_ENV is also something unexpected
+          true ->
+            raise "Cannot determine CloudFront domain: APP_ENV is '#{app_env_string || "not set"}' and MIX_ENV is '#{effective_mix_env}'. Please check your environment configuration."
+        end
+    end
 
-config :heaters, :cloudfront_domain, current_cloudfront_domain
-IO.puts("[Runtime.exs] Configured CloudFront Domain: #{current_cloudfront_domain}")
+  config :heaters, :cloudfront_domain, current_cloudfront_domain
+  IO.puts("[Runtime.exs] Configured CloudFront Domain: #{current_cloudfront_domain}")
 
-# Configure S3 Bucket Name (if Phoenix needs to know it directly for URL generation, etc.)
-current_s3_bucket =
-  case app_env_string do
-    "development" ->
-      # Fallback to generic if _DEV_ missing
-      System.get_env("S3_DEV_BUCKET_NAME") || System.get_env("S3_BUCKET_NAME")
+  # Configure S3 Bucket Name (if Phoenix needs to know it directly for URL generation, etc.)
+  current_s3_bucket =
+    case app_env_string do
+      "development" ->
+        # Fallback to generic if _DEV_ missing
+        System.get_env("S3_DEV_BUCKET_NAME") || System.get_env("S3_BUCKET_NAME")
 
-    "production" ->
-      # Fallback to generic if _PROD_ missing
-      System.get_env("S3_PROD_BUCKET_NAME") || System.get_env("S3_BUCKET_NAME")
+      "production" ->
+        # Fallback to generic if _PROD_ missing
+        System.get_env("S3_PROD_BUCKET_NAME") || System.get_env("S3_BUCKET_NAME")
 
-    _ ->
-      # Fallback if APP_ENV is not explicitly "development" or "production".
-      # Relies on S3_BUCKET_NAME being appropriately set in the environment (e.g. from .env via direnv).
-      effective_mix_env = config_env()
+      _ ->
+        # Fallback if APP_ENV is not explicitly "development" or "production".
+        # Relies on S3_BUCKET_NAME being appropriately set in the environment (e.g. from .env via direnv).
+        effective_mix_env = config_env()
 
-      IO.puts(
-        :stderr,
-        "Warning: APP_ENV is '#{app_env_string || "not set"}'. Inferring S3 Bucket using MIX_ENV=#{effective_mix_env}."
-      )
+        IO.puts(
+          :stderr,
+          "Warning: APP_ENV is '#{app_env_string || "not set"}'. Inferring S3 Bucket using MIX_ENV=#{effective_mix_env}."
+        )
 
-      # For S3 bucket, typically you'd want it to be mandatory if needed.
-      # If it's critical for prod builds, System.fetch_env! might be appropriate in the :prod branch here.
-      # This will be nil if not set, Phoenix code should handle nil if it's optional.
-      System.get_env("S3_BUCKET_NAME")
-  end
+        # For S3 bucket, typically you'd want it to be mandatory if needed.
+        # If it's critical for prod builds, System.fetch_env! might be appropriate in the :prod branch here.
+        # This will be nil if not set, Phoenix code should handle nil if it's optional.
+        System.get_env("S3_BUCKET_NAME")
+    end
 
   if current_s3_bucket do
     config :heaters, :s3_bucket, current_s3_bucket
@@ -197,7 +197,9 @@ if config_env() == :prod do
     socket_options: maybe_ipv6
 else
   # In :dev and :test environments, their respective config files handle Repo config.
-  IO.puts("[Runtime.exs] Repo configuration for #{config_env()} is handled by config/#{config_env()}.exs.")
+  IO.puts(
+    "[Runtime.exs] Repo configuration for #{config_env()} is handled by config/#{config_env()}.exs."
+  )
 end
 
 # === Production Only settings (when MIX_ENV=prod) ===

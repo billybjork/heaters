@@ -5,7 +5,7 @@ defmodule Heaters.Workers.GenericWorkerSimpleTest do
 
   alias Heaters.Workers.Clips.SplitWorker
 
-    # Test helper module to validate GenericWorker behavior
+  # Test helper module to validate GenericWorker behavior
   defmodule TestWorker do
     use Heaters.Workers.GenericWorker, queue: :test_queue
 
@@ -16,13 +16,22 @@ defmodule Heaters.Workers.GenericWorkerSimpleTest do
     @impl Heaters.Workers.GenericWorker
     def handle(%{"test" => "data"} = args) do
       case get_behavior() do
-        :success -> :ok
-        :error -> {:error, "simulated error"}
-        :exception -> raise "simulated exception"
-        :unexpected_return -> :unexpected
+        :success ->
+          :ok
+
+        :error ->
+          {:error, "simulated error"}
+
+        :exception ->
+          raise "simulated exception"
+
+        :unexpected_return ->
+          :unexpected
+
         :store_data ->
           Process.put(:stored_value, Map.get(args, "value"))
           :ok
+
         :enqueue_success_with_stored ->
           Process.put(:stored_value, Map.get(args, "value"))
           :ok
@@ -32,12 +41,16 @@ defmodule Heaters.Workers.GenericWorkerSimpleTest do
     @impl Heaters.Workers.GenericWorker
     def enqueue_next(%{"test" => "data"}) do
       case get_behavior() do
-        :enqueue_error -> {:error, "enqueue failed"}
+        :enqueue_error ->
+          {:error, "enqueue failed"}
+
         :enqueue_success_with_stored ->
           stored = Process.get(:stored_value)
           Process.put(:enqueue_called_with, stored)
           :ok
-        _ -> :ok
+
+        _ ->
+          :ok
       end
     end
   end
@@ -64,42 +77,45 @@ defmodule Heaters.Workers.GenericWorkerSimpleTest do
       assert function_exported?(TestWorker, :enqueue_next, 1)
     end
 
-        test "handles successful job execution with timing" do
+    test "handles successful job execution with timing" do
       TestWorker.set_behavior(:success)
 
       # Create a mock Oban job
       job = %Oban.Job{args: %{"test" => "data"}}
 
-      log = capture_log([level: :info], fn ->
-        assert :ok = TestWorker.perform(job)
-      end)
+      log =
+        capture_log([level: :info], fn ->
+          assert :ok = TestWorker.perform(job)
+        end)
 
       assert log =~ "TestWorker: Starting job with args:"
       assert log =~ "TestWorker: Job completed successfully in"
       assert log =~ "ms"
     end
 
-        test "handles business logic errors" do
+    test "handles business logic errors" do
       TestWorker.set_behavior(:error)
 
       job = %Oban.Job{args: %{"test" => "data"}}
 
-      log = capture_log([level: :info], fn ->
-        assert {:error, "simulated error"} = TestWorker.perform(job)
-      end)
+      log =
+        capture_log([level: :info], fn ->
+          assert {:error, "simulated error"} = TestWorker.perform(job)
+        end)
 
       assert log =~ "TestWorker: Starting job with args:"
       assert log =~ "TestWorker: Job failed: \"simulated error\""
     end
 
-        test "catches and handles exceptions" do
+    test "catches and handles exceptions" do
       TestWorker.set_behavior(:exception)
 
       job = %Oban.Job{args: %{"test" => "data"}}
 
-      log = capture_log([level: :info], fn ->
-        assert {:error, "simulated exception"} = TestWorker.perform(job)
-      end)
+      log =
+        capture_log([level: :info], fn ->
+          assert {:error, "simulated exception"} = TestWorker.perform(job)
+        end)
 
       assert log =~ "TestWorker: Job crashed with exception: simulated exception"
       assert log =~ "TestWorker: Exception details:"
@@ -110,9 +126,10 @@ defmodule Heaters.Workers.GenericWorkerSimpleTest do
 
       job = %Oban.Job{args: %{"test" => "data"}}
 
-      log = capture_log(fn ->
-        assert {:error, "Unexpected return value: :unexpected"} = TestWorker.perform(job)
-      end)
+      log =
+        capture_log(fn ->
+          assert {:error, "Unexpected return value: :unexpected"} = TestWorker.perform(job)
+        end)
 
       assert log =~ "TestWorker: Job returned unexpected result: :unexpected"
     end
@@ -179,7 +196,7 @@ defmodule Heaters.Workers.GenericWorkerSimpleTest do
       assert {:error, "No new_clip_ids found to enqueue sprite workers"} = result
     end
 
-        test "SplitWorker enqueue_next/1 handles stored clip IDs" do
+    test "SplitWorker enqueue_next/1 handles stored clip IDs" do
       # Test with stored data
       Process.put(:new_clip_ids, [123, 456])
 
@@ -207,9 +224,11 @@ defmodule Heaters.Workers.GenericWorkerSimpleTest do
         cond do
           Map.has_key?(stage, :call) ->
             assert is_function(stage.call, 0)
+
           Map.has_key?(stage, :query) and Map.has_key?(stage, :build) ->
             assert is_function(stage.query, 0)
             assert is_function(stage.build, 1)
+
           true ->
             flunk("Stage must have either 'call' or 'query+build': #{inspect(stage)}")
         end
@@ -248,6 +267,7 @@ defmodule Heaters.Workers.GenericWorkerSimpleTest do
 
         # Verify they use the GenericWorker behavior (via Oban.Worker)
         behaviors = worker.__info__(:attributes)[:behaviour] || []
+
         assert Oban.Worker in behaviors,
                "#{worker} must use Oban.Worker behavior (injected by GenericWorker)"
       end

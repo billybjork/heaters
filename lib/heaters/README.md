@@ -8,8 +8,10 @@ Heaters is a video processing pipeline that ingests videos, splits them into cli
 
 - **Python Tasks**: Pure media processing functions (video/image/ML operations)
 - **Elixir Contexts**: Business logic, state management, and workflow orchestration
-- **Oban Workers**: Job orchestration and error handling
+- **Oban Workers**: Job orchestration and error handling with standardized patterns
 - **Event Sourcing**: Human review actions tracked via `clip_events` table
+- **Structured Results**: All transform operations return type-safe Result structs
+- **Generic Workers**: Standardized worker behavior eliminates boilerplate and ensures consistency
 
 ## State Flow Overview
 
@@ -50,13 +52,15 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 **Workers**:
 - `Clips.SpriteWorker`: Generates sprite sheets for human review
 
-**Elixir Modules**:
+**Transform Modules**:
 - `Heaters.Clips.Transform.Sprite`: Generate sprite sheets using FFmpex (pure Elixir implementation)
+- Returns structured `SpriteResult` with status, artifacts, metadata, and performance timing
 
 **Process**:
 1. Clips created in `spliced` state after video splicing
-2. `Clips.SpriteWorker` uses `Transform` context to transition to `generating_sprite` → calls `Clips.Transform.Sprite.run_sprite/1` → transitions to `pending_review`
-3. Clips now ready for human review with sprite sheets
+2. `Clips.SpriteWorker` uses `Transform` context to transition to `generating_sprite` → calls `Clips.Transform.Sprite.run_sprite/2` → transitions to `pending_review`
+3. `SpriteResult` provides structured data including sprite artifacts and generation metadata
+4. Clips now ready for human review with sprite sheets
 
 ### 3. Human Review Process (`Clips.Review` Context)
 
@@ -82,15 +86,22 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 - `Clips.KeyframeWorker`: Extracts keyframes for embedding generation
 - `Clips.EmbeddingWorker`: Generates ML embeddings from keyframes
 
+**Transform Modules**:
+- `Heaters.Clips.Transform.Keyframe`: Keyframe extraction coordination (Python OpenCV integration)
+- Returns structured `KeyframeResult` with status, artifacts, keyframe count, and strategy metadata
+- `Heaters.Clips.Embed`: Embedding generation coordination
+- Returns structured `EmbedResult` with status, embedding ID, model info, and dimensions
+
 **Python Tasks**:
 - `keyframe.py`: Extract keyframes using OpenCV
 - `embed.py`: Generate embeddings using CLIP/DINOv2 models
 
 **Process**:
 1. Approved clips transition from `review_approved` to `keyframing`
-2. `Clips.KeyframeWorker` calls `keyframe.py` → transitions to `keyframed`
-3. `Clips.EmbeddingWorker` calls `embed.py` → transitions to `embedded`
-4. Clips now ready for final use with embeddings
+2. `Clips.KeyframeWorker` calls `Transform.Keyframe.run_keyframe_extraction/2` → returns `KeyframeResult` → transitions to `keyframed`
+3. `Clips.EmbeddingWorker` calls `Embed.process_embedding_success/2` → returns `EmbedResult` → transitions to `embedded`
+4. Structured results provide rich metadata including keyframe counts, embedding dimensions, and model information
+5. Clips now ready for final use with embeddings
 
 ## Context Organization
 
@@ -122,41 +133,49 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 - **Purpose**: Coordination layer for all clip transformation operations and state management
 - **States**: `spliced`, `generating_sprite`, `pending_review`, `keyframing`, `keyframed` (various transformation states)
 - **Key Functions**: Sprite state management, error handling, artifact management, S3 path generation
+- **Architecture**: All transform modules return structured Result types for type safety and enhanced observability
 - **Specialized Modules**:
-  - `Clips.Transform.Sprite`: Sprite sheet generation (native Elixir with FFmpeg)
-  - `Clips.Transform.Merge`: Clip merging operations (native Elixir with FFmpeg)  
-  - `Clips.Transform.Split`: Clip splitting operations (native Elixir with FFmpeg)
-  - `Clips.Transform.Keyframe`: Keyframe extraction (Python OpenCV integration)
+  - `Clips.Transform.Sprite`: Sprite sheet generation (native Elixir with FFmpeg) → `SpriteResult`
+  - `Clips.Transform.Merge`: Clip merging operations (native Elixir with FFmpeg) → `MergeResult`
+  - `Clips.Transform.Split`: Clip splitting operations (native Elixir with FFmpeg) → `SplitResult`
+  - `Clips.Transform.Keyframe`: Keyframe extraction (Python OpenCV integration) → `KeyframeResult`
 
 ### `Clips.Embed` (`lib/heaters/clips/embed.ex`)
 - **Purpose**: ML embedding generation and storage
 - **States**: `keyframed`, `embedding`, `embedded`
-- **Key Functions**: `start_embedding/1`, `complete_embedding/2`, embedding queries
+- **Key Functions**: `start_embedding/1`, `process_embedding_success/2`, embedding queries
+- **Architecture**: Returns structured `EmbedResult` with embedding metadata, model information, and dimensions
 
 ## Worker Organization
 
-Following Elixir/Phoenix best practices, all workers are organized in `lib/heaters/workers/` by domain:
+Following Elixir/Phoenix best practices, all workers are organized in `lib/heaters/workers/` by domain and use the standardized `GenericWorker` behavior for consistent error handling, logging, and job orchestration:
 
 ### Videos Workers (`lib/heaters/workers/videos/`)
 - `IngestWorker` - Downloads and processes source videos
 - `SpliceWorker` - Splits videos into clips based on scene detection
 
 ### Clips Workers (`lib/heaters/workers/clips/`)
-- `SpriteWorker` - Generates sprite sheets for review preparation (native Elixir with FFmpeg)
-- `MergeWorker` - Merges two clips together (review action, native Elixir with FFmpeg)
-- `SplitWorker` - Splits a clip at a specific frame (review action, native Elixir with FFmpeg)  
+- `SpriteWorker` - Generates sprite sheets for review preparation (native Elixir with FFmpeg) → handles `SpriteResult`
+- `MergeWorker` - Merges two clips together (review action, native Elixir with FFmpeg) → handles `MergeResult`
+- `SplitWorker` - Splits a clip at a specific frame (review action, native Elixir with FFmpeg) → handles `SplitResult`
 - `ArchiveWorker` - Cleans up archived clips from S3 and database
-- `KeyframeWorker` - Extracts keyframes for embedding generation (Python OpenCV)
-- `EmbeddingWorker` - Generates ML embeddings from clip content (Python ML models)
+- `KeyframeWorker` - Extracts keyframes for embedding generation (Python OpenCV) → handles `KeyframeResult`
+- `EmbeddingWorker` - Generates ML embeddings from clip content (Python ML models) → handles `EmbedResult`
 
 ### Orchestration Workers (`lib/heaters/workers/`)
-- `Dispatcher` - Batch job orchestration and workflow management
+- `Dispatcher` - Data-driven batch job orchestration and workflow management (reduced from 98 to 42 lines)
+
+### Generic Worker Behavior (`lib/heaters/workers/generic_worker.ex`)
+- **Purpose**: Standardized worker behavior eliminating boilerplate across all workers
+- **Features**: Automatic error handling, structured logging, performance timing, next-stage job enqueuing
+- **Benefits**: Consistent retry logic, graceful error recovery, centralized telemetry and observability
+- **Interface**: Workers implement `handle/1` for business logic and optional `enqueue_next/1` for follow-up jobs
 
 ## Orchestration
 
 ### Dispatcher (`lib/heaters/workers/dispatcher.ex`)
 
-Runs periodically to find work and enqueue jobs:
+**Data-driven architecture** - Runs periodically using configurable step definitions to find work and enqueue jobs:
 
 1. **Step 1**: Find `new` videos → enqueue `Videos.IngestWorker`
 2. **Step 2**: Find `spliced` clips → enqueue `Clips.SpriteWorker` 
@@ -164,6 +183,12 @@ Runs periodically to find work and enqueue jobs:
 4. **Step 4**: Find `review_approved` clips → enqueue `Clips.KeyframeWorker`
 5. **Step 5**: Find `keyframed` clips → enqueue `Clips.EmbeddingWorker`
 6. **Step 6**: Find `review_archived` clips → enqueue `Clips.ArchiveWorker`
+
+**Improvements**:
+- Reduced from 98 to 42 lines through data-driven step configuration
+- Standardized step execution pattern eliminates code duplication
+- Easy to add new steps or modify existing workflow logic
+- Centralized error handling and logging for all dispatch operations
 
 ## Python Task Interface
 
@@ -254,12 +279,36 @@ def run_task_name(explicit_params, **kwargs) -> dict:
 - **Merge/Split operations**: Cleanup in Python as part of atomic media processing
 - **Environment handling**: Automatic dev/prod bucket selection via configuration
 
+## Structured Result Types
+
+All transform operations now return standardized Result structs for type safety and enhanced observability:
+
+### Transform Result Structs
+- **`SplitResult`**: Status, original_clip_id, new_clip_ids, created_clips, cleanup metadata
+- **`SpriteResult`**: Status, clip_id, artifacts, metadata, processing duration  
+- **`KeyframeResult`**: Status, clip_id, artifacts, keyframe_count, strategy, processing duration
+- **`MergeResult`**: Status, merged_clip_id, source_clip_ids, cleanup metadata, processing duration
+- **`EmbedResult`**: Status, clip_id, embedding_id, model_name, embedding_dim, processing duration
+
+### Benefits of Structured Results
+- **Type Safety**: Compile-time validation with `@enforce_keys` for required fields
+- **Enhanced Observability**: Rich metadata including performance timing and operation-specific details
+- **Consistent Interface**: All transforms follow the same return pattern
+- **Better Error Handling**: Structured status reporting with detailed error context
+- **Performance Monitoring**: Built-in timing and metadata for operations analysis
+- **Direct Access**: Workers can access fields directly without defensive `Map.get` operations
+
 ## Key Benefits
 
 1. **Clear Separation**: Media processing (Python) vs business logic (Elixir)
-2. **Maintainable**: Each context has focused responsibilities
-3. **Scalable**: Independent job processing with proper error handling
-4. **Flexible**: Easy to modify workflow or add new processing steps
-5. **Reliable**: Comprehensive state management and error recovery
-6. **Testable**: Pure functions with predictable inputs/outputs
-7. **Environment-Aware**: Automatic dev/prod S3 bucket handling 
+2. **Maintainable**: Each context has focused responsibilities with standardized patterns
+3. **Scalable**: Independent job processing with proper error handling and centralized worker behavior
+4. **Flexible**: Data-driven dispatcher makes workflow modifications easy
+5. **Reliable**: Comprehensive state management and error recovery with structured Result types
+6. **Testable**: Pure functions with predictable inputs/outputs and type-safe return structures
+7. **Environment-Aware**: Automatic dev/prod S3 bucket handling
+8. **Type-Safe**: All transform operations return structured Result types with compile-time validation
+9. **Observable**: Enhanced logging with domain-specific metadata (keyframe counts, embedding dimensions, performance timing)
+10. **Consistent**: GenericWorker behavior eliminates boilerplate and ensures uniform error handling across all workers
+11. **Performance**: Optimized pattern matching without defensive programming (direct struct field access vs Map.get)
+12. **Developer Experience**: Reduced code complexity (98→42 lines in dispatcher) with improved maintainability 

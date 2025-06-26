@@ -68,7 +68,9 @@ defmodule HeatersWeb.QueryLive do
     main_clip = ClipEmbed.random_embedded_clip(filters)
 
     similars =
-      if main_clip, do: ClipEmbed.similar_clips(main_clip.id, filters, true, 1, @per_page), else: []
+      if main_clip,
+        do: ClipEmbed.similar_clips(main_clip.id, filters, true, 1, @per_page),
+        else: []
 
     {:noreply,
      socket
@@ -100,7 +102,10 @@ defmodule HeatersWeb.QueryLive do
   def handle_event("randomize", _params, socket) do
     %{filters: f, sort_asc?: sa} = socket.assigns
     main_clip = ClipEmbed.random_embedded_clip(f)
-    similars = if main_clip, do: ClipEmbed.similar_clips(main_clip.id, f, sa, 1, @per_page), else: []
+
+    similars =
+      if main_clip, do: ClipEmbed.similar_clips(main_clip.id, f, sa, 1, @per_page), else: []
+
     {:noreply, assign(socket, main_clip: main_clip, similars: similars, page: 1)}
   end
 

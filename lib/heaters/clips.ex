@@ -40,7 +40,9 @@ defmodule Heaters.Clips do
   defdelegate request_merge_and_fetch_next(prev_clip, curr_clip), to: Review
   defdelegate request_group_and_fetch_next(prev_clip, curr_clip), to: Review
   defdelegate request_split_and_fetch_next(clip, frame_num), to: Review
-  defdelegate for_source_video_with_sprites(source_video_id, exclude_id, page, page_size), to: Review
+
+  defdelegate for_source_video_with_sprites(source_video_id, exclude_id, page, page_size),
+    to: Review
 
   # Transform operations
   defdelegate mark_failed(clip_or_id, failure_state, error_reason), to: Transform

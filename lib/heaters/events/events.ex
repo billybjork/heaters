@@ -24,7 +24,8 @@ defmodule Heaters.Events do
       iex> Events.log_review_action(123, "split", "admin", %{"split_at_frame" => 450})
       {:ok, %ClipEvent{}}
   """
-  @spec log_review_action(integer(), String.t(), String.t(), map()) :: {:ok, ClipEvent.t()} | {:error, any()}
+  @spec log_review_action(integer(), String.t(), String.t(), map()) ::
+          {:ok, ClipEvent.t()} | {:error, any()}
   def log_review_action(clip_id, action, reviewer_id, event_data \\ %{}) do
     attrs = %{
       clip_id: clip_id,
@@ -38,11 +39,17 @@ defmodule Heaters.Events do
     |> Repo.insert()
     |> case do
       {:ok, event} ->
-        Logger.info("Events: Logged #{action} action for clip_id: #{clip_id} by reviewer: #{reviewer_id}")
+        Logger.info(
+          "Events: Logged #{action} action for clip_id: #{clip_id} by reviewer: #{reviewer_id}"
+        )
+
         {:ok, event}
 
       {:error, changeset} ->
-        Logger.error("Events: Failed to log #{action} action for clip_id: #{clip_id}, errors: #{inspect(changeset.errors)}")
+        Logger.error(
+          "Events: Failed to log #{action} action for clip_id: #{clip_id}, errors: #{inspect(changeset.errors)}"
+        )
+
         {:error, changeset}
     end
   end
@@ -59,25 +66,31 @@ defmodule Heaters.Events do
       iex> Events.log_merge_action(123, 456, "admin")
       {:ok, [%ClipEvent{action: "selected_merge_target"}, %ClipEvent{action: "selected_merge_source"}]}
   """
-  @spec log_merge_action(integer(), integer(), String.t()) :: {:ok, list(ClipEvent.t())} | {:error, any()}
+  @spec log_merge_action(integer(), integer(), String.t()) ::
+          {:ok, list(ClipEvent.t())} | {:error, any()}
   def log_merge_action(target_clip_id, source_clip_id, reviewer_id) do
     Repo.transaction(fn ->
       # Create target event
-      {:ok, target_event} = create_event(%{
-        clip_id: target_clip_id,
-        action: "selected_merge_target",
-        reviewer_id: reviewer_id
-      })
+      {:ok, target_event} =
+        create_event(%{
+          clip_id: target_clip_id,
+          action: "selected_merge_target",
+          reviewer_id: reviewer_id
+        })
 
       # Create source event with reference to target
-      {:ok, source_event} = create_event(%{
-        clip_id: source_clip_id,
-        action: "selected_merge_source",
-        reviewer_id: reviewer_id,
-        event_data: %{"merge_target_clip_id" => target_clip_id}
-      })
+      {:ok, source_event} =
+        create_event(%{
+          clip_id: source_clip_id,
+          action: "selected_merge_source",
+          reviewer_id: reviewer_id,
+          event_data: %{"merge_target_clip_id" => target_clip_id}
+        })
 
-      Logger.info("Events: Logged merge action - target: #{target_clip_id}, source: #{source_clip_id} by reviewer: #{reviewer_id}")
+      Logger.info(
+        "Events: Logged merge action - target: #{target_clip_id}, source: #{source_clip_id} by reviewer: #{reviewer_id}"
+      )
+
       [target_event, source_event]
     end)
   end
@@ -90,7 +103,8 @@ defmodule Heaters.Events do
       iex> Events.log_split_action(123, 450, "admin")
       {:ok, %ClipEvent{action: "selected_split"}}
   """
-  @spec log_split_action(integer(), integer(), String.t()) :: {:ok, ClipEvent.t()} | {:error, any()}
+  @spec log_split_action(integer(), integer(), String.t()) ::
+          {:ok, ClipEvent.t()} | {:error, any()}
   def log_split_action(clip_id, split_frame, reviewer_id) do
     attrs = %{
       clip_id: clip_id,
@@ -102,11 +116,17 @@ defmodule Heaters.Events do
     create_event(attrs)
     |> case do
       {:ok, event} ->
-        Logger.info("Events: Logged split action for clip_id: #{clip_id} at frame: #{split_frame} by reviewer: #{reviewer_id}")
+        Logger.info(
+          "Events: Logged split action for clip_id: #{clip_id} at frame: #{split_frame} by reviewer: #{reviewer_id}"
+        )
+
         {:ok, event}
 
       error ->
-        Logger.error("Events: Failed to log split action for clip_id: #{clip_id}, error: #{inspect(error)}")
+        Logger.error(
+          "Events: Failed to log split action for clip_id: #{clip_id}, error: #{inspect(error)}"
+        )
+
         error
     end
   end
@@ -123,25 +143,31 @@ defmodule Heaters.Events do
       iex> Events.log_group_action(123, 456, "admin")
       {:ok, [%ClipEvent{action: "selected_group_target"}, %ClipEvent{action: "selected_group_source"}]}
   """
-  @spec log_group_action(integer(), integer(), String.t()) :: {:ok, list(ClipEvent.t())} | {:error, any()}
+  @spec log_group_action(integer(), integer(), String.t()) ::
+          {:ok, list(ClipEvent.t())} | {:error, any()}
   def log_group_action(target_clip_id, source_clip_id, reviewer_id) do
     Repo.transaction(fn ->
       # Create target event
-      {:ok, target_event} = create_event(%{
-        clip_id: target_clip_id,
-        action: "selected_group_target",
-        reviewer_id: reviewer_id
-      })
+      {:ok, target_event} =
+        create_event(%{
+          clip_id: target_clip_id,
+          action: "selected_group_target",
+          reviewer_id: reviewer_id
+        })
 
       # Create source event with reference to target
-      {:ok, source_event} = create_event(%{
-        clip_id: source_clip_id,
-        action: "selected_group_source",
-        reviewer_id: reviewer_id,
-        event_data: %{"group_with_clip_id" => target_clip_id}
-      })
+      {:ok, source_event} =
+        create_event(%{
+          clip_id: source_clip_id,
+          action: "selected_group_source",
+          reviewer_id: reviewer_id,
+          event_data: %{"group_with_clip_id" => target_clip_id}
+        })
 
-      Logger.info("Events: Logged group action - target: #{target_clip_id}, source: #{source_clip_id} by reviewer: #{reviewer_id}")
+      Logger.info(
+        "Events: Logged group action - target: #{target_clip_id}, source: #{source_clip_id} by reviewer: #{reviewer_id}"
+      )
+
       [target_event, source_event]
     end)
   end

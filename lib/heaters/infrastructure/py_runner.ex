@@ -102,13 +102,9 @@ defmodule Heaters.Infrastructure.PyRunner do
     Logger.info("PyRunner: Args: #{inspect(args)}")
     Logger.info("PyRunner: Env: #{inspect(env)}")
 
-    Logger.info(
-      "PyRunner: Args types: #{inspect(Enum.map(args, &{&1, :erlang.is_list(&1)}))}"
-    )
+    Logger.info("PyRunner: Args types: #{inspect(Enum.map(args, &{&1, :erlang.is_list(&1)}))}")
 
-    Logger.info(
-      "PyRunner: Python exe type: #{inspect({py_exe, :erlang.is_list(py_exe)})}"
-    )
+    Logger.info("PyRunner: Python exe type: #{inspect({py_exe, :erlang.is_list(py_exe)})}")
 
     # Convert environment variables to charlists (required by Port.open)
     charlist_env =

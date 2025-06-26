@@ -17,10 +17,18 @@ defmodule Heaters.Workers.GenericWorkerTest do
     @impl Heaters.Workers.GenericWorker
     def handle(%{"test" => "data"} = args) do
       case get_behavior() do
-        :success -> :ok
-        :error -> {:error, "simulated error"}
-        :exception -> raise "simulated exception"
-        :unexpected_return -> :unexpected
+        :success ->
+          :ok
+
+        :error ->
+          {:error, "simulated error"}
+
+        :exception ->
+          raise "simulated exception"
+
+        :unexpected_return ->
+          :unexpected
+
         :store_data ->
           Process.put(:stored_value, Map.get(args, "value"))
           :ok
@@ -30,12 +38,16 @@ defmodule Heaters.Workers.GenericWorkerTest do
     @impl Heaters.Workers.GenericWorker
     def enqueue_next(%{"test" => "data"}) do
       case get_behavior() do
-        :enqueue_error -> {:error, "enqueue failed"}
+        :enqueue_error ->
+          {:error, "enqueue failed"}
+
         :enqueue_success_with_stored ->
           stored = Process.get(:stored_value)
           Process.put(:enqueue_called_with, stored)
           :ok
-        _ -> :ok
+
+        _ ->
+          :ok
       end
     end
   end
@@ -44,9 +56,10 @@ defmodule Heaters.Workers.GenericWorkerTest do
     test "handles successful job execution with timing" do
       TestWorker.set_behavior(:success)
 
-      log = capture_log(fn ->
-        assert :ok = perform_job(TestWorker, %{"test" => "data"})
-      end)
+      log =
+        capture_log(fn ->
+          assert :ok = perform_job(TestWorker, %{"test" => "data"})
+        end)
 
       assert log =~ "TestWorker: Starting job with args:"
       assert log =~ "TestWorker: Job completed successfully in"
@@ -56,9 +69,10 @@ defmodule Heaters.Workers.GenericWorkerTest do
     test "handles business logic errors" do
       TestWorker.set_behavior(:error)
 
-      log = capture_log(fn ->
-        assert {:error, "simulated error"} = perform_job(TestWorker, %{"test" => "data"})
-      end)
+      log =
+        capture_log(fn ->
+          assert {:error, "simulated error"} = perform_job(TestWorker, %{"test" => "data"})
+        end)
 
       assert log =~ "TestWorker: Starting job with args:"
       assert log =~ "TestWorker: Job failed: \"simulated error\""
@@ -67,9 +81,10 @@ defmodule Heaters.Workers.GenericWorkerTest do
     test "catches and handles exceptions" do
       TestWorker.set_behavior(:exception)
 
-      log = capture_log(fn ->
-        assert {:error, "simulated exception"} = perform_job(TestWorker, %{"test" => "data"})
-      end)
+      log =
+        capture_log(fn ->
+          assert {:error, "simulated exception"} = perform_job(TestWorker, %{"test" => "data"})
+        end)
 
       assert log =~ "TestWorker: Starting job with args:"
       assert log =~ "TestWorker: Job crashed with exception: simulated exception"
@@ -79,9 +94,11 @@ defmodule Heaters.Workers.GenericWorkerTest do
     test "handles unexpected return values" do
       TestWorker.set_behavior(:unexpected_return)
 
-      log = capture_log(fn ->
-        assert {:error, "Unexpected return value: :unexpected"} = perform_job(TestWorker, %{"test" => "data"})
-      end)
+      log =
+        capture_log(fn ->
+          assert {:error, "Unexpected return value: :unexpected"} =
+                   perform_job(TestWorker, %{"test" => "data"})
+        end)
 
       assert log =~ "TestWorker: Job returned unexpected result: :unexpected"
     end
@@ -98,9 +115,10 @@ defmodule Heaters.Workers.GenericWorkerTest do
     test "handles enqueue_next errors" do
       TestWorker.set_behavior(:enqueue_error)
 
-      log = capture_log(fn ->
-        assert {:error, "enqueue failed"} = perform_job(TestWorker, %{"test" => "data"})
-      end)
+      log =
+        capture_log(fn ->
+          assert {:error, "enqueue failed"} = perform_job(TestWorker, %{"test" => "data"})
+        end)
 
       assert log =~ "TestWorker: Job failed: \"enqueue failed\""
     end
@@ -146,13 +164,14 @@ defmodule Heaters.Workers.GenericWorkerTest do
       end
 
       # We'll need to mock this properly, but for now let's test the structure
-      log = capture_log(fn ->
-        # This would need proper mocking setup
-        # For now, test the worker structure
-        worker = SplitWorker
-        assert function_exported?(worker, :handle, 1)
-        assert function_exported?(worker, :enqueue_next, 1)
-      end)
+      log =
+        capture_log(fn ->
+          # This would need proper mocking setup
+          # For now, test the worker structure
+          worker = SplitWorker
+          assert function_exported?(worker, :handle, 1)
+          assert function_exported?(worker, :enqueue_next, 1)
+        end)
     end
 
     test "handle/1 processes split arguments correctly" do
@@ -176,10 +195,11 @@ defmodule Heaters.Workers.GenericWorkerTest do
       Process.delete(:new_clip_ids)
 
       # Test with no stored data
-      log = capture_log(fn ->
-        result = SplitWorker.enqueue_next(args)
-        assert {:error, "No new_clip_ids found to enqueue sprite workers"} = result
-      end)
+      log =
+        capture_log(fn ->
+          result = SplitWorker.enqueue_next(args)
+          assert {:error, "No new_clip_ids found to enqueue sprite workers"} = result
+        end)
 
       # Test with stored data
       Process.put(:new_clip_ids, [123, 456])
@@ -219,9 +239,10 @@ defmodule Heaters.Workers.GenericWorkerTest do
 
       TestWorker.set_behavior(:success)
 
-      log = capture_log(fn ->
-        perform_job(TestWorker, %{"test" => "data"})
-      end)
+      log =
+        capture_log(fn ->
+          perform_job(TestWorker, %{"test" => "data"})
+        end)
 
       # All workers should have these log patterns
       assert log =~ ~r/\w+Worker: Starting job with args:/

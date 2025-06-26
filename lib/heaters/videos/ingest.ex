@@ -95,7 +95,8 @@ defmodule Heaters.Videos.Ingest do
   @doc """
   Mark a source video as failed with error details.
   """
-  @spec mark_failed(SourceVideo.t() | integer(), String.t(), any()) :: {:ok, SourceVideo.t()} | {:error, any()}
+  @spec mark_failed(SourceVideo.t() | integer(), String.t(), any()) ::
+          {:ok, SourceVideo.t()} | {:error, any()}
   def mark_failed(source_video_or_id, failure_state, error_reason)
 
   def mark_failed(%SourceVideo{} = source_video, failure_state, error_reason) do
@@ -108,7 +109,8 @@ defmodule Heaters.Videos.Ingest do
     })
   end
 
-  def mark_failed(source_video_id, failure_state, error_reason) when is_integer(source_video_id) do
+  def mark_failed(source_video_id, failure_state, error_reason)
+      when is_integer(source_video_id) do
     with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
       mark_failed(source_video, failure_state, error_reason)
     end
@@ -126,7 +128,8 @@ defmodule Heaters.Videos.Ingest do
   Create clips from splice operation results.
   Expects clips_data to be a list of maps with clip information.
   """
-  @spec create_clips_from_splice(integer(), list(map())) :: {:ok, list(Clip.t())} | {:error, any()}
+  @spec create_clips_from_splice(integer(), list(map())) ::
+          {:ok, list(Clip.t())} | {:error, any()}
   def create_clips_from_splice(source_video_id, clips_data) when is_list(clips_data) do
     Logger.info("Creating #{length(clips_data)} clips for source_video_id: #{source_video_id}")
 
@@ -148,7 +151,10 @@ defmodule Heaters.Videos.Ingest do
     end
   rescue
     e ->
-      Logger.error("Error creating clips for source_video_id #{source_video_id}: #{Exception.message(e)}")
+      Logger.error(
+        "Error creating clips for source_video_id #{source_video_id}: #{Exception.message(e)}"
+      )
+
       {:error, Exception.message(e)}
   end
 
@@ -170,7 +176,9 @@ defmodule Heaters.Videos.Ingest do
       :ok
     else
       invalid_indices = Enum.map(invalid_clips, fn {_clip_data, index} -> index end)
-      {:error, "Clips at indices #{inspect(invalid_indices)} are missing required fields: #{inspect(required_fields)}"}
+
+      {:error,
+       "Clips at indices #{inspect(invalid_indices)} are missing required fields: #{inspect(required_fields)}"}
     end
   end
 
@@ -182,7 +190,7 @@ defmodule Heaters.Videos.Ingest do
     # Generate clip_identifier if not provided
     clip_identifier =
       Map.get(clip_data, :clip_identifier) ||
-      "#{source_video_id}_clip_#{String.pad_leading(to_string(index + 1), 3, "0")}"
+        "#{source_video_id}_clip_#{String.pad_leading(to_string(index + 1), 3, "0")}"
 
     %{
       source_video_id: source_video_id,
@@ -276,13 +284,21 @@ defmodule Heaters.Videos.Ingest do
   defp validate_state_transition(current_state, target_state) do
     case {current_state, target_state} do
       # Valid transitions for downloading
-      {"new", "downloading"} -> :ok
-      {"download_failed", "downloading"} -> :ok
-      {"ingestion_failed", "downloading"} -> :ok
+      {"new", "downloading"} ->
+        :ok
+
+      {"download_failed", "downloading"} ->
+        :ok
+
+      {"ingestion_failed", "downloading"} ->
+        :ok
 
       # Valid transitions for splicing
-      {"downloaded", "splicing"} -> :ok
-      {"splicing_failed", "splicing"} -> :ok
+      {"downloaded", "splicing"} ->
+        :ok
+
+      {"splicing_failed", "splicing"} ->
+        :ok
 
       # Invalid transitions
       _ ->

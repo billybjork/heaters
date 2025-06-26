@@ -28,7 +28,10 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
 
   defp handle_splicing(%SourceVideo{ingest_state: state} = source_video)
        when state in @splicing_complete_states do
-    Logger.info("SpliceWorker: Source video #{source_video.id} already in state '#{state}', skipping")
+    Logger.info(
+      "SpliceWorker: Source video #{source_video.id} already in state '#{state}', skipping"
+    )
+
     :ok
   end
 
@@ -48,7 +51,9 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
 
         case PyRunner.run("splice", py_args) do
           {:ok, %{"result" => %{"clips" => clips_data}}} when is_list(clips_data) ->
-            Logger.info("SpliceWorker: Successfully received #{length(clips_data)} clips from Python")
+            Logger.info(
+              "SpliceWorker: Successfully received #{length(clips_data)} clips from Python"
+            )
 
             # Validate clips data before processing
             case Ingest.validate_clips_data(clips_data) do
@@ -63,7 +68,10 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
                         :ok
 
                       {:error, reason} ->
-                        Logger.error("SpliceWorker: Failed to mark splicing complete: #{inspect(reason)}")
+                        Logger.error(
+                          "SpliceWorker: Failed to mark splicing complete: #{inspect(reason)}"
+                        )
+
                         {:error, reason}
                     end
 
@@ -78,7 +86,9 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
             end
 
           {:ok, unexpected_result} ->
-            error_message = "Splice script returned unexpected result: #{inspect(unexpected_result)}"
+            error_message =
+              "Splice script returned unexpected result: #{inspect(unexpected_result)}"
+
             Logger.error("SpliceWorker: #{error_message}")
             mark_splicing_failed(updated_video, error_message)
 
@@ -96,7 +106,9 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
 
   defp mark_splicing_failed(source_video, reason) do
     case Ingest.mark_failed(source_video, "splicing_failed", reason) do
-      {:ok, _} -> {:error, reason}
+      {:ok, _} ->
+        {:error, reason}
+
       {:error, db_error} ->
         Logger.error("SpliceWorker: Failed to mark video as failed: #{inspect(db_error)}")
         {:error, reason}
@@ -125,7 +137,10 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
               {:error, "No sprite jobs were enqueued"}
 
             %Ecto.Multi{} = multi ->
-              Logger.error("SpliceWorker: Oban.insert_all returned Multi instead of jobs: #{inspect(multi)}")
+              Logger.error(
+                "SpliceWorker: Oban.insert_all returned Multi instead of jobs: #{inspect(multi)}"
+              )
+
               {:error, "Unexpected Multi result from Oban.insert_all"}
           end
         rescue

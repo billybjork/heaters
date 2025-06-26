@@ -26,24 +26,53 @@ defmodule Heaters.Clips.Transform.Split do
   # FFmpeg encoding options matching the Python implementation
   # These are hardcoded in the create_video_clip function to match the Python script exactly
 
+  defmodule SplitResult do
+    @moduledoc """
+    Structured result type for Split transform operations.
+    """
+
+    @enforce_keys [:status, :original_clip_id, :new_clip_ids]
+    defstruct [
+      :status,
+      :original_clip_id,
+      :new_clip_ids,
+      :created_clips,
+      :cleanup,
+      :metadata,
+      :duration_ms,
+      :processed_at
+    ]
+
+    @type t :: %__MODULE__{
+            status: String.t(),
+            original_clip_id: integer(),
+            new_clip_ids: [integer()],
+            created_clips: [map()] | nil,
+            cleanup: map() | nil,
+            metadata: map() | nil,
+            duration_ms: integer() | nil,
+            processed_at: DateTime.t() | nil
+          }
+  end
+
   @type split_params :: %{
-    split_at_frame: integer(),
-    original_start_time: float(),
-    original_end_time: float(),
-    original_start_frame: integer(),
-    original_end_frame: integer(),
-    source_title: String.t(),
-    fps: float() | nil,
-    source_video_id: integer()
-  }
+          split_at_frame: integer(),
+          original_start_time: float(),
+          original_end_time: float(),
+          original_start_frame: integer(),
+          original_end_frame: integer(),
+          source_title: String.t(),
+          fps: float() | nil,
+          source_video_id: integer()
+        }
 
   @type split_result :: %{
-    status: String.t(),
-    original_clip_id: integer(),
-    created_clips: list(map()),
-    cleanup: map(),
-    metadata: map()
-  }
+          status: String.t(),
+          original_clip_id: integer(),
+          created_clips: list(map()),
+          cleanup: map(),
+          metadata: map()
+        }
 
   @doc """
   Main entry point for splitting a clip at a specific frame.
@@ -63,7 +92,7 @@ defmodule Heaters.Clips.Transform.Split do
     {:ok, result} on success with created clip data
     {:error, reason} on failure
   """
-  @spec run_split(integer(), integer()) :: {:ok, split_result()} | {:error, any()}
+  @spec run_split(integer(), integer()) :: {:ok, SplitResult.t()} | {:error, any()}
   def run_split(clip_id, split_at_frame) do
     Logger.info("Split: Starting split for clip_id: #{clip_id} at frame: #{split_at_frame}")
 
@@ -79,18 +108,18 @@ defmodule Heaters.Clips.Transform.Split do
              {:ok, cleanup_result} <- cleanup_original_file(clip),
              {:ok, new_clip_records} <- create_clip_records(uploaded_clips, clip),
              :ok <- update_original_clip_state(clip_id) do
-
-          result = %{
+          result = %SplitResult{
             status: "success",
             original_clip_id: clip_id,
+            new_clip_ids: Enum.map(new_clip_records, & &1.id),
             created_clips: uploaded_clips,
             cleanup: cleanup_result,
             metadata: %{
               split_at_frame: split_at_frame,
               clips_created: length(new_clip_records),
-              total_duration: Enum.reduce(uploaded_clips, 0.0, & &1.duration_seconds + &2),
-              new_clip_ids: Enum.map(new_clip_records, & &1.id)
-            }
+              total_duration: Enum.reduce(uploaded_clips, 0.0, &(&1.duration_seconds + &2))
+            },
+            processed_at: DateTime.utc_now()
           }
 
           Logger.info("Split: Successfully completed split for clip_id: #{clip_id}")
@@ -137,7 +166,8 @@ defmodule Heaters.Clips.Transform.Split do
       if split_at_frame > clip.start_frame and split_at_frame < clip.end_frame do
         {:ok, split_params}
       else
-        {:error, "Split frame #{split_at_frame} is outside clip range (#{clip.start_frame}-#{clip.end_frame})"}
+        {:error,
+         "Split frame #{split_at_frame} is outside clip range (#{clip.start_frame}-#{clip.end_frame})"}
       end
     end
   end
@@ -146,14 +176,18 @@ defmodule Heaters.Clips.Transform.Split do
   defp get_video_fps(%Clip{processing_metadata: metadata}) when is_map(metadata) do
     Map.get(metadata, "fps") || Map.get(metadata, :fps)
   end
+
   defp get_video_fps(_clip), do: nil
 
   @spec create_temp_directory() :: {:ok, String.t()} | {:error, any()}
   defp create_temp_directory do
     case System.tmp_dir() do
-      nil -> {:error, "Could not access system temp directory"}
+      nil ->
+        {:error, "Could not access system temp directory"}
+
       temp_root ->
         temp_dir = Path.join(temp_root, "heaters_split_#{System.unique_integer([:positive])}")
+
         case File.mkdir_p(temp_dir) do
           :ok -> {:ok, temp_dir}
           {:error, reason} -> {:error, "Failed to create temp directory: #{reason}"}
@@ -200,12 +234,14 @@ defmodule Heaters.Clips.Transform.Split do
     case Application.get_env(:heaters, :s3_bucket) do
       nil ->
         raise "S3 bucket name not configured. Please set :s3_bucket in application config."
+
       bucket_name ->
         bucket_name
     end
   end
 
-  @spec split_video_file(String.t(), String.t(), split_params()) :: {:ok, list(map())} | {:error, any()}
+  @spec split_video_file(String.t(), String.t(), split_params()) ::
+          {:ok, list(map())} | {:error, any()}
   defp split_video_file(source_video_path, output_dir, split_params) do
     %{
       split_at_frame: split_at_frame,
@@ -218,12 +254,13 @@ defmodule Heaters.Clips.Transform.Split do
     } = split_params
 
     # Get FPS from video file if not provided in params
-    fps = if fps && fps > 0 do
-      fps
-    else
-      {:ok, detected_fps} = get_video_fps_with_ffprobe(source_video_path)
-      detected_fps
-    end
+    fps =
+      if fps && fps > 0 do
+        fps
+      else
+        {:ok, detected_fps} = get_video_fps_with_ffprobe(source_video_path)
+        detected_fps
+      end
 
     Logger.info("Split: Splitting video at frame #{split_at_frame} (FPS: #{Float.round(fps, 3)})")
 
@@ -237,72 +274,78 @@ defmodule Heaters.Clips.Transform.Split do
     end_a_time = split_time_abs
     duration_a = end_a_time - start_a_time
 
-    created_clips = if duration_a >= @min_clip_duration_seconds do
-      start_f_a = original_start_frame
-      end_f_a = split_at_frame - 1
-      id_a = "#{sanitized_source_title}_#{start_f_a}_#{end_f_a}"
-      filename_a = "#{id_a}.mp4"
-      output_path_a = Path.join(output_dir, filename_a)
+    created_clips =
+      if duration_a >= @min_clip_duration_seconds do
+        start_f_a = original_start_frame
+        end_f_a = split_at_frame - 1
+        id_a = "#{sanitized_source_title}_#{start_f_a}_#{end_f_a}"
+        filename_a = "#{id_a}.mp4"
+        output_path_a = Path.join(output_dir, filename_a)
 
-      case create_video_clip(source_video_path, output_path_a, start_a_time, end_a_time) do
-        {:ok, file_size_a} ->
-          clip_a = %{
-            clip_identifier: id_a,
-            filename: filename_a,
-            local_path: output_path_a,
-            start_time_seconds: start_a_time,
-            end_time_seconds: end_a_time,
-            start_frame: start_f_a,
-            end_frame: end_f_a,
-            duration_seconds: duration_a,
-            file_size: file_size_a
-          }
-          Logger.info("Split: Created clip A: #{filename_a} (#{Float.round(duration_a, 2)}s)")
-          [clip_a]
-        {:error, reason} ->
-          Logger.error("Split: Failed to create clip A: #{reason}")
-          []
+        case create_video_clip(source_video_path, output_path_a, start_a_time, end_a_time) do
+          {:ok, file_size_a} ->
+            clip_a = %{
+              clip_identifier: id_a,
+              filename: filename_a,
+              local_path: output_path_a,
+              start_time_seconds: start_a_time,
+              end_time_seconds: end_a_time,
+              start_frame: start_f_a,
+              end_frame: end_f_a,
+              duration_seconds: duration_a,
+              file_size: file_size_a
+            }
+
+            Logger.info("Split: Created clip A: #{filename_a} (#{Float.round(duration_a, 2)}s)")
+            [clip_a]
+
+          {:error, reason} ->
+            Logger.error("Split: Failed to create clip A: #{reason}")
+            []
+        end
+      else
+        Logger.info("Split: Skipping clip A - too short (#{duration_a}s)")
+        []
       end
-    else
-      Logger.info("Split: Skipping clip A - too short (#{duration_a}s)")
-      []
-    end
 
     # Create clip B (after split)
     start_b_time = split_time_abs
     end_b_time = original_end_time
     duration_b = end_b_time - start_b_time
 
-    created_clips = if duration_b >= @min_clip_duration_seconds do
-      start_f_b = split_at_frame
-      end_f_b = original_end_frame
-      id_b = "#{sanitized_source_title}_#{start_f_b}_#{end_f_b}"
-      filename_b = "#{id_b}.mp4"
-      output_path_b = Path.join(output_dir, filename_b)
+    created_clips =
+      if duration_b >= @min_clip_duration_seconds do
+        start_f_b = split_at_frame
+        end_f_b = original_end_frame
+        id_b = "#{sanitized_source_title}_#{start_f_b}_#{end_f_b}"
+        filename_b = "#{id_b}.mp4"
+        output_path_b = Path.join(output_dir, filename_b)
 
-      case create_video_clip(source_video_path, output_path_b, start_b_time, end_b_time) do
-        {:ok, file_size_b} ->
-          clip_b = %{
-            clip_identifier: id_b,
-            filename: filename_b,
-            local_path: output_path_b,
-            start_time_seconds: start_b_time,
-            end_time_seconds: end_b_time,
-            start_frame: start_f_b,
-            end_frame: end_f_b,
-            duration_seconds: duration_b,
-            file_size: file_size_b
-          }
-          Logger.info("Split: Created clip B: #{filename_b} (#{Float.round(duration_b, 2)}s)")
-          created_clips ++ [clip_b]
-        {:error, reason} ->
-          Logger.error("Split: Failed to create clip B: #{reason}")
-          created_clips
+        case create_video_clip(source_video_path, output_path_b, start_b_time, end_b_time) do
+          {:ok, file_size_b} ->
+            clip_b = %{
+              clip_identifier: id_b,
+              filename: filename_b,
+              local_path: output_path_b,
+              start_time_seconds: start_b_time,
+              end_time_seconds: end_b_time,
+              start_frame: start_f_b,
+              end_frame: end_f_b,
+              duration_seconds: duration_b,
+              file_size: file_size_b
+            }
+
+            Logger.info("Split: Created clip B: #{filename_b} (#{Float.round(duration_b, 2)}s)")
+            created_clips ++ [clip_b]
+
+          {:error, reason} ->
+            Logger.error("Split: Failed to create clip B: #{reason}")
+            created_clips
+        end
+      else
+        Logger.info("Split: Skipping clip B - too short (#{duration_b}s)")
+        created_clips
       end
-    else
-      Logger.info("Split: Skipping clip B - too short (#{duration_b}s)")
-      created_clips
-    end
 
     if Enum.empty?(created_clips) do
       {:error, "Split operation did not create any valid clips"}
@@ -316,16 +359,22 @@ defmodule Heaters.Clips.Transform.Split do
     try do
       # Use System.cmd to call ffprobe directly since FFmpex doesn't expose ffprobe options
       # Replicating: ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=noprint_wrappers=1:nokey=1 video_path
-      {output, exit_code} = System.cmd("ffprobe", [
-        "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=r_frame_rate",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        video_path
-      ])
+      {output, exit_code} =
+        System.cmd("ffprobe", [
+          "-v",
+          "error",
+          "-select_streams",
+          "v:0",
+          "-show_entries",
+          "stream=r_frame_rate",
+          "-of",
+          "default=noprint_wrappers=1:nokey=1",
+          video_path
+        ])
 
       if exit_code == 0 do
         fps_string = String.trim(output)
+
         case String.split(fps_string, "/") do
           [num_str, den_str] ->
             with {num, ""} <- Integer.parse(num_str),
@@ -336,15 +385,22 @@ defmodule Heaters.Clips.Transform.Split do
               {:ok, fps}
             else
               _ ->
-                Logger.warning("Split: Could not parse FPS from '#{fps_string}', defaulting to 30.0")
+                Logger.warning(
+                  "Split: Could not parse FPS from '#{fps_string}', defaulting to 30.0"
+                )
+
                 {:ok, 30.0}
             end
+
           _ ->
             Logger.warning("Split: Could not parse FPS from '#{fps_string}', defaulting to 30.0")
             {:ok, 30.0}
         end
       else
-        Logger.warning("Split: FFprobe command failed with exit code #{exit_code}, defaulting to 30.0")
+        Logger.warning(
+          "Split: FFprobe command failed with exit code #{exit_code}, defaulting to 30.0"
+        )
+
         {:ok, 30.0}
       end
     rescue
@@ -354,7 +410,8 @@ defmodule Heaters.Clips.Transform.Split do
     end
   end
 
-  @spec create_video_clip(String.t(), String.t(), float(), float()) :: {:ok, integer()} | {:error, any()}
+  @spec create_video_clip(String.t(), String.t(), float(), float()) ::
+          {:ok, integer()} | {:error, any()}
   defp create_video_clip(input_path, output_path, start_time, end_time) do
     try do
       # Create FFmpeg command matching the Python implementation exactly:
@@ -388,9 +445,11 @@ defmodule Heaters.Clips.Transform.Split do
           case File.stat(output_path) do
             {:ok, %File.Stat{size: file_size}} ->
               {:ok, file_size}
+
             {:error, reason} ->
               {:error, "Created clip file not found: #{reason}"}
           end
+
         {:error, reason} ->
           {:error, "FFmpeg error: #{reason}"}
       end
@@ -420,6 +479,7 @@ defmodule Heaters.Clips.Transform.Split do
           {:ok, _result} ->
             uploaded_clip = Map.put(clip_data, :s3_key, s3_key)
             {:cont, [uploaded_clip | acc]}
+
           {:error, reason} ->
             Logger.error("Split: Failed to upload #{clip_data.filename}: #{inspect(reason)}")
             {:halt, {:error, "Failed to upload clip #{index + 1}: #{inspect(reason)}"}}
@@ -441,6 +501,7 @@ defmodule Heaters.Clips.Transform.Split do
     case S3.delete_s3_objects([s3_key]) do
       {:ok, deleted_count} ->
         {:ok, %{deleted_count: deleted_count, error_count: 0}}
+
       {:error, reason} ->
         Logger.warning("Split: Failed to cleanup original file #{s3_path}: #{inspect(reason)}")
         # Don't fail the entire operation due to cleanup failure
@@ -478,6 +539,7 @@ defmodule Heaters.Clips.Transform.Split do
       {count, clips} when count > 0 ->
         Logger.info("Split: Created #{count} new clip records")
         {:ok, clips}
+
       {0, _} ->
         {:error, "Failed to create clip records"}
     end
@@ -495,10 +557,12 @@ defmodule Heaters.Clips.Transform.Split do
           {:ok, _updated_clip} ->
             Logger.info("Split: Updated original clip #{clip_id} to review_archived state")
             :ok
+
           {:error, reason} ->
             Logger.error("Split: Failed to update original clip state: #{inspect(reason)}")
             {:error, reason}
         end
+
       {:error, reason} ->
         {:error, reason}
     end

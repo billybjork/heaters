@@ -64,6 +64,7 @@ defmodule Heaters.Clips.Transform do
   alias Heaters.Clips.Clip
   alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Clips.Transform.ClipArtifact
+  alias Heaters.Clips.Transform.Sprite
   require Logger
 
   @doc """
@@ -150,9 +151,12 @@ defmodule Heaters.Clips.Transform do
 
       {:ok, artifacts} = Transform.create_artifacts(clip_id, "keyframe", artifacts_data)
   """
-  @spec create_artifacts(integer(), String.t(), list(map())) :: {:ok, list(ClipArtifact.t())} | {:error, any()}
+  @spec create_artifacts(integer(), String.t(), list(map())) ::
+          {:ok, list(ClipArtifact.t())} | {:error, any()}
   def create_artifacts(clip_id, artifact_type, artifacts_data) when is_list(artifacts_data) do
-    Logger.info("Transform: Creating #{length(artifacts_data)} #{artifact_type} artifacts for clip_id: #{clip_id}")
+    Logger.info(
+      "Transform: Creating #{length(artifacts_data)} #{artifact_type} artifacts for clip_id: #{clip_id}"
+    )
 
     artifacts_attrs =
       artifacts_data
@@ -162,16 +166,25 @@ defmodule Heaters.Clips.Transform do
 
     case Repo.insert_all(ClipArtifact, artifacts_attrs, returning: true) do
       {count, artifacts} when count > 0 ->
-        Logger.info("Transform: Successfully created #{count} #{artifact_type} artifacts for clip_id: #{clip_id}")
+        Logger.info(
+          "Transform: Successfully created #{count} #{artifact_type} artifacts for clip_id: #{clip_id}"
+        )
+
         {:ok, artifacts}
 
       {0, _} ->
-        Logger.error("Transform: Failed to create #{artifact_type} artifacts for clip_id: #{clip_id}")
+        Logger.error(
+          "Transform: Failed to create #{artifact_type} artifacts for clip_id: #{clip_id}"
+        )
+
         {:error, "No artifacts were created"}
     end
   rescue
     e ->
-      Logger.error("Transform: Error creating #{artifact_type} artifacts for clip_id #{clip_id}: #{Exception.message(e)}")
+      Logger.error(
+        "Transform: Error creating #{artifact_type} artifacts for clip_id #{clip_id}: #{Exception.message(e)}"
+      )
+
       {:error, Exception.message(e)}
   end
 
@@ -223,10 +236,11 @@ defmodule Heaters.Clips.Transform do
   def complete_sprite_generation(clip_id, sprite_data \\ %{}) do
     Repo.transaction(fn ->
       with {:ok, clip} <- ClipQueries.get_clip(clip_id),
-           {:ok, updated_clip} <- update_clip(clip, %{
-             ingest_state: "pending_review",
-             last_error: nil
-           }),
+           {:ok, updated_clip} <-
+             update_clip(clip, %{
+               ingest_state: "pending_review",
+               last_error: nil
+             }),
            {:ok, _artifacts} <- maybe_create_sprite_artifacts(clip_id, sprite_data) do
         updated_clip
       else
@@ -252,9 +266,12 @@ defmodule Heaters.Clips.Transform do
   This is a convenience function for processing sprite success results
   from workers or direct calls.
   """
-  @spec process_sprite_success(Clip.t(), map()) :: {:ok, Clip.t()} | {:error, any()}
-  def process_sprite_success(%Clip{} = clip, result) do
-    complete_sprite_generation(clip.id, result)
+  @spec process_sprite_success(Clip.t(), Sprite.SpriteResult.t()) ::
+          {:ok, Clip.t()} | {:error, any()}
+  def process_sprite_success(%Clip{} = clip, %Sprite.SpriteResult{artifacts: artifacts}) do
+    # Convert SpriteResult to the map format expected by complete_sprite_generation
+    sprite_data = %{"artifacts" => artifacts}
+    complete_sprite_generation(clip.id, sprite_data)
   end
 
   # Private helper functions

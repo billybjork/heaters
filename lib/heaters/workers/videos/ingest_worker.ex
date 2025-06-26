@@ -17,7 +17,6 @@ defmodule Heaters.Workers.Videos.IngestWorker do
     with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id),
          :ok <- check_idempotency(source_video),
          {:ok, updated_video} <- Ingest.start_downloading(source_video_id) do
-
       Logger.info(
         "IngestWorker: Running PyRunner for source_video_id: #{source_video_id}, URL: #{updated_video.original_url}"
       )
@@ -55,7 +54,9 @@ defmodule Heaters.Workers.Videos.IngestWorker do
           )
 
           case Ingest.mark_failed(updated_video, "ingestion_failed", reason) do
-            {:ok, _} -> {:error, reason}
+            {:ok, _} ->
+              {:error, reason}
+
             {:error, db_error} ->
               Logger.error("IngestWorker: Failed to mark video as failed: #{inspect(db_error)}")
               {:error, reason}
@@ -67,12 +68,14 @@ defmodule Heaters.Workers.Videos.IngestWorker do
         Logger.info(
           "IngestWorker: source_video_id #{source_video_id} already processed, skipping"
         )
+
         :ok
 
       {:error, reason} ->
         Logger.error(
           "IngestWorker: Error in workflow for source video #{source_video_id}: #{inspect(reason)}"
         )
+
         {:error, reason}
     end
   end
@@ -82,7 +85,9 @@ defmodule Heaters.Workers.Videos.IngestWorker do
     case Process.get(:source_video_id) do
       source_video_id when is_integer(source_video_id) ->
         # Enqueue the next worker in the chain
-        case Oban.insert(Heaters.Workers.Videos.SpliceWorker.new(%{source_video_id: source_video_id})) do
+        case Oban.insert(
+               Heaters.Workers.Videos.SpliceWorker.new(%{source_video_id: source_video_id})
+             ) do
           {:ok, _job} -> :ok
           {:error, reason} -> {:error, "Failed to enqueue splice worker: #{inspect(reason)}"}
         end

@@ -20,9 +20,11 @@ defmodule Heaters.Infrastructure.S3 do
   def delete_clip_and_artifacts(clip) do
     # Get all S3 keys to delete
     artifact_keys = Enum.map(clip.clip_artifacts || [], & &1.s3_key)
-    all_keys = [clip.clip_filepath | artifact_keys]
-    |> Enum.reject(&is_nil/1)
-    |> Enum.reject(&(&1 == ""))
+
+    all_keys =
+      [clip.clip_filepath | artifact_keys]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.reject(&(&1 == ""))
 
     if Enum.empty?(all_keys) do
       Logger.info("No S3 keys to delete for clip #{clip.id}")
@@ -42,29 +44,36 @@ defmodule Heaters.Infrastructure.S3 do
     if Enum.empty?(keys) do
       {:ok, 0}
     else
-      bucket_name = get_s3_bucket_name()
+      case get_s3_bucket_name() do
+        {:ok, bucket_name} ->
+          try do
+            total_deleted =
+              keys
+              |> Enum.chunk_every(@max_delete_batch_size)
+              |> Enum.reduce(0, fn batch, acc ->
+                case delete_s3_objects_batch(bucket_name, batch) do
+                  {:ok, deleted_count} ->
+                    acc + deleted_count
 
-            try do
-        total_deleted =
-          keys
-          |> Enum.chunk_every(@max_delete_batch_size)
-          |> Enum.reduce(0, fn batch, acc ->
-            case delete_s3_objects_batch(bucket_name, batch) do
-              {:ok, deleted_count} -> acc + deleted_count
-              {:error, reason} ->
-                Logger.error("S3 batch deletion failed: #{inspect(reason)}")
-                throw({:error, reason})
-            end
-          end)
+                  {:error, reason} ->
+                    Logger.error("S3 batch deletion failed: #{inspect(reason)}")
+                    throw({:error, reason})
+                end
+              end)
 
-        Logger.info("Successfully deleted #{total_deleted} S3 objects")
-        {:ok, total_deleted}
-      rescue
-        error ->
-          Logger.error("S3 deletion error: #{Exception.message(error)}")
-          {:error, Exception.message(error)}
-      catch
-        {:error, reason} -> {:error, reason}
+            Logger.info("Successfully deleted #{total_deleted} S3 objects")
+            {:ok, total_deleted}
+          rescue
+            error ->
+              Logger.error("S3 deletion error: #{Exception.message(error)}")
+              {:error, Exception.message(error)}
+          catch
+            {:error, reason} -> {:error, reason}
+          end
+
+        {:error, reason} ->
+          Logger.error("S3 bucket name not configured: #{inspect(reason)}")
+          {:error, reason}
       end
     end
   end
@@ -78,18 +87,21 @@ defmodule Heaters.Infrastructure.S3 do
     case ExAws.S3.delete_multiple_objects(bucket_name, keys) |> ExAws.request() do
       {:ok, %{body: body}} ->
         # Parse the XML response body which contains delete results
-        deleted_objects = Map.get(body, "DeleteResult", %{})
-                         |> Map.get("Deleted", [])
-                         |> List.wrap()
+        deleted_objects =
+          Map.get(body, "DeleteResult", %{})
+          |> Map.get("Deleted", [])
+          |> List.wrap()
 
-        errors = Map.get(body, "DeleteResult", %{})
-                |> Map.get("Error", [])
-                |> List.wrap()
+        errors =
+          Map.get(body, "DeleteResult", %{})
+          |> Map.get("Error", [])
+          |> List.wrap()
 
         deleted_count = length(deleted_objects)
 
         if length(errors) > 0 do
           Logger.warning("S3 deletion had #{length(errors)} errors")
+
           Enum.each(errors, fn error ->
             key = Map.get(error, "Key", "unknown")
             code = Map.get(error, "Code", "unknown")
@@ -102,7 +114,8 @@ defmodule Heaters.Infrastructure.S3 do
 
       {:ok, response} ->
         Logger.warning("Unexpected S3 delete response: #{inspect(response)}")
-        {:ok, length(keys)}  # Assume success if no explicit errors
+        # Assume success if no explicit errors
+        {:ok, length(keys)}
 
       {:error, reason} ->
         Logger.error("S3 delete_multiple_objects failed: #{inspect(reason)}")
@@ -110,12 +123,13 @@ defmodule Heaters.Infrastructure.S3 do
     end
   end
 
-      defp get_s3_bucket_name do
+  defp get_s3_bucket_name do
     case Application.get_env(:heaters, :s3_bucket) do
       nil ->
-        raise "S3 bucket name not configured. Please set :s3_bucket in application config."
+        {:error, "S3 bucket name not configured. Please set :s3_bucket in application config."}
+
       bucket_name ->
-        bucket_name
+        {:ok, bucket_name}
     end
   end
 end

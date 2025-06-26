@@ -64,11 +64,13 @@ defmodule Heaters.Workers.GenericWorker do
         try do
           with :ok <- handle(args),
                :ok <- enqueue_next(args) do
-            duration_ms = System.convert_time_unit(
-              System.monotonic_time() - start_time,
-              :native,
-              :millisecond
-            )
+            duration_ms =
+              System.convert_time_unit(
+                System.monotonic_time() - start_time,
+                :native,
+                :millisecond
+              )
+
             Logger.info("#{module_name}: Job completed successfully in #{duration_ms}ms")
             :ok
           else
@@ -82,8 +84,14 @@ defmodule Heaters.Workers.GenericWorker do
           end
         rescue
           error ->
-            Logger.error("#{module_name}: Job crashed with exception: #{Exception.message(error)}")
-            Logger.error("#{module_name}: Exception details: #{Exception.format(:error, error, __STACKTRACE__)}")
+            Logger.error(
+              "#{module_name}: Job crashed with exception: #{Exception.message(error)}"
+            )
+
+            Logger.error(
+              "#{module_name}: Exception details: #{Exception.format(:error, error, __STACKTRACE__)}"
+            )
+
             {:error, Exception.message(error)}
         catch
           :exit, reason ->

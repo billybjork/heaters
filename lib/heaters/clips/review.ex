@@ -115,7 +115,10 @@ defmodule Heaters.Clips.Review do
         {:ok, {next_clip, %{clip_id: clip_id, action: db_action}}}
 
       {:error, reason} ->
-        Logger.error("Review: Failed to log review action for clip #{clip_id}: #{inspect(reason)}")
+        Logger.error(
+          "Review: Failed to log review action for clip #{clip_id}: #{inspect(reason)}"
+        )
+
         {:error, reason}
     end
   end
@@ -156,7 +159,10 @@ defmodule Heaters.Clips.Review do
         end)
 
       {:error, reason} ->
-        Logger.error("Review: Failed to log merge action for clips #{prev_id} and #{curr_id}: #{inspect(reason)}")
+        Logger.error(
+          "Review: Failed to log merge action for clips #{prev_id} and #{curr_id}: #{inspect(reason)}"
+        )
+
         {:error, reason}
     end
   end
@@ -192,7 +198,10 @@ defmodule Heaters.Clips.Review do
         end)
 
       {:error, reason} ->
-        Logger.error("Review: Failed to log group action for clips #{prev_id} and #{curr_id}: #{inspect(reason)}")
+        Logger.error(
+          "Review: Failed to log group action for clips #{prev_id} and #{curr_id}: #{inspect(reason)}"
+        )
+
         {:error, reason}
     end
   end
@@ -258,6 +267,4 @@ defmodule Heaters.Clips.Review do
     |> preload([c, ca], clip_artifacts: ca)
     |> Repo.all()
   end
-
-
 end

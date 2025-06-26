@@ -20,13 +20,19 @@ defmodule Heaters.Workers.Clips.ArchiveWorker do
       # 1. Delete files from S3 using Elixir S3 context
       case S3.delete_clip_and_artifacts(clip) do
         {:ok, deleted_count} ->
-          Logger.info("ArchiveWorker: Successfully deleted #{deleted_count} S3 objects for clip #{clip_id}")
+          Logger.info(
+            "ArchiveWorker: Successfully deleted #{deleted_count} S3 objects for clip #{clip_id}"
+          )
+
           # 2. If S3 deletion is successful, perform all DB changes in one transaction
           archive_in_database(clip)
 
         {:error, reason} ->
           # If S3 deletion fails, update the clip with an error and let Oban retry.
-          Logger.error("ArchiveWorker: S3 deletion failed for clip #{clip_id}: #{inspect(reason)}")
+          Logger.error(
+            "ArchiveWorker: S3 deletion failed for clip #{clip_id}: #{inspect(reason)}"
+          )
+
           ClipQueries.update_clip(clip, %{
             ingest_state: "archive_failed",
             last_error: "S3 Deletion Failed: #{inspect(reason)}"
@@ -71,7 +77,10 @@ defmodule Heaters.Workers.Clips.ArchiveWorker do
         :ok
 
       {:error, operation, reason, _changes} ->
-        Logger.error("ArchiveWorker: Database transaction failed at #{operation}: #{inspect(reason)}")
+        Logger.error(
+          "ArchiveWorker: Database transaction failed at #{operation}: #{inspect(reason)}"
+        )
+
         {:error, reason}
     end
   end

@@ -21,7 +21,7 @@ defmodule Heaters.Workers.PipelineConfig do
   alias Heaters.Workers.Videos.IngestWorker
   alias Heaters.Workers.Clips.{SpriteWorker, KeyframeWorker, EmbeddingWorker, ArchiveWorker}
 
-    @doc """
+  @doc """
   Returns the complete pipeline stage configuration.
 
   Each stage contains:
@@ -71,7 +71,7 @@ defmodule Heaters.Workers.PipelineConfig do
     ]
   end
 
-    @doc """
+  @doc """
   Returns just the stage labels for debugging/inspection.
 
   ## Examples

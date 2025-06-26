@@ -76,8 +76,6 @@ config :ex_aws, :s3,
   host: "s3.amazonaws.com",
   region: {:system, "AWS_REGION"}
 
-
-
 # Configure esbuild (the bundler used for JS/CSS)
 config :esbuild,
   # Use the latest appropriate version
