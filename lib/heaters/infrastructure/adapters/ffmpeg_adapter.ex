@@ -2,7 +2,7 @@ defmodule Heaters.Infrastructure.Adapters.FFmpegAdapter do
   @moduledoc """
   FFmpeg adapter providing consistent I/O interface for domain operations.
 
-  This adapter wraps the existing Transform.Shared.FFmpegRunner module with
+  This adapter wraps the existing Operations.Shared.FFmpegRunner module with
   standardized error handling and provides a clean interface for domain operations.
   All functions in this module perform I/O operations.
   """
@@ -15,7 +15,7 @@ defmodule Heaters.Infrastructure.Adapters.FFmpegAdapter do
   ## Examples
 
       {:ok, metadata} = FFmpegAdapter.get_video_metadata("/tmp/video.mp4")
-      %{duration: 120.0, fps: 30.0, width: 1920, height: 1080} = metadata
+      %{duration: 120.0, fps: 30.0, total_frames: 3600} = metadata
   """
   @spec get_video_metadata(String.t()) :: {:ok, map()} | {:error, any()}
   def get_video_metadata(video_path) when is_binary(video_path) do
@@ -174,51 +174,4 @@ defmodule Heaters.Infrastructure.Adapters.FFmpegAdapter do
         {:error, "Exception during video merge: #{inspect(e)}"}
     end
   end
-
-  # NOTE: These convenience functions are temporarily commented out due to dialyzer
-  # inference issues with FFmpegRunner.get_video_metadata/1. The core get_video_metadata/1
-  # function works fine and is used by the domain layer.
-
-  # @doc """
-  # Get video duration in seconds.
-  # Convenience function that extracts just the duration from metadata.
-  # """
-  # @spec get_video_duration(String.t()) :: {:ok, float()} | {:error, any()}
-  # def get_video_duration(video_path) when is_binary(video_path) do
-  #   case get_video_metadata(video_path) do
-  #     {:ok, %{duration: duration}} when is_number(duration) -> {:ok, duration}
-  #     {:ok, _metadata} -> {:error, "Duration not found in metadata"}
-  #     {:error, reason} -> {:error, reason}
-  #   end
-  # end
-
-  # @doc """
-  # Validate that a video file can be processed by FFmpeg.
-  # """
-  # @spec validate_video_file(String.t()) :: :ok | {:error, any()}
-  # def validate_video_file(video_path) when is_binary(video_path) do
-  #   case get_video_metadata(video_path) do
-  #     {:ok, metadata} ->
-  #       if valid_metadata?(metadata) do
-  #         :ok
-  #       else
-  #         {:error, "Invalid video metadata: #{inspect(metadata)}"}
-  #       end
-  #
-  #     {:error, reason} ->
-  #       {:error, reason}
-  #   end
-  # end
-
-  # Private helper functions
-
-  # NOTE: This helper function is temporarily unused due to the convenience functions
-  # being commented out above. Will be re-enabled when those functions are restored.
-
-  # defp valid_metadata?(%{duration: duration, fps: fps})
-  #      when is_number(duration) and is_number(fps) and duration > 0 and fps > 0 do
-  #   true
-  # end
-
-  # defp valid_metadata?(_), do: false
 end
