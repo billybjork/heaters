@@ -5,6 +5,37 @@ defmodule Heaters.Clips.Embed.Embedding do
   alias Heaters.Clips.Clip
   alias Pgvector.Ecto.Vector
 
+  defmodule EmbedResult do
+    @moduledoc """
+    Structured result type for Embed transform operations.
+    """
+
+    @enforce_keys [:status, :clip_id, :embedding_id]
+    defstruct [
+      :status,
+      :clip_id,
+      :embedding_id,
+      :model_name,
+      :generation_strategy,
+      :embedding_dim,
+      :metadata,
+      :duration_ms,
+      :processed_at
+    ]
+
+    @type t :: %__MODULE__{
+            status: String.t(),
+            clip_id: integer(),
+            embedding_id: integer() | nil,
+            model_name: String.t() | nil,
+            generation_strategy: String.t() | nil,
+            embedding_dim: integer() | nil,
+            metadata: map() | nil,
+            duration_ms: integer() | nil,
+            processed_at: DateTime.t() | nil
+          }
+  end
+
   @type t() :: %__MODULE__{
           id: integer(),
           clip_id: integer(),
