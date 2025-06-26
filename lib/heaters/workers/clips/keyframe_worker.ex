@@ -2,6 +2,7 @@ defmodule Heaters.Workers.Clips.KeyframeWorker do
   use Heaters.Workers.GenericWorker, queue: :media_processing
 
   alias Heaters.Clips.Transform.Keyframe
+  alias Heaters.Clips.Transform.Shared.Types
   alias Heaters.Clips.Queries, as: ClipQueries
   require Logger
 
@@ -24,14 +25,14 @@ defmodule Heaters.Workers.Clips.KeyframeWorker do
     with {:ok, clip} <- ClipQueries.get_clip_with_artifacts(clip_id),
          :ok <- check_idempotency(clip) do
       case Keyframe.run_keyframe_extraction(clip_id, strategy) do
-        {:ok, %Keyframe.KeyframeResult{status: "success", keyframe_count: count}} ->
+        {:ok, %Types.KeyframeResult{status: "success", keyframe_count: count}} ->
           Logger.info(
             "KeyframeWorker: Clip #{clip_id} keyframing completed successfully with #{count} keyframes"
           )
 
           :ok
 
-        {:ok, %Keyframe.KeyframeResult{status: status}} ->
+        {:ok, %Types.KeyframeResult{status: status}} ->
           Logger.error("KeyframeWorker: Keyframe extraction failed with status: #{status}")
           {:error, "Unexpected keyframe result status: #{status}"}
 

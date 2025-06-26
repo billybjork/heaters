@@ -21,9 +21,9 @@ defmodule Heaters.Clips do
       Clips.next_pending_review_clips(10)
       Clips.select_clip_and_fetch_next(clip, "approve")
 
-      # Transform operations
-      Clips.run_keyframe_extraction(clip_id, "multi")
-      Clips.run_merge(target_clip_id, source_clip_id)
+      # Transform operations (use dedicated modules)
+      Transform.Keyframe.run_keyframe_extraction(clip_id, "multi")
+      Transform.Merge.run_merge(target_clip_id, source_clip_id)
 
       # Embed operations
       Clips.generate_embeddings(clip_id)
@@ -54,11 +54,6 @@ defmodule Heaters.Clips do
   defdelegate complete_sprite_generation(clip_id, sprite_data \\ %{}), to: Transform
   defdelegate mark_sprite_failed(clip_id, error_reason), to: Transform
   defdelegate process_sprite_success(clip, result), to: Transform
-
-  # Keyframe state management (delegated to Transform)
-  defdelegate start_keyframing(clip_id), to: Transform
-  defdelegate complete_keyframing(clip_id), to: Transform
-  defdelegate mark_keyframe_failed(clip_id, error_reason), to: Transform
 
   # Embed operations
   defdelegate start_embedding(clip_id), to: Embed

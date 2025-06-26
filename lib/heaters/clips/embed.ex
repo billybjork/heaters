@@ -34,7 +34,9 @@ defmodule Heaters.Clips.Embed do
     Legacy alias for Heaters.Clips.Embed.Embedding.EmbedResult.
     Use Heaters.Clips.Embed.Embedding.EmbedResult directly for new code.
     """
-    defstruct Heaters.Clips.Embed.Embedding.EmbedResult.__struct__() |> Map.keys() |> Enum.reject(&(&1 == :__struct__))
+    defstruct Heaters.Clips.Embed.Embedding.EmbedResult.__struct__()
+              |> Map.keys()
+              |> Enum.reject(&(&1 == :__struct__))
 
     @type t :: Heaters.Clips.Embed.Embedding.EmbedResult.t()
   end

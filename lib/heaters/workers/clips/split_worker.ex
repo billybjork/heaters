@@ -2,18 +2,19 @@ defmodule Heaters.Workers.Clips.SplitWorker do
   use Heaters.Workers.GenericWorker, queue: :media_processing
 
   alias Heaters.Clips.Transform.Split
+  alias Heaters.Clips.Transform.Shared.Types
   alias Heaters.Workers.Clips.SpriteWorker
 
   @impl Heaters.Workers.GenericWorker
   def handle(%{"clip_id" => clip_id, "split_at_frame" => split_at_frame}) do
     case Split.run_split(clip_id, split_at_frame) do
-      {:ok, %Split.SplitResult{status: "success", new_clip_ids: new_clip_ids}}
+      {:ok, %Types.SplitResult{status: "success", new_clip_ids: new_clip_ids}}
       when is_list(new_clip_ids) ->
         # Store the new clip IDs for enqueue_next/1 to use
         Process.put(:new_clip_ids, new_clip_ids)
         :ok
 
-      {:ok, %Split.SplitResult{status: status}} ->
+      {:ok, %Types.SplitResult{status: status}} ->
         {:error, "Split finished with unexpected status: #{status}"}
 
       {:error, reason} ->

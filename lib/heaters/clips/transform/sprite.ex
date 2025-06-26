@@ -1,56 +1,28 @@
 defmodule Heaters.Clips.Transform.Sprite do
   @moduledoc """
-  Sprite sheet generation operations using FFmpeg via ffmpex.
+  Sprite sheet generation operations - pure business logic.
 
-  This module replicates the functionality from sprite.py, handling:
-  - Downloading clip videos from S3
-  - Extracting video metadata using ffprobe
-  - Generating sprite sheets using ffmpeg
-  - Uploading sprite artifacts to S3
-  - Managing clip state transitions
+  Generates video sprite sheets (image grids) for preview purposes using
+  configurable tile dimensions, frame sampling rates, and grid layouts.
+
+  Uses shared infrastructure modules for FFmpeg operations, S3 handling, and
+  temporary file management.
   """
 
-  import FFmpex
-  use FFmpex.Options
+  require Logger
 
   alias Heaters.Clips.Clip
   alias Heaters.Clips.Queries, as: ClipQueries
+  alias Heaters.Infrastructure.S3
+  alias Heaters.Clips.Transform.Shared.{Types, TempManager, FFmpegRunner}
   alias Heaters.Utils
-  require Logger
 
-  # Configuration constants matching sprite.py
+  # Business configuration matching original sprite.py
   @sprite_tile_width 480
   # -1 preserves aspect ratio
   @sprite_tile_height -1
   @sprite_fps 24
   @sprite_cols 5
-  # FFmpeg qscale:v value (lower = better quality)
-  @jpeg_quality 3
-
-  defmodule SpriteResult do
-    @moduledoc """
-    Structured result type for Sprite transform operations.
-    """
-
-    @enforce_keys [:status, :clip_id, :artifacts]
-    defstruct [
-      :status,
-      :clip_id,
-      :artifacts,
-      :metadata,
-      :duration_ms,
-      :processed_at
-    ]
-
-    @type t :: %__MODULE__{
-            status: String.t(),
-            clip_id: integer(),
-            artifacts: [map()],
-            metadata: map() | nil,
-            duration_ms: integer() | nil,
-            processed_at: DateTime.t() | nil
-          }
-  end
 
   @type sprite_params :: %{
           tile_width: integer(),
@@ -59,87 +31,66 @@ defmodule Heaters.Clips.Transform.Sprite do
           cols: integer()
         }
 
-  @type sprite_result :: %{
-          status: String.t(),
-          artifacts: list(map()),
-          metadata: map()
-        }
-
   @doc """
-  Main entry point for generating a sprite sheet for a clip.
+  Generates a sprite sheet for the specified clip.
 
-  This function orchestrates the entire sprite generation process:
-  1. Downloads the clip video from S3
-  2. Extracts video metadata using ffprobe
-  3. Generates a sprite sheet using ffmpeg
-  4. Uploads the sprite sheet to S3
-  5. Returns structured data about the sprite artifact
+  ## Parameters
+  - `clip_id`: The ID of the clip for sprite generation
+  - `sprite_params`: Optional sprite generation parameters
 
-  Args:
-    clip_id: The ID of the clip for sprite generation
-    sprite_params: Optional sprite generation parameters
-
-  Returns:
-    {:ok, result} on success with sprite artifact data
-    {:error, reason} on failure
+  ## Returns
+  - `{:ok, SpriteResult.t()}` on success with sprite artifact data
+  - `{:error, reason}` on failure
   """
-  @spec run_sprite(integer(), map()) :: {:ok, SpriteResult.t()} | {:error, any()}
+  @spec run_sprite(integer(), map()) :: {:ok, Types.SpriteResult.t()} | {:error, any()}
   def run_sprite(clip_id, sprite_params \\ %{}) do
     Logger.info("Sprite: Starting sprite generation for clip_id: #{clip_id}")
 
-    with {:ok, temp_dir} <- create_temp_directory() do
-      try do
-        with {:ok, clip} <- ClipQueries.get_clip_with_artifacts(clip_id),
-             {:ok, final_sprite_params} <- build_sprite_params(sprite_params),
-             {:ok, local_video_path} <- download_clip_video(clip, temp_dir),
-             {:ok, video_metadata} <- get_video_metadata(local_video_path),
-             {:ok, sprite_data} <-
-               generate_sprite_sheet(
-                 local_video_path,
-                 temp_dir,
-                 clip_id,
-                 final_sprite_params,
-                 video_metadata
-               ),
-             {:ok, uploaded_sprite_data} <- upload_sprite_sheet(sprite_data, clip) do
-          result = %SpriteResult{
-            status: "success",
-            clip_id: clip_id,
-            artifacts: [
-              %{
-                artifact_type: "sprite_sheet",
-                s3_key: uploaded_sprite_data.s3_key,
-                metadata: uploaded_sprite_data.metadata
-              }
-            ],
-            metadata: %{
-              sprite_generated: true
-            },
-            processed_at: DateTime.utc_now()
-          }
+    TempManager.with_temp_directory("sprite", fn temp_dir ->
+      with {:ok, clip} <- ClipQueries.get_clip_with_artifacts(clip_id),
+           {:ok, final_sprite_params} <- build_sprite_params(sprite_params),
+           {:ok, local_video_path} <- download_clip_video(clip, temp_dir),
+           {:ok, video_metadata} <- FFmpegRunner.get_video_metadata(local_video_path),
+           {:ok, sprite_data} <-
+             generate_sprite_sheet(
+               local_video_path,
+               temp_dir,
+               clip_id,
+               final_sprite_params,
+               video_metadata
+             ),
+           {:ok, uploaded_sprite_data} <- upload_sprite_sheet(sprite_data, clip) do
+        result = %Types.SpriteResult{
+          status: "success",
+          clip_id: clip_id,
+          artifacts: [
+            %{
+              artifact_type: "sprite_sheet",
+              s3_key: uploaded_sprite_data.s3_key,
+              metadata: uploaded_sprite_data.metadata
+            }
+          ],
+          metadata: %{
+            sprite_generated: true
+          },
+          duration_ms: nil,
+          processed_at: DateTime.utc_now()
+        }
 
-          Logger.info("Sprite: Successfully completed sprite generation for clip_id: #{clip_id}")
-          {:ok, result}
-        else
-          error ->
-            Logger.error(
-              "Sprite: Failed to generate sprite for clip_id: #{clip_id}, error: #{inspect(error)}"
-            )
+        Logger.info("Sprite: Successfully completed sprite generation for clip_id: #{clip_id}")
+        {:ok, result}
+      else
+        error ->
+          Logger.error(
+            "Sprite: Failed to generate sprite for clip_id: #{clip_id}, error: #{inspect(error)}"
+          )
 
-            error
-        end
-      after
-        Logger.info("Sprite: Cleaning up temp directory: #{temp_dir}")
-        File.rm_rf(temp_dir)
+          error
       end
-    else
-      error ->
-        Logger.error("Sprite: Could not create temp directory: #{inspect(error)}")
-        error
-    end
+    end)
   end
 
-  # Private functions implementing the core sprite logic
+  ## Private functions implementing sprite-specific business logic
 
   @spec build_sprite_params(map()) :: {:ok, sprite_params()} | {:error, any()}
   defp build_sprite_params(input_params) do
@@ -153,170 +104,23 @@ defmodule Heaters.Clips.Transform.Sprite do
     {:ok, sprite_params}
   end
 
-  @spec create_temp_directory() :: {:ok, String.t()} | {:error, any()}
-  defp create_temp_directory do
-    case System.tmp_dir() do
-      nil ->
-        {:error, "Could not access system temp directory"}
-
-      temp_root ->
-        temp_dir = Path.join(temp_root, "heaters_sprite_#{System.unique_integer([:positive])}")
-
-        case File.mkdir_p(temp_dir) do
-          :ok -> {:ok, temp_dir}
-          {:error, reason} -> {:error, "Failed to create temp directory: #{reason}"}
-        end
-    end
-  end
-
   @spec download_clip_video(Clip.t(), String.t()) :: {:ok, String.t()} | {:error, any()}
-  defp download_clip_video(%Clip{clip_filepath: s3_path} = _clip, temp_dir) do
+  defp download_clip_video(%Clip{clip_filepath: s3_path}, temp_dir) do
     local_filename = Path.basename(s3_path)
     local_path = Path.join(temp_dir, local_filename)
 
     Logger.info("Sprite: Downloading #{s3_path} to #{local_path}")
 
-    bucket_name = get_s3_bucket_name()
     s3_key = String.trim_leading(s3_path, "/")
 
-    try do
-      # Use streaming download for better memory efficiency with large files
-      file = File.open!(local_path, [:write, :binary])
-
-      try do
-        ExAws.S3.get_object(bucket_name, s3_key)
-        |> ExAws.stream!()
-        |> Enum.each(&IO.binwrite(file, &1))
-      after
-        File.close(file)
-      end
-
-      if File.exists?(local_path) do
+    case S3.download_file(s3_key, local_path, operation_name: "Sprite") do
+      {:ok, ^local_path} ->
         {:ok, local_path}
-      else
-        {:error, "Downloaded file does not exist at #{local_path}"}
-      end
-    rescue
-      error ->
-        Logger.error("Sprite: Failed to stream download from S3: #{Exception.message(error)}")
-        {:error, "Failed to download from S3: #{Exception.message(error)}"}
+
+      {:error, reason} ->
+        Logger.error("Sprite: Failed to download from S3: #{inspect(reason)}")
+        {:error, "Failed to download from S3: #{inspect(reason)}"}
     end
-  end
-
-  @spec get_video_metadata(String.t()) :: {:ok, map()} | {:error, any()}
-  defp get_video_metadata(video_path) do
-    Logger.info("Sprite: Probing video metadata: #{video_path}")
-
-    try do
-      # Use System.cmd to call ffprobe directly to get detailed metadata
-      # Replicating: ffprobe -v error -select_streams v:0 -show_entries stream=duration,r_frame_rate,nb_frames -count_frames -of json video_path
-      {output, exit_code} =
-        System.cmd("ffprobe", [
-          "-v",
-          "error",
-          "-select_streams",
-          "v:0",
-          "-show_entries",
-          "stream=duration,r_frame_rate,nb_frames",
-          "-count_frames",
-          "-of",
-          "json",
-          video_path
-        ])
-
-      if exit_code == 0 do
-        case Jason.decode(output) do
-          {:ok, %{"streams" => [probe_data | _]}} ->
-            parse_video_metadata(probe_data, video_path)
-
-          {:ok, %{"streams" => []}} ->
-            {:error, "ffprobe found no video streams in #{video_path}"}
-
-          {:error, reason} ->
-            {:error, "Failed to parse ffprobe JSON output: #{inspect(reason)}"}
-        end
-      else
-        Logger.error("Sprite: FFprobe command failed with exit code #{exit_code}")
-        {:error, "FFprobe command failed with exit code #{exit_code}"}
-      end
-    rescue
-      e ->
-        Logger.error("Sprite: Exception getting video metadata: #{Exception.message(e)}")
-        {:error, "Exception getting video metadata: #{Exception.message(e)}"}
-    end
-  end
-
-  @spec parse_video_metadata(map(), String.t()) :: {:ok, map()} | {:error, any()}
-  defp parse_video_metadata(probe_data, _video_path) do
-    Logger.debug("Sprite: ffprobe result: #{inspect(probe_data)}")
-
-    with {:ok, duration} <- extract_duration(probe_data),
-         {:ok, fps} <- extract_fps(probe_data),
-         {:ok, total_frames} <- extract_total_frames(probe_data, duration, fps) do
-      if duration <= 0 or fps <= 0 or total_frames <= 0 do
-        {:error,
-         "Invalid video metadata: duration=#{duration}s, fps=#{fps}, frames=#{total_frames}"}
-      else
-        metadata = %{
-          duration: duration,
-          fps: fps,
-          total_frames: total_frames
-        }
-
-        {:ok, metadata}
-      end
-    else
-      error -> error
-    end
-  end
-
-  defp extract_duration(%{"duration" => duration_str}) when is_binary(duration_str) do
-    case Float.parse(duration_str) do
-      {duration, ""} -> {:ok, duration}
-      _ -> {:error, "Could not parse duration: #{duration_str}"}
-    end
-  end
-
-  defp extract_duration(_), do: {:error, "Could not determine video duration"}
-
-  defp extract_fps(%{"r_frame_rate" => fps_str}) when is_binary(fps_str) do
-    case String.split(fps_str, "/") do
-      [num_str, den_str] ->
-        with {num, ""} <- Integer.parse(num_str),
-             {den, ""} <- Integer.parse(den_str),
-             true <- den > 0 do
-          {:ok, num / den}
-        else
-          _ -> {:error, "Invalid frame rate: #{fps_str}"}
-        end
-
-      _ ->
-        case Float.parse(fps_str) do
-          {fps, ""} -> {:ok, fps}
-          _ -> {:error, "Could not parse frame rate: #{fps_str}"}
-        end
-    end
-  end
-
-  defp extract_fps(_), do: {:error, "Could not determine frame rate"}
-
-  defp extract_total_frames(%{"nb_frames" => nb_frames_str}, _duration, _fps)
-       when is_binary(nb_frames_str) do
-    case Integer.parse(nb_frames_str) do
-      {total_frames, ""} when total_frames > 0 ->
-        Logger.info("Sprite: Using ffprobe nb_frames: #{total_frames}")
-        {:ok, total_frames}
-
-      _ ->
-        {:error, "Invalid nb_frames: #{nb_frames_str}"}
-    end
-  end
-
-  defp extract_total_frames(_, duration, fps) do
-    # Calculate from duration and fps as fallback
-    total_frames = ceil(duration * fps)
-    Logger.info("Sprite: Calculated total frames from duration*fps: #{total_frames}")
-    {:ok, total_frames}
   end
 
   @spec generate_sprite_sheet(String.t(), String.t(), integer(), sprite_params(), map()) ::
@@ -362,7 +166,7 @@ defmodule Heaters.Clips.Transform.Sprite do
         "Sprite: Parameters - fps: #{effective_sprite_fps}, frames: #{num_sprite_frames}, grid: #{cols}x#{num_rows}"
       )
 
-      case create_sprite_with_ffmpeg(
+      case FFmpegRunner.create_sprite_sheet(
              video_path,
              final_output_path,
              effective_sprite_fps,
@@ -396,80 +200,21 @@ defmodule Heaters.Clips.Transform.Sprite do
     end
   end
 
-  @spec create_sprite_with_ffmpeg(
-          String.t(),
-          String.t(),
-          float(),
-          integer(),
-          integer(),
-          integer(),
-          integer()
-        ) :: {:ok, integer()} | {:error, any()}
-  defp create_sprite_with_ffmpeg(
-         input_path,
-         output_path,
-         sprite_fps,
-         tile_width,
-         tile_height,
-         cols,
-         num_rows
-       ) do
-    try do
-      # Build FFmpeg video filter matching the Python implementation:
-      # vf_option = f"fps={effective_sprite_fps},scale={tile_width}:{tile_height}:flags=neighbor,tile={cols}x{num_rows}"
-      vf_filter =
-        "fps=#{sprite_fps},scale=#{tile_width}:#{tile_height}:flags=neighbor,tile=#{cols}x#{num_rows}"
-
-      # Create FFmpeg command matching the Python implementation exactly:
-      # ffmpeg -y -i input -vf "fps=...,scale=...,tile=..." -an -qscale:v 3 output.jpg
-      command =
-        FFmpex.new_command()
-        # Overwrite output file
-        |> add_global_option(option_y())
-        |> add_input_file(input_path)
-        |> add_output_file(output_path)
-        |> add_file_option(option_vf(vf_filter))
-        # No audio
-        |> add_file_option(option_an())
-        |> add_file_option(option_qscale("#{@jpeg_quality}:v"))
-
-      case FFmpex.execute(command) do
-        {:ok, _output} ->
-          # Verify the file was created and get its size
-          case File.stat(output_path) do
-            {:ok, %File.Stat{size: file_size}} ->
-              Logger.info(
-                "Sprite: Successfully generated sprite sheet: #{Path.basename(output_path)} (#{file_size} bytes)"
-              )
-
-              {:ok, file_size}
-
-            {:error, reason} ->
-              {:error, "Created sprite file not found: #{reason}"}
-          end
-
-        {:error, reason} ->
-          Logger.error("Sprite: FFmpeg failed: #{inspect(reason)}")
-          {:error, "FFmpeg sprite generation failed: #{inspect(reason)}"}
-      end
-    rescue
-      e ->
-        {:error, "Exception creating sprite sheet: #{inspect(e)}"}
-    end
-  end
-
   @spec upload_sprite_sheet(map(), Clip.t()) :: {:ok, map()} | {:error, any()}
   defp upload_sprite_sheet(sprite_data, %Clip{source_video_id: source_video_id, id: clip_id}) do
-    bucket_name = get_s3_bucket_name()
     output_prefix = "source_videos/#{source_video_id}/clips/#{clip_id}/sprites"
     s3_key = "#{output_prefix}/#{sprite_data.filename}"
 
-    Logger.info("Sprite: Uploading sprite sheet to s3://#{bucket_name}/#{s3_key}")
+    case S3.get_bucket_name() do
+      {:ok, bucket_name} ->
+        Logger.info("Sprite: Uploading sprite sheet to s3://#{bucket_name}/#{s3_key}")
 
-    case ExAws.S3.Upload.stream_file(sprite_data.local_path)
-         |> ExAws.S3.upload(bucket_name, s3_key)
-         |> ExAws.request() do
-      {:ok, _result} ->
+      {:error, _} ->
+        Logger.info("Sprite: Uploading sprite sheet to s3://[bucket_error]/#{s3_key}")
+    end
+
+    case S3.upload_file(sprite_data.local_path, s3_key, operation_name: "Sprite") do
+      {:ok, ^s3_key} ->
         uploaded_sprite_data = %{
           s3_key: s3_key,
           metadata:
@@ -485,17 +230,6 @@ defmodule Heaters.Clips.Transform.Sprite do
       {:error, reason} ->
         Logger.error("Sprite: Failed to upload sprite sheet: #{inspect(reason)}")
         {:error, "Failed to upload sprite sheet: #{inspect(reason)}"}
-    end
-  end
-
-  @spec get_s3_bucket_name() :: String.t()
-  defp get_s3_bucket_name do
-    case Application.get_env(:heaters, :s3_bucket) do
-      nil ->
-        raise "S3 bucket name not configured. Please set :s3_bucket in application config."
-
-      bucket_name ->
-        bucket_name
     end
   end
 end

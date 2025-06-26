@@ -1,70 +1,71 @@
 defmodule Heaters.Clips.Transform do
   @moduledoc """
-  Context for managing clip transformation operations and coordination.
+  Main coordination context for video clip transformation operations.
 
-  This module serves as the coordination layer for various clip transformation operations.
-  After Phase 2 refactoring, this module provides:
+  After the Transform context refactor, this module serves as a clean delegation
+  facade providing shared utilities and coordination functions used across
+  all transformation operations.
 
-  ## Core Responsibilities
-  - General transformation state management and error handling
-  - Shared utilities for artifact creation and S3 path management
-  - Coordination between different transformation operations
+  ## Architecture
 
-  ## Specific Transformation Modules
-  Specialized operations are handled by dedicated modules within this context:
+  This context follows a clean architecture with dedicated modules for each operation:
 
-  - **Keyframe extraction**: `Heaters.Clips.Transform.Keyframe`
-    - Extracts keyframes from video clips using Python OpenCV
-    - Manages keyframing workflow state transitions
-    - Creates keyframe artifacts for embedding generation
+  - **`Transform.Keyframe`** - Keyframe extraction using Python OpenCV
+  - **`Transform.Sprite`** - Sprite sheet generation using FFmpeg
+  - **`Transform.Split`** - Clip splitting using FFmpeg
+  - **`Transform.Merge`** - Clip merging using FFmpeg
 
-  - **Sprite generation**: `Heaters.Clips.Transform.Sprite`
-    - Generates video sprite sheets for preview
-    - Handles sprite-specific artifact management
+  ## Shared Infrastructure
 
-  - **Merge operations**: `Heaters.Clips.Transform.Merge`
-    - Merges multiple clips into a single clip
-    - Native Elixir implementation using FFmpeg
+  All transformation modules use centralized shared infrastructure:
 
-  - **Split operations**: `Heaters.Clips.Transform.Split`
-    - Splits clips at specific frame boundaries
-    - Native Elixir implementation using FFmpeg
+  - **`Transform.Shared.Types`** - Common result structs and type definitions
+  - **`Transform.Shared.TempManager`** - Temporary directory management
+  - **`Transform.Shared.FFmpegRunner`** - FFmpeg operation standardization
+  - **`Infrastructure.S3`** - S3 upload/download operations
 
-  ## Architecture Notes
-  This context follows CQRS principles with clear separation of concerns:
-  - Each transformation type has its own dedicated module
-  - Shared functionality is provided by this coordination module
-  - State management is handled consistently across all transformations
-  - Error handling and retry logic is centralized
+  ## This Module's Responsibilities
 
-  ## Usage Examples
+  This module provides shared utilities used by all transformation modules:
 
-      # General error handling (used by all transformation modules)
-      Transform.mark_failed(clip_id, "keyframe_failed", "OpenCV error")
+  - **Error handling** - `mark_failed/3` for consistent failure tracking
+  - **Artifact management** - `create_artifacts/3` for database artifact creation
+  - **S3 path management** - `build_artifact_prefix/2` for consistent S3 paths
+  - **Sprite workflow** - State management functions for sprite generation workflow
 
-      # Artifact management (used by all transformation modules)
-      Transform.create_artifacts(clip_id, "keyframe", artifacts_data)
+  ## Usage
 
-      # S3 path management (used by all transformation modules)
-      prefix = Transform.build_artifact_prefix(clip, "keyframes")
-
-  For specific operations, use the dedicated modules:
+  For specific transformations, use the dedicated modules:
 
       # Keyframe extraction
-      Keyframe.run_keyframe_extraction(clip_id, "multi")
+      {:ok, result} = Transform.Keyframe.run_keyframe_extraction(clip_id, "multi")
 
-      # Merge clips
-      Merge.run_merge([source_clip_id, target_clip_id])
+      # Sprite generation
+      {:ok, result} = Transform.Sprite.run_sprite(clip_id, %{})
 
-      # Split clip
-      Split.run_split(clip_id, split_frame)
+      # Clip splitting
+      {:ok, result} = Transform.Split.run_split(clip_id, split_params)
+
+      # Clip merging
+      {:ok, result} = Transform.Merge.run_merge(target_clip_id, source_clip_id)
+
+  For shared utilities (used internally by transformation modules):
+
+      # Error handling
+      Transform.mark_failed(clip_id, "keyframe_failed", "OpenCV error")
+
+      # Artifact creation
+      Transform.create_artifacts(clip_id, "keyframe", artifacts_data)
+
+      # S3 path management
+      prefix = Transform.build_artifact_prefix(clip, "keyframes")
   """
 
   alias Heaters.Repo
   alias Heaters.Clips.Clip
   alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Clips.Transform.ClipArtifact
-  alias Heaters.Clips.Transform.Sprite
+  alias Heaters.Clips.Transform.Shared.Types
   require Logger
 
   @doc """
@@ -188,29 +189,10 @@ defmodule Heaters.Clips.Transform do
       {:error, Exception.message(e)}
   end
 
-  # Private helper functions
-
-  defp update_clip(%Clip{} = clip, attrs) do
-    clip
-    |> Clip.changeset(attrs)
-    |> Repo.update()
-  end
-
-  defp build_artifact_attrs(clip_id, artifact_type, artifact_data) do
-    now = DateTime.utc_now()
-
-    %{
-      clip_id: clip_id,
-      artifact_type: artifact_type,
-      s3_key: Map.fetch!(artifact_data, :s3_key),
-      metadata: Map.get(artifact_data, :metadata, %{}),
-      inserted_at: now,
-      updated_at: now
-    }
-  end
-
-  defp format_error_message(error_reason) when is_binary(error_reason), do: error_reason
-  defp format_error_message(error_reason), do: inspect(error_reason)
+  ## Sprite Workflow Functions
+  ##
+  ## These functions manage the sprite generation workflow state transitions.
+  ## They are used by the SpriteWorker to coordinate sprite generation.
 
   @doc """
   Transition a clip to "generating_sprite" state for sprite generation.
@@ -266,15 +248,37 @@ defmodule Heaters.Clips.Transform do
   This is a convenience function for processing sprite success results
   from workers or direct calls.
   """
-  @spec process_sprite_success(Clip.t(), Sprite.SpriteResult.t()) ::
+  @spec process_sprite_success(Clip.t(), Types.SpriteResult.t()) ::
           {:ok, Clip.t()} | {:error, any()}
-  def process_sprite_success(%Clip{} = clip, %Sprite.SpriteResult{artifacts: artifacts}) do
+  def process_sprite_success(%Clip{} = clip, %Types.SpriteResult{artifacts: artifacts}) do
     # Convert SpriteResult to the map format expected by complete_sprite_generation
     sprite_data = %{"artifacts" => artifacts}
     complete_sprite_generation(clip.id, sprite_data)
   end
 
-  # Private helper functions
+  ## Private Helper Functions
+
+  defp update_clip(%Clip{} = clip, attrs) do
+    clip
+    |> Clip.changeset(attrs)
+    |> Repo.update()
+  end
+
+  defp build_artifact_attrs(clip_id, artifact_type, artifact_data) do
+    now = DateTime.utc_now()
+
+    %{
+      clip_id: clip_id,
+      artifact_type: artifact_type,
+      s3_key: Map.fetch!(artifact_data, :s3_key),
+      metadata: Map.get(artifact_data, :metadata, %{}),
+      inserted_at: now,
+      updated_at: now
+    }
+  end
+
+  defp format_error_message(error_reason) when is_binary(error_reason), do: error_reason
+  defp format_error_message(error_reason), do: inspect(error_reason)
 
   defp validate_sprite_transition(current_state) do
     case current_state do
@@ -295,56 +299,4 @@ defmodule Heaters.Clips.Transform do
   end
 
   defp maybe_create_sprite_artifacts(_clip_id, _sprite_data), do: {:ok, []}
-
-  @doc """
-  Transition a clip to "keyframing" state for keyframe extraction.
-  """
-  @spec start_keyframing(integer()) :: {:ok, Clip.t()} | {:error, any()}
-  def start_keyframing(clip_id) do
-    with {:ok, clip} <- ClipQueries.get_clip(clip_id),
-         :ok <- validate_keyframe_transition(clip.ingest_state) do
-      update_clip(clip, %{
-        ingest_state: "keyframing",
-        last_error: nil
-      })
-    end
-  end
-
-  @doc """
-  Mark keyframe extraction as complete and transition to keyframed state.
-
-  This function handles the successful completion of keyframe extraction
-  and transitions the clip to keyframed state.
-  """
-  @spec complete_keyframing(integer()) :: {:ok, Clip.t()} | {:error, any()}
-  def complete_keyframing(clip_id) do
-    with {:ok, clip} <- ClipQueries.get_clip(clip_id) do
-      update_clip(clip, %{
-        ingest_state: "keyframed",
-        keyframed_at: DateTime.utc_now(),
-        last_error: nil
-      })
-    end
-  end
-
-  @doc """
-  Mark keyframe extraction as failed.
-
-  This is a convenience function that calls the generic mark_failed/3
-  with keyframe-specific parameters.
-  """
-  @spec mark_keyframe_failed(integer(), any()) :: {:ok, Clip.t()} | {:error, any()}
-  def mark_keyframe_failed(clip_id, error_reason) do
-    mark_failed(clip_id, "keyframe_failed", error_reason)
-  end
-
-  # Private helper functions for keyframing
-
-  defp validate_keyframe_transition(current_state) do
-    case current_state do
-      "review_approved" -> :ok
-      "keyframe_failed" -> :ok
-      _ -> {:error, :invalid_state_transition}
-    end
-  end
 end

@@ -1,69 +1,35 @@
 defmodule Heaters.Clips.Transform.Keyframe do
   @moduledoc """
-  Context for keyframe extraction operations.
+  Keyframe extraction operations - pure business logic.
 
-  This module handles keyframe extraction workflows, including:
-  - State transitions for keyframing workflow
-  - Keyframe artifact creation and management
-  - Integration with Python keyframe extraction task
-  - Error handling and retry logic
+  Orchestrates keyframe extraction via Python OpenCV integration, managing
+  workflow state transitions and artifact creation for embedding generation.
+
+  Uses shared infrastructure modules for artifact management and result structures.
   """
+
+  require Logger
 
   alias Heaters.Repo
   alias Heaters.Clips.Clip
   alias Heaters.Clips.Queries, as: ClipQueries
-  alias Heaters.Clips.Transform.ClipArtifact
+  alias Heaters.Clips.Transform
+  alias Heaters.Clips.Transform.Shared.Types
   alias Heaters.Infrastructure.PyRunner
-  require Logger
-
-  defmodule KeyframeResult do
-    @moduledoc """
-    Structured result type for Keyframe transform operations.
-    """
-
-    @enforce_keys [:status, :clip_id, :artifacts]
-    defstruct [
-      :status,
-      :clip_id,
-      :artifacts,
-      :keyframe_count,
-      :strategy,
-      :metadata,
-      :duration_ms,
-      :processed_at
-    ]
-
-    @type t :: %__MODULE__{
-            status: String.t(),
-            clip_id: integer(),
-            artifacts: [map()],
-            keyframe_count: integer() | nil,
-            strategy: String.t() | nil,
-            metadata: map() | nil,
-            duration_ms: integer() | nil,
-            processed_at: DateTime.t() | nil
-          }
-  end
 
   @doc """
-  Main entry point for keyframe extraction workflow.
+  Runs keyframe extraction workflow for the specified clip.
 
-  This orchestrates the complete keyframe extraction process:
-  1. Validates clip state and transitions to "keyframing"
-  2. Calls Python keyframe extraction script
-  3. Processes results and creates artifacts
-  4. Handles errors and state transitions
+  ## Parameters
+  - `clip_id`: The ID of the clip to extract keyframes from
+  - `strategy`: Keyframe extraction strategy ("midpoint" or "multi")
 
-  Args:
-    clip_id: The ID of the clip to extract keyframes from
-    strategy: Keyframe extraction strategy ("midpoint" or "multi")
-
-  Returns:
-    {:ok, clip} on success
-    {:error, reason} on failure
+  ## Returns
+  - `{:ok, KeyframeResult.t()}` on success
+  - `{:error, reason}` on failure
   """
   @spec run_keyframe_extraction(integer(), String.t()) ::
-          {:ok, KeyframeResult.t()} | {:error, any()}
+          {:ok, Types.KeyframeResult.t()} | {:error, any()}
   def run_keyframe_extraction(clip_id, strategy \\ "multi") do
     Logger.info(
       "Keyframe: Starting keyframe extraction for clip_id: #{clip_id}, strategy: #{strategy}"
@@ -75,7 +41,7 @@ defmodule Heaters.Clips.Transform.Keyframe do
       py_args = %{
         clip_id: updated_clip.id,
         input_s3_path: String.trim_leading(updated_clip.clip_filepath, "/"),
-        output_s3_prefix: build_keyframe_prefix(updated_clip),
+        output_s3_prefix: Transform.build_artifact_prefix(updated_clip, "keyframes"),
         keyframe_params: %{
           strategy: strategy,
           count: if(strategy == "multi", do: 3, else: 1)
@@ -85,20 +51,20 @@ defmodule Heaters.Clips.Transform.Keyframe do
       case PyRunner.run("keyframe", py_args) do
         {:ok, result} ->
           Logger.info("Keyframe: Python extraction succeeded for clip_id: #{clip_id}")
-          process_keyframe_success(updated_clip, result)
+          process_keyframe_success(updated_clip, result, strategy)
 
         {:error, reason} ->
           Logger.error(
             "Keyframe: Python extraction failed for clip_id: #{clip_id}, reason: #{inspect(reason)}"
           )
 
-          mark_keyframe_failed(updated_clip.id, reason)
+          Transform.mark_failed(updated_clip.id, "keyframe_failed", reason)
       end
     end
   end
 
   @doc """
-  Transition a clip to "keyframing" state.
+  Transitions a clip to "keyframing" state.
   """
   @spec start_keyframing(integer()) :: {:ok, Clip.t()} | {:error, any()}
   def start_keyframing(clip_id) do
@@ -112,7 +78,7 @@ defmodule Heaters.Clips.Transform.Keyframe do
   end
 
   @doc """
-  Mark a clip as successfully keyframed and create keyframe artifacts.
+  Marks a clip as successfully keyframed.
   """
   @spec complete_keyframing(integer()) :: {:ok, Clip.t()} | {:error, any()}
   def complete_keyframing(clip_id) do
@@ -126,69 +92,38 @@ defmodule Heaters.Clips.Transform.Keyframe do
   end
 
   @doc """
-  Mark a clip as failed during keyframe extraction.
+  Checks if a clip already has keyframe artifacts to avoid duplicate work.
   """
-  @spec mark_keyframe_failed(integer(), any()) :: {:ok, Clip.t()} | {:error, any()}
-  def mark_keyframe_failed(clip_id, error_reason) do
-    error_message = format_error_message(error_reason)
-
-    with {:ok, clip} <- ClipQueries.get_clip(clip_id) do
-      update_clip(clip, %{
-        ingest_state: "keyframe_failed",
-        last_error: error_message,
-        retry_count: (clip.retry_count || 0) + 1
-      })
-    end
+  @spec has_keyframe_artifacts?(Clip.t()) :: boolean()
+  def has_keyframe_artifacts?(%Clip{clip_artifacts: artifacts}) when is_list(artifacts) do
+    Enum.any?(artifacts, &(&1.artifact_type == "keyframe"))
   end
 
+  def has_keyframe_artifacts?(_clip), do: false
+
   @doc """
-  Create keyframe artifacts from processing results.
+  Checks if a clip is ready for keyframe extraction.
   """
-  @spec create_keyframe_artifacts(integer(), list(map())) ::
-          {:ok, list(ClipArtifact.t())} | {:error, any()}
-  def create_keyframe_artifacts(clip_id, artifacts_data) when is_list(artifacts_data) do
-    Logger.info(
-      "Keyframe: Creating #{length(artifacts_data)} keyframe artifacts for clip_id: #{clip_id}"
-    )
-
-    artifacts_attrs =
-      artifacts_data
-      |> Enum.map(fn artifact_data ->
-        build_keyframe_artifact_attrs(clip_id, artifact_data)
-      end)
-
-    case Repo.insert_all(ClipArtifact, artifacts_attrs, returning: true) do
-      {count, artifacts} when count > 0 ->
-        Logger.info(
-          "Keyframe: Successfully created #{count} keyframe artifacts for clip_id: #{clip_id}"
-        )
-
-        {:ok, artifacts}
-
-      {0, _} ->
-        Logger.error("Keyframe: Failed to create keyframe artifacts for clip_id: #{clip_id}")
-        {:error, "No artifacts were created"}
-    end
-  rescue
-    e ->
-      Logger.error(
-        "Keyframe: Error creating keyframe artifacts for clip_id #{clip_id}: #{Exception.message(e)}"
-      )
-
-      {:error, Exception.message(e)}
+  @spec ready_for_keyframing?(Clip.t()) :: boolean()
+  def ready_for_keyframing?(%Clip{ingest_state: state}) do
+    state in ["review_approved", "keyframe_failed"]
   end
 
-  @doc """
-  Process successful keyframe results from Python task.
-  """
-  @spec process_keyframe_success(Clip.t(), map()) :: {:ok, KeyframeResult.t()} | {:error, any()}
-  def process_keyframe_success(%Clip{} = clip, result) do
+  ## Private functions implementing keyframe-specific business logic
+
+  @spec process_keyframe_success(Clip.t(), map(), String.t()) ::
+          {:ok, Types.KeyframeResult.t()} | {:error, any()}
+  defp process_keyframe_success(%Clip{} = clip, result, strategy) do
     start_time = System.monotonic_time()
 
     case Repo.transaction(fn ->
            with {:ok, updated_clip} <- complete_keyframing(clip.id),
                 {:ok, artifacts} <-
-                  create_keyframe_artifacts(clip.id, Map.get(result, "artifacts", [])) do
+                  Transform.create_artifacts(
+                    clip.id,
+                    "keyframe",
+                    Map.get(result, "artifacts", [])
+                  ) do
              Logger.info(
                "Keyframe: Successfully completed keyframe extraction for clip_id: #{clip.id}"
              )
@@ -207,7 +142,7 @@ defmodule Heaters.Clips.Transform.Keyframe do
         duration_ms =
           System.convert_time_unit(System.monotonic_time() - start_time, :native, :millisecond)
 
-        keyframe_result = %KeyframeResult{
+        keyframe_result = %Types.KeyframeResult{
           status: "success",
           clip_id: clip.id,
           artifacts:
@@ -219,7 +154,7 @@ defmodule Heaters.Clips.Transform.Keyframe do
               }
             end),
           keyframe_count: length(artifacts),
-          strategy: get_in(result, ["keyframe_params", "strategy"]) || "multi",
+          strategy: strategy,
           metadata: Map.get(result, "metadata", %{}),
           duration_ms: duration_ms,
           processed_at: DateTime.utc_now()
@@ -231,34 +166,6 @@ defmodule Heaters.Clips.Transform.Keyframe do
         {:error, reason}
     end
   end
-
-  @doc """
-  Build S3 prefix for keyframe outputs.
-  """
-  @spec build_keyframe_prefix(Clip.t()) :: String.t()
-  def build_keyframe_prefix(%Clip{id: id, source_video_id: source_video_id}) do
-    "source_videos/#{source_video_id}/clips/#{id}/keyframes"
-  end
-
-  @doc """
-  Check if a clip already has keyframe artifacts to avoid duplicate work.
-  """
-  @spec has_keyframe_artifacts?(Clip.t()) :: boolean()
-  def has_keyframe_artifacts?(%Clip{clip_artifacts: artifacts}) when is_list(artifacts) do
-    Enum.any?(artifacts, &(&1.artifact_type == "keyframe"))
-  end
-
-  def has_keyframe_artifacts?(_clip), do: false
-
-  @doc """
-  Check if a clip is ready for keyframe extraction.
-  """
-  @spec ready_for_keyframing?(Clip.t()) :: boolean()
-  def ready_for_keyframing?(%Clip{ingest_state: state}) do
-    state in ["review_approved", "keyframe_failed"]
-  end
-
-  # Private helper functions
 
   defp update_clip(%Clip{} = clip, attrs) do
     clip
@@ -287,20 +194,4 @@ defmodule Heaters.Clips.Transform.Keyframe do
         {:error, :invalid_state_transition}
     end
   end
-
-  defp build_keyframe_artifact_attrs(clip_id, artifact_data) do
-    now = DateTime.utc_now()
-
-    %{
-      clip_id: clip_id,
-      artifact_type: Map.get(artifact_data, "artifact_type", "keyframe"),
-      s3_key: Map.fetch!(artifact_data, "s3_key"),
-      metadata: Map.get(artifact_data, "metadata", %{}),
-      inserted_at: now,
-      updated_at: now
-    }
-  end
-
-  defp format_error_message(error_reason) when is_binary(error_reason), do: error_reason
-  defp format_error_message(error_reason), do: inspect(error_reason)
 end

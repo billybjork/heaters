@@ -2,6 +2,7 @@ defmodule Heaters.Workers.Clips.MergeWorker do
   use Heaters.Workers.GenericWorker, queue: :media_processing
 
   alias Heaters.Clips.Transform.Merge
+  alias Heaters.Clips.Transform.Shared.Types
   alias Heaters.Workers.Clips.SpriteWorker
   require Logger
 
@@ -53,7 +54,7 @@ defmodule Heaters.Workers.Clips.MergeWorker do
   @dialyzer {:nowarn_function, handle_merge_result: 3}
   defp handle_merge_result(merge_result, clip_id_target, clip_id_source) do
     case merge_result do
-      {:ok, %Merge.MergeResult{status: "success", merged_clip_id: merged_clip_id}}
+      {:ok, %Types.MergeResult{status: "success", merged_clip_id: merged_clip_id}}
       when is_integer(merged_clip_id) ->
         Logger.info(
           "MergeWorker: Merge succeeded for clips #{clip_id_target}, #{clip_id_source}. New clip: #{merged_clip_id}"
@@ -63,7 +64,7 @@ defmodule Heaters.Workers.Clips.MergeWorker do
         Process.put(:merged_clip_id, merged_clip_id)
         :ok
 
-      {:ok, %Merge.MergeResult{status: status}} ->
+      {:ok, %Types.MergeResult{status: status}} ->
         Logger.error("MergeWorker: Merge finished with unexpected status: #{status}")
         {:error, "Unexpected merge result status: #{status}"}
 
