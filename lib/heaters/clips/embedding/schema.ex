@@ -20,7 +20,8 @@ defmodule Heaters.Clips.Embedding.Schema do
           model_version: String.t() | nil,
           generation_strategy: String.t(),
           embedding_dim: integer() | nil,
-          generated_at: DateTime.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t(),
           clip: Heaters.Clips.Clip.t() | Ecto.Association.NotLoaded.t()
         }
 
@@ -34,7 +35,7 @@ defmodule Heaters.Clips.Embedding.Schema do
     field(:generation_strategy, :string)
     field(:embedding_dim, :integer)
 
-    timestamps(type: :utc_datetime, inserted_at: :generated_at, updated_at: false)
+    timestamps(type: :utc_datetime)
   end
 
   @required_fields ~w(clip_id model_name generation_strategy embedding)a

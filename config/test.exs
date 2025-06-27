@@ -1,8 +1,13 @@
 import Config
+
+# ───────────────────────────────────────────
+#  Test Environment Configuration
+# ───────────────────────────────────────────
+
+# Disable Oban job processing during tests
 config :heaters, Oban, testing: :manual
 
-# Configure your database
-#
+# Configure test database
 # The MIX_TEST_PARTITION environment variable can be used
 # to provide built-in test partitioning in CI environment.
 # Run `mix help test` for more information.
@@ -11,11 +16,18 @@ config :heaters, Heaters.Repo,
   password: System.get_env("TEST_DB_PASSWORD") || "postgres",
   hostname: System.get_env("TEST_DB_HOST") || "localhost",
   port: String.to_integer(System.get_env("TEST_DB_PORT") || "5432"),
-  database:
-    (System.get_env("TEST_DB_NAME") || "heaters_test") <>
-      "#{System.get_env("MIX_TEST_PARTITION")}",
+  database: (System.get_env("TEST_DB_NAME") || "heaters_test") <> "#{System.get_env("MIX_TEST_PARTITION")}",
   pool: Ecto.Adapters.SQL.Sandbox,
-  pool_size: 10
+  pool_size: System.schedulers_online() * 2,
+  # Improve test performance
+  ownership_timeout: 60_000,
+  timeout: 30_000,
+  queue_target: 1000,
+  queue_interval: 1000,
+  # Ensure clean state for each test
+  prepare: :named,
+  # Use UTC for consistency
+  show_sensitive_data_on_connection_error: true
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.

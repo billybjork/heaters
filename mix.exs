@@ -91,7 +91,17 @@ defmodule Heaters.MixProject do
         "cmd npm run --prefix assets deploy",
         "phx.digest"
       ],
-      test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"]
+      test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
+      # Development workflow aliases (Docker-aware)
+      "dev.setup": ["cmd --cd . docker-compose up -d --wait", "deps.get", "ecto.setup"],
+      "dev.reset": ["cmd --cd . docker-compose up -d --wait", "ecto.reset"],
+      "dev.server": ["cmd --cd . docker-compose up -d --wait", "phx.server"],
+      # Check overall code quality
+      check: [
+        "compile --warnings-as-errors",
+        "format --check-formatted",
+        "test --warnings-as-errors"
+      ]
     ]
   end
 end

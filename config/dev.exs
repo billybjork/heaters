@@ -3,18 +3,57 @@ import Config
 # ───────────────────────────────────────────
 #  Database — local Docker Postgres for dev
 # ───────────────────────────────────────────
-# Configuration for development database connection to the Docker container
-# These settings match the PostgreSQL service defined in docker-compose.yaml
-config :heaters, Heaters.Repo,
-  username: "dev_user",
-  password: "dev_password",
-  hostname: "app-db-dev",
-  database: "heaters_dev_db",
-  port: 5432,
-  stacktrace: true,
-  show_sensitive_data_on_connection_error: true,
-  pool_size: 10,
-  ssl: false
+# Configuration for development database connection
+# Supports both DATABASE_URL and individual connection parameters
+
+# First try DEV_DATABASE_URL from .env, then fall back to individual parameters
+case System.get_env("DEV_DATABASE_URL") do
+  nil ->
+    # Fallback to individual connection parameters
+    # Check if we're running inside Docker or have Docker Compose running
+    in_docker = System.get_env("DOCKER_ENV") == "true"
+    use_docker_db = System.get_env("USE_DOCKER_DB") != "false"
+
+    {hostname, port} =
+      cond do
+        in_docker ->
+          # Running inside Docker container, connect to service name
+          {"app-db-dev", 5432}
+        use_docker_db ->
+          # Running locally but using Docker Compose database
+          {"localhost", 5433}
+        true ->
+          # Local PostgreSQL setup
+          {"localhost", 5432}
+      end
+
+    config :heaters, Heaters.Repo,
+      username: System.get_env("DEV_DB_USER") || "dev_user",
+      password: System.get_env("DEV_DB_PASSWORD") || "dev_password",
+      hostname: System.get_env("DEV_DB_HOST") || hostname,
+      database: System.get_env("DEV_DB_NAME") || "heaters_dev_db",
+      port: System.get_env("DEV_DB_PORT") |> then(&if &1, do: String.to_integer(&1), else: port),
+      stacktrace: true,
+      show_sensitive_data_on_connection_error: true,
+      pool_size: String.to_integer(System.get_env("DEV_DB_POOL_SIZE") || "10"),
+      ssl: false,
+      # Performance optimizations for development
+      timeout: 15_000,
+      queue_target: 5000,
+      queue_interval: 1000
+
+  dev_database_url ->
+    # Use DEV_DATABASE_URL from .env (preferred method)
+    config :heaters, Heaters.Repo,
+      url: dev_database_url,
+      stacktrace: true,
+      show_sensitive_data_on_connection_error: true,
+      pool_size: String.to_integer(System.get_env("DEV_DB_POOL_SIZE") || "10"),
+      # Performance optimizations for development
+      timeout: 15_000,
+      queue_target: 5000,
+      queue_interval: 1000
+end
 
 # ───────────────────────────────────────────
 #  Phoenix endpoint

@@ -8,8 +8,8 @@ defmodule Heaters.Events.ClipEvent do
           event_data: map() | nil,
           clip_id: integer(),
           clip: Heaters.Clips.Clip.t() | Ecto.Association.NotLoaded.t(),
-          created_at: DateTime.t(),
-          updated_at: NaiveDateTime.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t(),
           processed_at: DateTime.t() | nil
         }
 
@@ -21,8 +21,7 @@ defmodule Heaters.Events.ClipEvent do
 
     belongs_to(:clip, Heaters.Clips.Clip)
 
-    field(:created_at, :utc_datetime)
-    field(:updated_at, :naive_datetime)
+    timestamps(type: :utc_datetime)
   end
 
   @doc false

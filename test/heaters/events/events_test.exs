@@ -22,7 +22,7 @@ defmodule Heaters.EventsTest do
       assert event.reviewer_id == "admin"
       assert event.event_data == %{}
       assert event.processed_at == nil
-      refute is_nil(event.created_at)
+      refute is_nil(event.inserted_at)
     end
 
     test "creates event with event_data", %{clip: clip} do
