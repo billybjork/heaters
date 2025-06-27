@@ -15,11 +15,6 @@ defmodule Heaters.MixProject do
           steps: [:assemble],
           include_executables: true
         ]
-      ],
-      # Suppress spitfire warnings about private Elixir macros
-      elixirc_options: [
-        warnings_as_errors: false,
-        no_warn_undefined: [Macro.Env]
       ]
     ]
   end
@@ -57,7 +52,6 @@ defmodule Heaters.MixProject do
       {:floki, ">= 0.30.0", only: :test},
       {:phoenix_live_dashboard, "~> 0.8.2"},
       {:oban, "~> 2.19"},
-      {:igniter, "~> 0.2"},
       {:telemetry_metrics, "~> 0.6"},
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 0.20"},
@@ -70,7 +64,6 @@ defmodule Heaters.MixProject do
       {:sweet_xml, "~> 0.7"},
       {:ffmpex, "~> 0.11.0"},
       {:dialyxir, "~> 1.4", only: [:dev], runtime: false},
-      {:spitfire, "~> 0.2.1", override: true},
       {:stream_data, "~> 1.1", only: :test}
     ]
   end
