@@ -1,4 +1,4 @@
-defmodule Heaters.Clips.Operations.Sprite do
+defmodule Heaters.Clips.Operations.Artifacts.Sprite do
   @moduledoc """
   Sprite sheet generation operations - I/O orchestration.
 
@@ -16,7 +16,7 @@ defmodule Heaters.Clips.Operations.Sprite do
   require Logger
 
   # Domain modules (pure business logic)
-  alias Heaters.Clips.Operations.Sprite.{Calculations, Validation, FileNaming}
+  alias Heaters.Clips.Operations.Artifacts.Sprite.{Calculations, Validation, FileNaming}
   alias Heaters.Clips.Operations.Shared.{ResultBuilding, ErrorFormatting}
 
   # Infrastructure adapters (I/O operations)
@@ -38,7 +38,7 @@ defmodule Heaters.Clips.Operations.Sprite do
 
   ## Examples
 
-      {:ok, result} = Operations.Sprite.run_sprite(123, %{tile_width: 640, fps: 30})
+      {:ok, result} = Operations.Artifacts.Sprite.run_sprite(123, %{tile_width: 640, fps: 30})
       result.status # => "success"
   """
   @spec run_sprite(integer(), map()) :: {:ok, Types.SpriteResult.t()} | {:error, any()}

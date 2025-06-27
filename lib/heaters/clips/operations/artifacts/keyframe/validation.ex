@@ -1,7 +1,7 @@
-defmodule Heaters.Clips.Operations.Keyframe.Validation do
+defmodule Heaters.Clips.Operations.Artifacts.Keyframe.Validation do
   @moduledoc """
-  Pure domain functions for keyframe extraction validation.
-  Used by Operations.Keyframe for business logic.
+  Validation logic for keyframe operations.
+  Used by Operations.Artifacts.Keyframe for business logic.
   """
 
   alias Heaters.Clips.Operations.Shared.ClipValidation

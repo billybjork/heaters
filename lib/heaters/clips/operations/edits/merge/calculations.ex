@@ -1,7 +1,7 @@
-defmodule Heaters.Clips.Operations.Merge.Calculations do
+defmodule Heaters.Clips.Operations.Edits.Merge.Calculations do
   @moduledoc """
   Pure domain functions for merge operation calculations.
-  Used by Operations.Merge for business logic.
+  Used by Operations.Edits.Merge for business logic.
   """
 
   @type merge_timeline :: %{

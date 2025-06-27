@@ -1,11 +1,11 @@
-defmodule Heaters.Clips.Operations.Split.FileNaming do
+defmodule Heaters.Clips.Operations.Edits.Split.FileNaming do
   @moduledoc """
   Pure domain functions for split operation file naming.
-  Used by Operations.Split for business logic.
+  Used by Operations.Edits.Split for business logic.
   """
 
   alias Heaters.Utils
-  alias Heaters.Clips.Operations.Split.Calculations
+  alias Heaters.Clips.Operations.Edits.Split.Calculations
 
   @doc """
   Generates filename for a split clip segment.

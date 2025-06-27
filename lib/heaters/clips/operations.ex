@@ -7,14 +7,23 @@ defmodule Heaters.Clips.Operations do
 
   ## Architecture
 
-  This context follows a clean architecture with dedicated modules for each operation:
+  This context is organized into two main subcontexts based on operation type:
 
-  - **`Operations.Keyframe`** - Keyframe extraction using Python OpenCV
-  - **`Operations.Sprite`** - Sprite sheet generation using FFmpeg
-  - **`Operations.Split`** - Clip splitting using FFmpeg
-  - **`Operations.Merge`** - Clip merging using FFmpeg
+  ### Clip Edits (User Actions → New Clips)
+  - **`Operations.Edits.Merge`** - Clip merging using FFmpeg concat
+  - **`Operations.Edits.Split`** - Clip splitting using FFmpeg
+  - Triggered by user review actions
+  - Creates new clip records that re-enter the pipeline
+  - Writes to the `clips` table
 
-  ## Shared Infrastructure
+  ### Artifact Generation (Pipeline Stages → Supplementary Data)
+  - **`Operations.Artifacts.Keyframe`** - Keyframe extraction using Python OpenCV
+  - **`Operations.Artifacts.Sprite`** - Sprite sheet generation using FFmpeg
+  - Triggered by pipeline state transitions
+  - Creates supplementary data for existing clips
+  - Writes to the `clip_artifacts` table
+
+  ### Shared Infrastructure
 
   All operation modules use centralized shared infrastructure:
 
@@ -34,19 +43,21 @@ defmodule Heaters.Clips.Operations do
 
   ## Usage
 
-  For specific operations, use the dedicated modules:
-
-      # Keyframe extraction
-      {:ok, result} = Operations.Keyframe.run_keyframe_extraction(clip_id, "multi")
-
-      # Sprite generation
-      {:ok, result} = Operations.Sprite.run_sprite(clip_id, %{})
-
-      # Clip splitting
-      {:ok, result} = Operations.Split.run_split(clip_id, split_params)
+  For clip edits (review workflow):
 
       # Clip merging
-      {:ok, result} = Operations.Merge.run_merge(target_clip_id, source_clip_id)
+      {:ok, result} = Operations.Edits.Merge.run_merge(target_clip_id, source_clip_id)
+
+      # Clip splitting
+      {:ok, result} = Operations.Edits.Split.run_split(clip_id, split_at_frame)
+
+  For artifact generation (pipeline stages):
+
+      # Keyframe extraction
+      {:ok, result} = Operations.Artifacts.Keyframe.run_keyframe_extraction(clip_id, "multi")
+
+      # Sprite generation
+      {:ok, result} = Operations.Artifacts.Sprite.run_sprite(clip_id, %{})
 
   For shared utilities (used internally by operation modules):
 
@@ -63,7 +74,7 @@ defmodule Heaters.Clips.Operations do
   alias Heaters.Repo
   alias Heaters.Clips.Clip
   alias Heaters.Clips.Queries, as: ClipQueries
-  alias Heaters.Clips.Operations.ClipArtifact
+  alias Heaters.Clips.Operations.Artifacts.ClipArtifact
   alias Heaters.Clips.Operations.Shared.Types
   require Logger
 

@@ -1,4 +1,4 @@
-defmodule Heaters.Clips.Operations.Keyframe do
+defmodule Heaters.Clips.Operations.Artifacts.Keyframe do
   @moduledoc """
   Keyframe extraction operations - I/O orchestration layer.
 
@@ -16,7 +16,7 @@ defmodule Heaters.Clips.Operations.Keyframe do
   alias Heaters.Clips.Operations.Shared.Types
 
   # Domain modules (pure business logic)
-  alias Heaters.Clips.Operations.Keyframe.{Strategy, Validation, PythonArgs}
+  alias Heaters.Clips.Operations.Artifacts.Keyframe.{Strategy, Validation, PythonArgs}
   alias Heaters.Clips.Operations.Shared.{ResultBuilding, ErrorFormatting}
 
   # Infrastructure adapters (I/O operations)

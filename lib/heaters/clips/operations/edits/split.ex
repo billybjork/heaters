@@ -1,4 +1,4 @@
-defmodule Heaters.Clips.Operations.Split do
+defmodule Heaters.Clips.Operations.Edits.Split do
   @moduledoc """
   Video split operations - I/O orchestration layer.
 
@@ -15,7 +15,7 @@ defmodule Heaters.Clips.Operations.Split do
   alias Heaters.Clips.Operations.Shared.{Types, TempManager, FFmpegRunner}
 
   # Domain modules (pure business logic)
-  alias Heaters.Clips.Operations.Split.{Calculations, Validation, FileNaming}
+  alias Heaters.Clips.Operations.Edits.Split.{Calculations, Validation, FileNaming}
   alias Heaters.Clips.Operations.Shared.ResultBuilding
 
   # Infrastructure adapters (I/O operations)

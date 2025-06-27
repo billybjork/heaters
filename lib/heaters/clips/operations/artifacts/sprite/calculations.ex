@@ -1,6 +1,7 @@
-defmodule Heaters.Clips.Operations.Sprite.Calculations do
+defmodule Heaters.Clips.Operations.Artifacts.Sprite.Calculations do
   @moduledoc """
-  Pure domain functions for sprite sheet calculations and grid layout.
+  Calculation logic for sprite operations.
+  Used by Operations.Artifacts.Sprite for business logic.
 
   This module contains business logic for sprite sheet generation
   extracted from the Operations.Sprite module. All functions are pure - they take

@@ -1,4 +1,4 @@
-defmodule Heaters.Clips.Operations.ClipArtifact do
+defmodule Heaters.Clips.Operations.Artifacts.ClipArtifact do
   use Heaters.Schema
 
   @type t() :: %__MODULE__{

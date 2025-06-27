@@ -1,4 +1,4 @@
-defmodule Heaters.Clips.Operations.Sprite.FileNaming do
+defmodule Heaters.Clips.Operations.Artifacts.Sprite.FileNaming do
   @moduledoc """
   Pure sprite file naming functions with no side effects.
 

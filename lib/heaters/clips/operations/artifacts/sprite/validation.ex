@@ -1,13 +1,14 @@
-defmodule Heaters.Clips.Operations.Sprite.Validation do
+defmodule Heaters.Clips.Operations.Artifacts.Sprite.Validation do
   @moduledoc """
-  Pure sprite validation functions with no side effects.
+  Validation logic for sprite operations.
+  Used by Operations.Artifacts.Sprite for business logic.
 
   This module contains validation logic for sprite operations, including
   clip state validation and sprite parameter validation. All functions are pure.
   """
 
   alias Heaters.Clips.Operations.Shared.{ClipValidation, VideoMetadata}
-  alias Heaters.Clips.Operations.Sprite.Calculations
+  alias Heaters.Clips.Operations.Artifacts.Sprite.Calculations
 
   @doc """
   Validate that a clip and parameters are suitable for sprite generation.

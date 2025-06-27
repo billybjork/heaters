@@ -1,7 +1,7 @@
-defmodule Heaters.Clips.Operations.Keyframe.Strategy do
+defmodule Heaters.Clips.Operations.Artifacts.Keyframe.Strategy do
   @moduledoc """
-  Pure domain functions for keyframe extraction strategy selection.
-  Used by Operations.Keyframe for business logic.
+  Strategy logic for keyframe operations.
+  Used by Operations.Artifacts.Keyframe for business logic.
   """
 
   @valid_strategies ~w[midpoint multi]

@@ -22,8 +22,8 @@ defmodule Heaters.Clips do
       Clips.select_clip_and_fetch_next(clip, "approve")
 
       # Operations (use dedicated modules)
-      Operations.Keyframe.run_keyframe_extraction(clip_id, "multi")
-      Operations.Merge.run_merge(target_clip_id, source_clip_id)
+      Operations.Artifacts.Keyframe.run_keyframe_extraction(clip_id, "multi")
+      Operations.Edits.Merge.run_merge(target_clip_id, source_clip_id)
 
       # Embedding operations
       Clips.generate_embeddings(clip_id)
@@ -44,7 +44,7 @@ defmodule Heaters.Clips do
   defdelegate for_source_video_with_sprites(source_video_id, exclude_id, page, page_size),
     to: Review
 
-  # Operations (formerly Transform)
+  # Operations
   defdelegate mark_failed(clip_or_id, failure_state, error_reason), to: Operations
   defdelegate build_artifact_prefix(clip, artifact_type), to: Operations
   defdelegate create_artifacts(clip_id, artifact_type, artifacts_data), to: Operations
@@ -55,7 +55,7 @@ defmodule Heaters.Clips do
   defdelegate mark_sprite_failed(clip_id, error_reason), to: Operations
   defdelegate process_sprite_success(clip, result), to: Operations
 
-  # Embedding operations (formerly Embed)
+  # Embedding operations
   defdelegate start_embedding(clip_id), to: Embeddings
   defdelegate complete_embedding(clip_id, embedding_data), to: Embeddings
   defdelegate process_embedding_success(clip, result), to: Embeddings

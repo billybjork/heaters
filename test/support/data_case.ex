@@ -76,8 +76,8 @@ defmodule Heaters.DataCase do
 
     attrs = Map.merge(default_attrs, Enum.into(attrs, %{}))
 
-    %Heaters.SourceVideos.SourceVideo{}
-    |> Heaters.SourceVideos.SourceVideo.changeset(attrs)
+    %Heaters.Videos.SourceVideo{}
+    |> Heaters.Videos.SourceVideo.changeset(attrs)
     |> Heaters.Repo.insert!()
   end
 
@@ -140,8 +140,8 @@ defmodule Heaters.DataCase do
 
     attrs = Map.merge(default_attrs, Enum.into(attrs, %{}))
 
-    %Heaters.Clips.Operations.ClipArtifact{}
-    |> Heaters.Clips.Operations.ClipArtifact.changeset(attrs)
+    %Heaters.Clips.Operations.Artifacts.ClipArtifact{}
+    |> Heaters.Clips.Operations.Artifacts.ClipArtifact.changeset(attrs)
     |> Heaters.Repo.insert!()
   end
 end

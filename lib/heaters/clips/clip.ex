@@ -18,9 +18,9 @@ defmodule Heaters.Clips.Clip do
           processing_metadata: map() | nil,
           grouped_with_clip_id: integer() | nil,
           action_committed_at: NaiveDateTime.t() | nil,
-          source_video: Heaters.SourceVideos.SourceVideo.t() | Ecto.Association.NotLoaded.t(),
-          clip_artifacts:
-            [Heaters.Clips.Operations.ClipArtifact.t()] | Ecto.Association.NotLoaded.t(),
+          source_video: Heaters.Videos.SourceVideo.t() | Ecto.Association.NotLoaded.t(),
+                      clip_artifacts:
+              [Heaters.Clips.Operations.Artifacts.ClipArtifact.t()] | Ecto.Association.NotLoaded.t(),
           review_events: [Heaters.Events.ReviewEvent.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t(),
           updated_at: DateTime.t()
@@ -44,8 +44,8 @@ defmodule Heaters.Clips.Clip do
     field(:grouped_with_clip_id, :integer)
     field(:action_committed_at, :naive_datetime)
 
-    belongs_to(:source_video, Heaters.SourceVideos.SourceVideo)
-    has_many(:clip_artifacts, Heaters.Clips.Operations.ClipArtifact)
+    belongs_to(:source_video, Heaters.Videos.SourceVideo)
+    has_many(:clip_artifacts, Heaters.Clips.Operations.Artifacts.ClipArtifact)
     has_many(:review_events, Heaters.Events.ReviewEvent)
 
     timestamps(type: :utc_datetime)

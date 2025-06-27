@@ -1,7 +1,7 @@
 defmodule Heaters.Workers.Clips.KeyframeWorker do
   use Heaters.Workers.GenericWorker, queue: :media_processing
 
-  alias Heaters.Clips.Operations.Keyframe
+  alias Heaters.Clips.Operations.Artifacts.Keyframe
   alias Heaters.Clips.Operations.Shared.Types
   alias Heaters.Clips.Queries, as: ClipQueries
   require Logger

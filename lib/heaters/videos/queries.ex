@@ -1,11 +1,11 @@
-defmodule Heaters.SourceVideos.Queries do
+defmodule Heaters.Videos.Queries do
   @moduledoc """
   Query functions for source videos.
   """
 
   import Ecto.Query, warn: false
   alias Heaters.Repo
-  alias Heaters.SourceVideos.SourceVideo
+  alias Heaters.Videos.SourceVideo
 
   @doc """
   Get a source video by ID. Returns {:ok, source_video} if found, {:error, :not_found} otherwise.

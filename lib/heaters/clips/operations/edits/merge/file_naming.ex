@@ -1,7 +1,7 @@
-defmodule Heaters.Clips.Operations.Merge.FileNaming do
+defmodule Heaters.Clips.Operations.Edits.Merge.FileNaming do
   @moduledoc """
-  Pure domain functions for merge operation file naming.
-  Used by Operations.Merge for business logic.
+  File naming logic for merge operations.
+  Used by Operations.Edits.Merge for business logic.
   """
 
   alias Heaters.Utils

@@ -1,10 +1,10 @@
-defmodule Heaters.Clips.Operations.Keyframe.PythonArgs do
+defmodule Heaters.Clips.Operations.Artifacts.Keyframe.PythonArgs do
   @moduledoc """
-  Pure domain functions for keyframe Python argument construction.
-  Used by Operations.Keyframe for business logic.
+  Python arguments logic for keyframe operations.
+  Used by Operations.Artifacts.Keyframe for business logic.
   """
 
-  alias Heaters.Clips.Operations.Keyframe.Strategy
+  alias Heaters.Clips.Operations.Artifacts.Keyframe.Strategy
 
   @type python_args :: %{
           clip_id: integer(),

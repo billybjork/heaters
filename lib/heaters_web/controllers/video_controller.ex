@@ -1,6 +1,6 @@
 defmodule HeatersWeb.VideoController do
   use HeatersWeb, :controller
-  alias Heaters.SourceVideos.Ingest
+  alias Heaters.Videos.Ingest
 
   def create(conn, %{"url" => url}) do
     case Ingest.submit(url) do

@@ -1,7 +1,7 @@
-defmodule Heaters.Clips.Operations.Split.Calculations do
+defmodule Heaters.Clips.Operations.Edits.Split.Calculations do
   @moduledoc """
   Pure domain functions for split operation calculations.
-  Used by Operations.Split for business logic.
+  Used by Operations.Edits.Split for business logic.
   """
 
   # Business configuration matching original split.py

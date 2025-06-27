@@ -188,5 +188,5 @@ defmodule Heaters.Clips.Operations.Shared.Types do
           {:ok, Heaters.Clips.Clip.t()} | {:error, any()}
 
   @type artifacts_response ::
-          {:ok, [Heaters.Clips.Operations.ClipArtifact.t()]} | {:error, any()}
+          {:ok, [Heaters.Clips.Operations.Artifacts.ClipArtifact.t()]} | {:error, any()}
 end

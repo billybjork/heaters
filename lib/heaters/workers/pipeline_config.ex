@@ -15,10 +15,10 @@ defmodule Heaters.Workers.PipelineConfig do
   The `label` field provides human-readable descriptions for logging.
   """
 
-  alias Heaters.SourceVideos.Queries, as: VideoQueries
+  alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Events.EventProcessor
-  alias Heaters.Workers.SourceVideos.IngestWorker
+  alias Heaters.Workers.Videos.IngestWorker
   alias Heaters.Workers.Clips.{SpriteWorker, KeyframeWorker, EmbeddingWorker, ArchiveWorker}
 
   @doc """

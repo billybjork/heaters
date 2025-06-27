@@ -1,7 +1,7 @@
-defmodule Heaters.Clips.Operations.Split.Validation do
+defmodule Heaters.Clips.Operations.Edits.Split.Validation do
   @moduledoc """
-  Pure domain functions for split operation validation.
-  Used by Operations.Split for business logic.
+  Validation logic for split operations.
+  Used by Operations.Edits.Split for business logic.
   """
 
   alias Heaters.Clips.Operations.Shared.ClipValidation

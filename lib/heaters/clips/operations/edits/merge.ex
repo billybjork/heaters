@@ -1,4 +1,4 @@
-defmodule Heaters.Clips.Operations.Merge do
+defmodule Heaters.Clips.Operations.Edits.Merge do
   @moduledoc """
   Video merging operations - I/O orchestration layer.
 
@@ -15,7 +15,7 @@ defmodule Heaters.Clips.Operations.Merge do
   alias Heaters.Clips.Operations.Shared.{TempManager, Types, FFmpegRunner}
 
   # Domain modules (pure business logic)
-  alias Heaters.Clips.Operations.Merge.{Calculations, Validation, FileNaming}
+  alias Heaters.Clips.Operations.Edits.Merge.{Calculations, Validation, FileNaming}
   alias Heaters.Clips.Operations.Shared.ResultBuilding
 
   # Infrastructure adapters (I/O operations)
