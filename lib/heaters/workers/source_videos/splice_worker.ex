@@ -1,9 +1,9 @@
-defmodule Heaters.Workers.Videos.SpliceWorker do
+defmodule Heaters.Workers.SourceVideos.SpliceWorker do
   use Heaters.Workers.GenericWorker, queue: :media_processing
 
-  alias Heaters.Videos.Ingest
-  alias Heaters.Videos.SourceVideo
-  alias Heaters.Videos.Queries, as: VideoQueries
+  alias Heaters.SourceVideos.Ingest
+  alias Heaters.SourceVideos.SourceVideo
+  alias Heaters.SourceVideos.Queries, as: VideoQueries
   alias Heaters.Infrastructure.PyRunner
   alias Heaters.Workers.Clips.SpriteWorker
   require Logger

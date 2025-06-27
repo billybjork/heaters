@@ -30,13 +30,13 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 
 ## Detailed Workflow
 
-### 1. Video Ingestion (`Videos.Ingest` Context)
+### 1. Source Video Ingestion (`SourceVideos.Ingest` Context)
 
 **States**: `new` → `downloading` → `downloaded` → `splicing` → `spliced`
 
 **Workers**: 
-- `Videos.IngestWorker`: Downloads and processes source videos
-- `Videos.SpliceWorker`: Splits videos into clips to complete ingestion
+- `SourceVideos.IngestWorker`: Downloads and processes source videos
+- `SourceVideos.SpliceWorker`: Splits videos into clips to complete ingestion
 
 **Python Tasks**:
 - `ingest.py`: Download, re-encode, upload to S3
@@ -44,8 +44,8 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 
 **Process**:
 1. Source video created in `new` state
-2. `Videos.IngestWorker` transitions to `downloading` → calls `ingest.py` → transitions to `downloaded`
-3. `Videos.SpliceWorker` transitions to `splicing` → calls `splice.py` → transitions to `spliced`
+2. `SourceVideos.IngestWorker` transitions to `downloading` → calls `ingest.py` → transitions to `downloaded`
+3. `SourceVideos.SpliceWorker` transitions to `splicing` → calls `splice.py` → transitions to `spliced`
 4. Clips created in `spliced` state, `Clips.SpriteWorker` jobs enqueued
 
 ### 2. Clip Review Preparation (`Clips.Operations` Context)
@@ -139,13 +139,13 @@ The system implements functional domain modeling principles inspired by "Domain 
 
 ## Context Organization
 
-### `Videos.Ingest` (`lib/heaters/videos/ingest.ex`)
+### `SourceVideos.Ingest` (`lib/heaters/source_videos/ingest.ex`)
 - **Purpose**: Manage complete video ingestion workflow from download through clip creation
 - **States**: `new`, `downloading`, `downloaded`, `splicing`, `spliced`
 - **Key Functions**: `start_downloading/1`, `complete_downloading/2`, `start_splicing/1`, `complete_splicing/1`, `create_clips_from_splice/2`, `validate_clips_data/1`
-- **Workers**: `Videos.IngestWorker`, `Videos.SpliceWorker`
+- **Workers**: `SourceVideos.IngestWorker`, `SourceVideos.SpliceWorker`
 
-### `Videos.Intake` (`lib/heaters/videos/intake.ex`)
+### `SourceVideos.Intake` (`lib/heaters/source_videos/intake.ex`)
 - **Purpose**: Simple interface for submitting new source videos
 - **Key Functions**: `submit/1` - Creates new source videos in "new" state
 
@@ -213,7 +213,7 @@ Following Elixir/Phoenix best practices, all workers are organized in `lib/heate
 
 **Data-driven architecture** - Runs periodically using configurable step definitions to find work and enqueue jobs:
 
-1. **Step 1**: Find `new` videos → enqueue `Videos.IngestWorker`
+1. **Step 1**: Find `new` videos → enqueue `SourceVideos.IngestWorker`
 2. **Step 2**: Find `spliced` clips → enqueue `Clips.SpriteWorker` 
 3. **Step 3**: Process pending review actions via `EventProcessor.commit_pending_actions()` (merge/split)
 4. **Step 4**: Find `review_approved` clips → enqueue `Clips.KeyframeWorker`

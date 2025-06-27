@@ -1,11 +1,11 @@
-defmodule Heaters.Videos.Intake do
+defmodule Heaters.SourceVideos.Intake do
   @moduledoc """
   Context for managing source video ingestion workflow and state transitions.
   This module handles all state management that was previously done in Python.
   """
 
   alias Heaters.Repo
-  alias Heaters.Videos.SourceVideo
+  alias Heaters.SourceVideos.SourceVideo
   # For more detailed error logging
   require Logger
 

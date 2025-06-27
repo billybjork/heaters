@@ -4,7 +4,7 @@ defmodule Heaters.Events.EventProcessorTest do
   alias Heaters.Events.EventProcessor
   alias Heaters.Events.ClipEvent
   alias Heaters.Clips.Clip
-  alias Heaters.Videos.SourceVideo
+  alias Heaters.SourceVideos.SourceVideo
   alias Heaters.Workers.Clips.{SplitWorker, MergeWorker}
 
   describe "get_unprocessed_events/0" do

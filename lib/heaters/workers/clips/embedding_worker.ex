@@ -43,7 +43,11 @@ defmodule Heaters.Workers.Clips.EmbeddingWorker do
           # Use the Embedding context to process the success and create embedding records
           case Embedding.process_embedding_success(updated_clip, result) do
             {:ok,
-             %Embedding.EmbedResult{status: "success", embedding_id: embedding_id, model_name: model}} ->
+             %Embedding.EmbedResult{
+               status: "success",
+               embedding_id: embedding_id,
+               model_name: model
+             }} ->
               Logger.info(
                 "EmbeddingWorker: Clip #{clip_id} embedding completed successfully (ID: #{embedding_id}, Model: #{model})"
               )

@@ -1,12 +1,12 @@
-defmodule Heaters.Videos.Ingest do
+defmodule Heaters.SourceVideos.Ingest do
   @moduledoc """
   Context for managing source video ingestion workflow and state transitions.
   This module handles all state management that was previously done in Python.
   """
 
   alias Heaters.Repo
-  alias Heaters.Videos.SourceVideo
-  alias Heaters.Videos.Queries, as: VideoQueries
+  alias Heaters.SourceVideos.SourceVideo
+  alias Heaters.SourceVideos.Queries, as: VideoQueries
   alias Heaters.Clips.Clip
   require Logger
 
@@ -200,8 +200,7 @@ defmodule Heaters.Videos.Ingest do
       end_frame: Map.get(clip_data, :end_frame),
       start_time_seconds: Map.fetch!(clip_data, :start_time_seconds),
       end_time_seconds: Map.fetch!(clip_data, :end_time_seconds),
-      ingest_state: "spliced",
-      processing_metadata: Map.get(clip_data, :metadata, %{}),
+      duration_seconds: Map.get(clip_data, :duration_seconds),
       inserted_at: now,
       updated_at: now
     }
@@ -272,44 +271,40 @@ defmodule Heaters.Videos.Ingest do
       {:error, "DB error: #{Exception.message(e)}"}
   end
 
-  @doc """
-  Update a source video with the given attributes.
-  """
-  def update_source_video(%SourceVideo{} = source_video, attrs) do
+  # Rest of private functions...
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp format_error_message(error) when is_binary(error), do: error
+  defp format_error_message(error), do: inspect(error)
+
+  defp validate_state_transition(current_state, target_state) do
+    valid_transitions = %{
+      "new" => ["downloading"],
+      "downloading" => ["downloaded", "download_failed"],
+      "downloaded" => ["splicing"],
+      "splicing" => ["spliced", "splice_failed"],
+      "download_failed" => ["downloading"],
+      "splice_failed" => ["splicing"]
+    }
+
+    case Map.get(valid_transitions, current_state) do
+      nil ->
+        {:error, "Invalid current state: #{current_state}"}
+
+      allowed_states ->
+        if target_state in allowed_states do
+          :ok
+        else
+          {:error,
+           "Invalid state transition from #{current_state} to #{target_state}. Allowed: #{inspect(allowed_states)}"}
+        end
+    end
+  end
+
+  defp update_source_video(%SourceVideo{} = source_video, attrs) do
     source_video
     |> SourceVideo.changeset(attrs)
     |> Repo.update()
   end
-
-  defp validate_state_transition(current_state, target_state) do
-    case {current_state, target_state} do
-      # Valid transitions for downloading
-      {"new", "downloading"} ->
-        :ok
-
-      {"download_failed", "downloading"} ->
-        :ok
-
-      {"ingestion_failed", "downloading"} ->
-        :ok
-
-      # Valid transitions for splicing
-      {"downloaded", "splicing"} ->
-        :ok
-
-      {"splicing_failed", "splicing"} ->
-        :ok
-
-      # Invalid transitions
-      _ ->
-        Logger.warning("Invalid state transition from '#{current_state}' to '#{target_state}'")
-        {:error, :invalid_state_transition}
-    end
-  end
-
-  defp format_error_message(error_reason) when is_binary(error_reason), do: error_reason
-  defp format_error_message(error_reason), do: inspect(error_reason)
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

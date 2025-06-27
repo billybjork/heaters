@@ -16,8 +16,10 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadataTest do
     end
 
     property "effective fps is always positive and finite" do
-      check all video_fps <- positive_float(),
-                sprite_fps <- one_of([constant(nil), positive_float()]) do
+      check all(
+              video_fps <- positive_float(),
+              sprite_fps <- one_of([constant(nil), positive_float()])
+            ) do
         result = VideoMetadata.calculate_effective_fps(video_fps, sprite_fps)
 
         assert is_number(result)
@@ -27,8 +29,10 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadataTest do
     end
 
     property "effective fps matches expected value" do
-      check all video_fps <- positive_float(),
-                sprite_fps <- positive_float() do
+      check all(
+              video_fps <- positive_float(),
+              sprite_fps <- positive_float()
+            ) do
         result = VideoMetadata.calculate_effective_fps(video_fps, sprite_fps)
         assert result == sprite_fps
       end
@@ -56,8 +60,10 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadataTest do
     end
 
     property "frame count is always non-negative integer" do
-      check all duration <- positive_float(),
-                fps <- positive_float() do
+      check all(
+              duration <- positive_float(),
+              fps <- positive_float()
+            ) do
         frames = VideoMetadata.calculate_total_frames(duration, fps)
 
         assert is_integer(frames)
@@ -66,10 +72,12 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadataTest do
     end
 
     property "longer duration means more frames at same fps" do
-      check all duration1 <- positive_float(),
-                duration2 <- positive_float(),
-                fps <- positive_float(),
-                duration1 < duration2 do
+      check all(
+              duration1 <- positive_float(),
+              duration2 <- positive_float(),
+              fps <- positive_float(),
+              duration1 < duration2
+            ) do
         frames1 = VideoMetadata.calculate_total_frames(duration1, fps)
         frames2 = VideoMetadata.calculate_total_frames(duration2, fps)
 
@@ -78,10 +86,12 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadataTest do
     end
 
     property "higher fps means more frames for same duration" do
-      check all duration <- positive_float(),
-                fps1 <- positive_float(),
-                fps2 <- positive_float(),
-                fps1 < fps2 do
+      check all(
+              duration <- positive_float(),
+              fps1 <- positive_float(),
+              fps2 <- positive_float(),
+              fps1 < fps2
+            ) do
         frames1 = VideoMetadata.calculate_total_frames(duration, fps1)
         frames2 = VideoMetadata.calculate_total_frames(duration, fps2)
 
@@ -104,9 +114,11 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadataTest do
     end
 
     property "longer durations are always sufficient if shorter ones are" do
-      check all duration <- positive_float(),
-                min_duration <- positive_float(),
-                extra <- positive_float() do
+      check all(
+              duration <- positive_float(),
+              min_duration <- positive_float(),
+              extra <- positive_float()
+            ) do
         longer_duration = duration + extra
 
         if VideoMetadata.sufficient_duration?(duration, min_duration) do
@@ -156,10 +168,12 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadataTest do
     end
 
     property "valid metadata always passes validation" do
-      check all duration <- positive_float(),
-                fps <- positive_float(),
-                width <- positive_integer(),
-                height <- positive_integer() do
+      check all(
+              duration <- positive_float(),
+              fps <- positive_float(),
+              width <- positive_integer(),
+              height <- positive_integer()
+            ) do
         metadata = %{
           duration: duration,
           fps: fps,
@@ -174,13 +188,13 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadataTest do
 
   # Helper generators for property-based testing
   defp positive_float do
-    gen all num <- float(min: 0.01, max: 10000.0) do
+    gen all(num <- float(min: 0.01, max: 10000.0)) do
       num
     end
   end
 
   defp positive_integer do
-    gen all num <- integer(1..10000) do
+    gen all(num <- integer(1..10000)) do
       num
     end
   end

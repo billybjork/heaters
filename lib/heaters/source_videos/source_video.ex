@@ -1,4 +1,4 @@
-defmodule Heaters.Videos.SourceVideo do
+defmodule Heaters.SourceVideos.SourceVideo do
   use Heaters.Schema
 
   @type t() :: %__MODULE__{
