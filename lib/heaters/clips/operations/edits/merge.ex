@@ -10,7 +10,6 @@ defmodule Heaters.Clips.Operations.Edits.Merge do
 
   import Ecto.Query, only: [from: 2]
 
-  alias Heaters.Repo
   alias Heaters.Clips.Clip
   alias Heaters.Clips.Operations.Shared.{TempManager, Types, FFmpegRunner}
 
@@ -204,25 +203,22 @@ defmodule Heaters.Clips.Operations.Edits.Merge do
       processing_metadata: processing_metadata
     }
 
-    %Clip{}
-    |> Clip.changeset(attrs)
-    |> Repo.insert()
+    DatabaseAdapter.create_clip(attrs)
   end
 
   @spec update_source_clips_state(integer(), integer()) :: {:ok, integer()} | {:error, any()}
   defp update_source_clips_state(target_clip_id, source_clip_id) do
-    try do
-      query = from(c in Clip, where: c.id in [^target_clip_id, ^source_clip_id])
+    import Ecto.Query
+    query = from(c in Clip, where: c.id in [^target_clip_id, ^source_clip_id])
+    updates = %{ingest_state: "merged", clip_filepath: nil}
 
-      case Repo.update_all(query, set: [ingest_state: "merged", clip_filepath: nil]) do
-        {count, _} ->
-          Logger.info("Merge: Updated #{count} source clips to merged state")
-          {:ok, count}
-      end
-    rescue
-      e ->
-        reason = "Failed to update source clips state: #{Exception.message(e)}"
-        Logger.error("Merge: " <> reason)
+    case DatabaseAdapter.batch_update_clips(query, updates) do
+      {:ok, count} ->
+        Logger.info("Merge: Updated #{count} source clips to merged state")
+        {:ok, count}
+
+      {:error, reason} ->
+        Logger.error("Merge: Failed to update source clips state: #{reason}")
         {:error, reason}
     end
   end

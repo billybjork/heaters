@@ -83,8 +83,7 @@ defmodule Heaters.Infrastructure.Adapters.FFmpegAdapter do
           {:ok, [String.t()]} | {:error, any()}
   def extract_keyframes(video_path, output_dir, frame_positions)
       when is_binary(video_path) and is_binary(output_dir) and is_list(frame_positions) do
-    # NOTE: This function would need to be implemented in FFmpegRunner
-    # For now, return an error indicating it's not implemented
+    # TODO: Implement in FFmpegRunner when keyframe extraction is needed
     {:error, "Keyframe extraction not yet implemented in FFmpegRunner"}
   end
 
@@ -104,8 +103,7 @@ defmodule Heaters.Infrastructure.Adapters.FFmpegAdapter do
           {:ok, integer()} | {:error, any()}
   def extract_single_keyframe(video_path, output_path, frame_position)
       when is_binary(video_path) and is_binary(output_path) and is_integer(frame_position) do
-    # NOTE: This function would need to be implemented in FFmpegRunner
-    # For now, return an error indicating it's not implemented
+    # TODO: Implement in FFmpegRunner when single keyframe extraction is needed
     {:error, "Single keyframe extraction not yet implemented in FFmpegRunner"}
   end
 
@@ -125,8 +123,7 @@ defmodule Heaters.Infrastructure.Adapters.FFmpegAdapter do
           {:ok, {String.t(), String.t()}} | {:error, any()}
   def split_video(video_path, output_dir, split_frame)
       when is_binary(video_path) and is_binary(output_dir) and is_integer(split_frame) do
-    # NOTE: This function would need to be implemented in FFmpegRunner
-    # For now, return an error indicating it's not implemented
+    # TODO: Implement in FFmpegRunner when video splitting is needed
     {:error, "Video splitting not yet implemented in FFmpegRunner"}
   end
 

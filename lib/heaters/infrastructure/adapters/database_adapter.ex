@@ -111,4 +111,77 @@ defmodule Heaters.Infrastructure.Adapters.DatabaseAdapter do
       error -> error
     end
   end
+
+  @doc """
+  Create multiple clips in a single batch operation.
+
+  ## Parameters
+  - `clips_attrs`: List of clip attribute maps
+
+  ## Returns
+  - `{:ok, clips}` with list of created clips on success
+  - `{:error, reason}` on failure
+
+  ## Examples
+
+      clips_attrs = [%{source_video_id: 1, clip_filepath: "clip1.mp4"}, ...]
+      {:ok, clips} = DatabaseAdapter.create_clips(clips_attrs)
+  """
+  @spec create_clips([map()]) :: {:ok, [Clip.t()]} | {:error, any()}
+  def create_clips(clips_attrs) when is_list(clips_attrs) do
+    alias Heaters.Repo
+
+    case Repo.insert_all(Clip, clips_attrs, returning: true) do
+      {count, clips} when count > 0 -> {:ok, clips}
+      {0, _} -> {:error, "No clips were created"}
+    end
+  rescue
+    e -> {:error, Exception.message(e)}
+  end
+
+  @doc """
+  Batch update clips matching a query with the given attributes.
+
+  ## Parameters
+  - `queryable`: Ecto query or module to update
+  - `updates`: Map of attributes to update
+
+  ## Returns
+  - `{:ok, updated_count}` with number of updated records
+  - `{:error, reason}` on failure
+
+  ## Examples
+
+      query = from(c in Clip, where: c.id in ^clip_ids)
+      {:ok, count} = DatabaseAdapter.batch_update_clips(query, %{ingest_state: "merged"})
+  """
+  @spec batch_update_clips(Ecto.Queryable.t(), map()) :: {:ok, integer()} | {:error, any()}
+  def batch_update_clips(queryable, updates) when is_map(updates) do
+    alias Heaters.Repo
+
+    case Repo.update_all(queryable, set: Enum.to_list(updates)) do
+      {count, _} -> {:ok, count}
+    end
+  rescue
+    e -> {:error, Exception.message(e)}
+  end
+
+  @doc """
+  Insert a single clip and return it.
+
+  ## Parameters
+  - `clip_attrs`: Clip attributes map
+
+  ## Returns
+  - `{:ok, clip}` on success
+  - `{:error, changeset}` on validation failure
+  """
+  @spec create_clip(map()) :: {:ok, Clip.t()} | {:error, any()}
+  def create_clip(clip_attrs) when is_map(clip_attrs) do
+    alias Heaters.Repo
+
+    %Clip{}
+    |> Clip.changeset(clip_attrs)
+    |> Repo.insert()
+  end
 end

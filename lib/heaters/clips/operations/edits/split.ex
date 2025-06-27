@@ -10,7 +10,6 @@ defmodule Heaters.Clips.Operations.Edits.Split do
 
   require Logger
 
-  alias Heaters.Repo
   alias Heaters.Clips.Clip
   alias Heaters.Clips.Operations.Shared.{Types, TempManager, FFmpegRunner}
 
@@ -270,18 +269,15 @@ defmodule Heaters.Clips.Operations.Edits.Split do
         }
       end)
 
-    case Repo.insert_all(Clip, clips_attrs, returning: true) do
-      {count, clips} when count > 0 ->
-        Logger.info("Split: Created #{count} new clip records")
+    case DatabaseAdapter.create_clips(clips_attrs) do
+      {:ok, clips} ->
+        Logger.info("Split: Created #{length(clips)} new clip records")
         {:ok, clips}
 
-      {0, _} ->
-        {:error, "Failed to create clip records"}
+      {:error, reason} ->
+        Logger.error("Split: Error creating clip records: #{reason}")
+        {:error, reason}
     end
-  rescue
-    e ->
-      Logger.error("Split: Error creating clip records: #{Exception.message(e)}")
-      {:error, Exception.message(e)}
   end
 
   @spec update_original_clip_state(integer()) :: :ok | {:error, any()}
