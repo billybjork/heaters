@@ -41,6 +41,7 @@ services:
       MIX_ENV: dev
       APP_ENV: development
       PHX_HOST: localhost
+      DOCKER_ENV: "true"
       DEV_DATABASE_URL: ${DEV_DATABASE_URL}
       S3_DEV_BUCKET_NAME: ${S3_DEV_BUCKET_NAME}
       CLOUDFRONT_DEV_DOMAIN: ${CLOUDFRONT_DEV_DOMAIN}

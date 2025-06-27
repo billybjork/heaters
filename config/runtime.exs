@@ -14,7 +14,20 @@ end
 # APP_ENV is expected to be "development" for local Docker Compose runs (from .env)
 # and "production" for Render deployments (set in Render service environment).
 
-if config_env() != :test do
+# Check if we're running a database-only operation (migrations, etc.)
+# These operations don't need CloudFront configuration
+is_database_operation =
+  System.argv()
+  |> Enum.any?(fn arg ->
+    String.contains?(arg, "ecto.") or
+    String.contains?(arg, "migrate") or
+    String.contains?(arg, "rollback") or
+    String.contains?(arg, "setup") or
+    String.contains?(arg, "create") or
+    String.contains?(arg, "drop")
+  end)
+
+if config_env() != :test and not is_database_operation do
   app_env_string = System.get_env("APP_ENV")
 
   # Make APP_ENV available in application config if needed
@@ -96,11 +109,19 @@ if config_env() != :test do
     IO.puts("[Runtime.exs] S3 Bucket not configured via APP_ENV specific vars or S3_BUCKET_NAME.")
   end
 else
-  # In test environment, configure minimal stubs for S3/CloudFront
-  config :heaters, :app_env, "test"
-  config :heaters, :cloudfront_domain, "test.cloudfront.test"
-  config :heaters, :s3_bucket, "test-bucket"
-  IO.puts("[Runtime.exs] Test environment - using minimal CloudFront/S3 configuration.")
+  # In test environment or database operations, configure minimal stubs for S3/CloudFront
+  if is_database_operation do
+    config :heaters, :app_env, System.get_env("APP_ENV") || "development"
+    config :heaters, :cloudfront_domain, "database-op.cloudfront.test"
+    config :heaters, :s3_bucket, "database-op-bucket"
+    IO.puts("[Runtime.exs] Database operation - using minimal CloudFront/S3 configuration.")
+  else
+    # Test environment
+    config :heaters, :app_env, "test"
+    config :heaters, :cloudfront_domain, "test.cloudfront.test"
+    config :heaters, :s3_bucket, "test-bucket"
+    IO.puts("[Runtime.exs] Test environment - using minimal CloudFront/S3 configuration.")
+  end
 end
 
 # === Database Configuration ===

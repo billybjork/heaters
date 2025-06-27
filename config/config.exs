@@ -60,7 +60,7 @@ config :elixir, :warnings_as_errors, false
 config :elixir, :ansi_enabled, true
 
 # Configure PyRunner paths and executables
-config :heaters, Heaters.PyRunner,
+config :heaters, Heaters.Infrastructure.PyRunner,
   python_executable: System.get_env("PYTHON_EXECUTABLE") || "python3",
   working_dir: System.get_env("PYTHON_WORKING_DIR") || File.cwd!(),
   runner_script: "py/runner.py"

@@ -122,9 +122,18 @@ config :heaters, Oban,
 config :heaters, dev_routes: true
 
 # Configure PyRunner for development
-config :heaters, Heaters.PyRunner,
-  python_executable:
-    System.find_executable("python3") || System.find_executable("python") || "/usr/bin/python3",
-  # Current directory for local dev
-  working_dir: Path.expand("."),
+# Handle Docker vs local environment for Python executable
+in_docker = System.get_env("DOCKER_ENV") == "true"
+
+python_executable = if in_docker do
+  # In Docker container, Python is in /opt/venv
+  "/opt/venv/bin/python"
+else
+  # Local development, use local venv
+  Path.join(Path.expand("."), "py/venv/bin/python")
+end
+
+config :heaters, Heaters.Infrastructure.PyRunner,
+  python_executable: python_executable,
+  working_dir: if(in_docker, do: "/app", else: Path.expand(".")),
   runner_script: "py/runner.py"
