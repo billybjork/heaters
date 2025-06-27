@@ -1,15 +1,15 @@
-defmodule Heaters.Events do
+defmodule Heaters.Events.ReviewEvents do
   @moduledoc """
-  Event sourcing - write side (command handling).
+  Review event sourcing - write side (command handling).
 
-  This module provides functions for creating events in response to user actions.
+  This module provides functions for creating review workflow events in response to user actions.
   It follows the CQRS pattern where this module handles the "command" side -
-  writing events to the event store (clip_events table).
+  writing events to the event store (review_events table).
 
   The read side (event processing) is handled by EventProcessor.
   """
 
-  alias Heaters.Events.ClipEvent
+  alias Heaters.Events.ReviewEvent
   alias Heaters.Repo
   require Logger
 
@@ -18,14 +18,14 @@ defmodule Heaters.Events do
 
   ## Examples
 
-      iex> Events.log_review_action(123, "approve", "admin")
-      {:ok, %ClipEvent{}}
+      iex> ReviewEvents.log_review_action(123, "approve", "admin")
+      {:ok, %ReviewEvent{}}
 
-      iex> Events.log_review_action(123, "split", "admin", %{"split_at_frame" => 450})
-      {:ok, %ClipEvent{}}
+      iex> ReviewEvents.log_review_action(123, "split", "admin", %{"split_at_frame" => 450})
+      {:ok, %ReviewEvent{}}
   """
   @spec log_review_action(integer(), String.t(), String.t(), map()) ::
-          {:ok, ClipEvent.t()} | {:error, any()}
+          {:ok, ReviewEvent.t()} | {:error, any()}
   def log_review_action(clip_id, action, reviewer_id, event_data \\ %{}) do
     attrs = %{
       clip_id: clip_id,
@@ -34,20 +34,20 @@ defmodule Heaters.Events do
       event_data: event_data
     }
 
-    %ClipEvent{}
-    |> ClipEvent.changeset(attrs)
+    %ReviewEvent{}
+    |> ReviewEvent.changeset(attrs)
     |> Repo.insert()
     |> case do
       {:ok, event} ->
         Logger.info(
-          "Events: Logged #{action} action for clip_id: #{clip_id} by reviewer: #{reviewer_id}"
+          "ReviewEvents: Logged #{action} action for clip_id: #{clip_id} by reviewer: #{reviewer_id}"
         )
 
         {:ok, event}
 
       {:error, changeset} ->
         Logger.error(
-          "Events: Failed to log #{action} action for clip_id: #{clip_id}, errors: #{inspect(changeset.errors)}"
+          "ReviewEvents: Failed to log #{action} action for clip_id: #{clip_id}, errors: #{inspect(changeset.errors)}"
         )
 
         {:error, changeset}
@@ -63,11 +63,11 @@ defmodule Heaters.Events do
 
   ## Examples
 
-      iex> Events.log_merge_action(123, 456, "admin")
-      {:ok, [%ClipEvent{action: "selected_merge_target"}, %ClipEvent{action: "selected_merge_source"}]}
+      iex> ReviewEvents.log_merge_action(123, 456, "admin")
+      {:ok, [%ReviewEvent{action: "selected_merge_target"}, %ReviewEvent{action: "selected_merge_source"}]}
   """
   @spec log_merge_action(integer(), integer(), String.t()) ::
-          {:ok, list(ClipEvent.t())} | {:error, any()}
+          {:ok, list(ReviewEvent.t())} | {:error, any()}
   def log_merge_action(target_clip_id, source_clip_id, reviewer_id) do
     Repo.transaction(fn ->
       # Create target event
@@ -88,7 +88,7 @@ defmodule Heaters.Events do
         })
 
       Logger.info(
-        "Events: Logged merge action - target: #{target_clip_id}, source: #{source_clip_id} by reviewer: #{reviewer_id}"
+        "ReviewEvents: Logged merge action - target: #{target_clip_id}, source: #{source_clip_id} by reviewer: #{reviewer_id}"
       )
 
       [target_event, source_event]
@@ -100,11 +100,11 @@ defmodule Heaters.Events do
 
   ## Examples
 
-      iex> Events.log_split_action(123, 450, "admin")
-      {:ok, %ClipEvent{action: "selected_split"}}
+      iex> ReviewEvents.log_split_action(123, 450, "admin")
+      {:ok, %ReviewEvent{action: "selected_split"}}
   """
   @spec log_split_action(integer(), integer(), String.t()) ::
-          {:ok, ClipEvent.t()} | {:error, any()}
+          {:ok, ReviewEvent.t()} | {:error, any()}
   def log_split_action(clip_id, split_frame, reviewer_id) do
     attrs = %{
       clip_id: clip_id,
@@ -117,14 +117,14 @@ defmodule Heaters.Events do
     |> case do
       {:ok, event} ->
         Logger.info(
-          "Events: Logged split action for clip_id: #{clip_id} at frame: #{split_frame} by reviewer: #{reviewer_id}"
+          "ReviewEvents: Logged split action for clip_id: #{clip_id} at frame: #{split_frame} by reviewer: #{reviewer_id}"
         )
 
         {:ok, event}
 
       error ->
         Logger.error(
-          "Events: Failed to log split action for clip_id: #{clip_id}, error: #{inspect(error)}"
+          "ReviewEvents: Failed to log split action for clip_id: #{clip_id}, error: #{inspect(error)}"
         )
 
         error
@@ -140,11 +140,11 @@ defmodule Heaters.Events do
 
   ## Examples
 
-      iex> Events.log_group_action(123, 456, "admin")
-      {:ok, [%ClipEvent{action: "selected_group_target"}, %ClipEvent{action: "selected_group_source"}]}
+      iex> ReviewEvents.log_group_action(123, 456, "admin")
+      {:ok, [%ReviewEvent{action: "selected_group_target"}, %ReviewEvent{action: "selected_group_source"}]}
   """
   @spec log_group_action(integer(), integer(), String.t()) ::
-          {:ok, list(ClipEvent.t())} | {:error, any()}
+          {:ok, list(ReviewEvent.t())} | {:error, any()}
   def log_group_action(target_clip_id, source_clip_id, reviewer_id) do
     Repo.transaction(fn ->
       # Create target event
@@ -165,7 +165,7 @@ defmodule Heaters.Events do
         })
 
       Logger.info(
-        "Events: Logged group action - target: #{target_clip_id}, source: #{source_clip_id} by reviewer: #{reviewer_id}"
+        "ReviewEvents: Logged group action - target: #{target_clip_id}, source: #{source_clip_id} by reviewer: #{reviewer_id}"
       )
 
       [target_event, source_event]
@@ -177,10 +177,10 @@ defmodule Heaters.Events do
 
   This is the internal function used by the public API functions.
   """
-  @spec create_event(map()) :: {:ok, ClipEvent.t()} | {:error, any()}
+  @spec create_event(map()) :: {:ok, ReviewEvent.t()} | {:error, any()}
   def create_event(attrs) do
-    %ClipEvent{}
-    |> ClipEvent.changeset(attrs)
+    %ReviewEvent{}
+    |> ReviewEvent.changeset(attrs)
     |> Repo.insert()
   end
 
@@ -188,7 +188,7 @@ defmodule Heaters.Events do
   Legacy function for backwards compatibility.
   Will be deprecated once all callers are updated to use the new functions.
   """
-  @spec log_clip_action!(integer(), String.t(), String.t()) :: ClipEvent.t()
+  @spec log_clip_action!(integer(), String.t(), String.t()) :: ReviewEvent.t()
   def log_clip_action!(clip_id, action, reviewer_id) do
     case log_review_action(clip_id, action, reviewer_id) do
       {:ok, event} -> event

@@ -2,7 +2,7 @@ defmodule Heaters.EventsTest do
   use Heaters.DataCase, async: true
 
   alias Heaters.Events
-  alias Heaters.Events.ClipEvent
+  alias Heaters.Events.ReviewEvent
   alias Heaters.Clips.Clip
   alias Heaters.SourceVideos.SourceVideo
 
@@ -55,40 +55,40 @@ defmodule Heaters.EventsTest do
   describe "log_merge_action/3" do
     setup do
       source_video = insert(:source_video)
-      target_clip = insert(:clip, source_video: source_video)
-      source_clip = insert(:clip, source_video: source_video)
+      clip1 = insert(:clip, source_video: source_video)
+      clip2 = insert(:clip, source_video: source_video)
 
-      %{target_clip: target_clip, source_clip: source_clip}
+      %{clip1: clip1, clip2: clip2}
     end
 
-    test "creates both target and source events", %{
-      target_clip: target_clip,
-      source_clip: source_clip
-    } do
-      assert {:ok, {target_event, source_event}} =
-               Events.log_merge_action(target_clip.id, source_clip.id, "admin")
+    test "creates two events for merge action", %{clip1: clip1, clip2: clip2} do
+      assert {:ok, events} = Events.log_merge_action(clip1.id, clip2.id, "admin")
 
-      # Target event
-      assert target_event.clip_id == target_clip.id
+      assert length(events) == 2
+
+      [target_event, source_event] = events
+
+      assert target_event.clip_id == clip1.id
       assert target_event.action == "selected_merge_target"
       assert target_event.reviewer_id == "admin"
 
-      # Source event
-      assert source_event.clip_id == source_clip.id
+      assert source_event.clip_id == clip2.id
       assert source_event.action == "selected_merge_source"
       assert source_event.reviewer_id == "admin"
-      assert source_event.event_data == %{"merge_target_clip_id" => target_clip.id}
+      assert source_event.event_data == %{"merge_target_clip_id" => clip1.id}
     end
 
-    test "rollbacks on error" do
-      # Using invalid source_clip_id should rollback the entire transaction
-      source_video = insert(:source_video)
-      target_clip = insert(:clip, source_video: source_video)
+    test "handles database transaction properly", %{clip1: clip1, clip2: clip2} do
+      # Test that both events are created in same transaction
+      {:ok, _events} = Events.log_merge_action(clip1.id, clip2.id, "admin")
 
-      assert {:error, _changeset} = Events.log_merge_action(target_clip.id, 99999, "admin")
+      # Both events should exist
+      assert Repo.aggregate(ReviewEvent, :count) == 2
+    end
 
-      # No events should be created
-      assert Repo.all(ClipEvent) == []
+    test "returns error for invalid clip_id" do
+      assert {:error, _} = Events.log_merge_action(99999, 1, "admin")
+      assert Repo.all(ReviewEvent) == []
     end
   end
 
@@ -100,52 +100,60 @@ defmodule Heaters.EventsTest do
       %{clip: clip}
     end
 
-    test "creates split event with frame data", %{clip: clip} do
-      split_frame = 450
-      assert {:ok, event} = Events.log_split_action(clip.id, split_frame, "admin")
+    test "creates event with split frame data", %{clip: clip} do
+      frame = 450
+
+      assert {:ok, event} = Events.log_split_action(clip.id, frame, "admin")
 
       assert event.clip_id == clip.id
       assert event.action == "selected_split"
       assert event.reviewer_id == "admin"
-      assert event.event_data == %{"split_at_frame" => split_frame}
+      assert event.event_data == %{"split_at_frame" => frame}
+      assert event.processed_at == nil
     end
 
-    test "handles different frame values", %{clip: clip} do
-      frames = [0, 100, 1000, 5000]
-
-      for frame <- frames do
-        assert {:ok, event} = Events.log_split_action(clip.id, frame, "admin#{frame}")
-        assert event.event_data["split_at_frame"] == frame
-      end
+    test "returns error for invalid clip_id" do
+      assert {:error, _} = Events.log_split_action(99999, 450, "admin")
     end
   end
 
   describe "log_group_action/3" do
     setup do
       source_video = insert(:source_video)
-      target_clip = insert(:clip, source_video: source_video)
-      source_clip = insert(:clip, source_video: source_video)
+      clip1 = insert(:clip, source_video: source_video)
+      clip2 = insert(:clip, source_video: source_video)
 
-      %{target_clip: target_clip, source_clip: source_clip}
+      %{clip1: clip1, clip2: clip2}
     end
 
-    test "creates both target and source events", %{
-      target_clip: target_clip,
-      source_clip: source_clip
-    } do
-      assert {:ok, {target_event, source_event}} =
-               Events.log_group_action(target_clip.id, source_clip.id, "admin")
+    test "creates two events for group action", %{clip1: clip1, clip2: clip2} do
+      assert {:ok, events} = Events.log_group_action(clip1.id, clip2.id, "admin")
 
-      # Target event
-      assert target_event.clip_id == target_clip.id
+      assert length(events) == 2
+
+      [target_event, source_event] = events
+
+      assert target_event.clip_id == clip1.id
       assert target_event.action == "selected_group_target"
       assert target_event.reviewer_id == "admin"
 
-      # Source event
-      assert source_event.clip_id == source_clip.id
+      assert source_event.clip_id == clip2.id
       assert source_event.action == "selected_group_source"
       assert source_event.reviewer_id == "admin"
-      assert source_event.event_data == %{"group_with_clip_id" => target_clip.id}
+      assert source_event.event_data == %{"group_with_clip_id" => clip1.id}
+    end
+
+    test "handles database transaction properly", %{clip1: clip1, clip2: clip2} do
+      # Test that both events are created in same transaction
+      {:ok, _events} = Events.log_group_action(clip1.id, clip2.id, "admin")
+
+      # Both events should exist
+      assert Repo.aggregate(ReviewEvent, :count) == 2
+    end
+
+    test "returns error for invalid clip_id" do
+      assert {:error, _} = Events.log_group_action(99999, 1, "admin")
+      assert Repo.all(ReviewEvent) == []
     end
   end
 

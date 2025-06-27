@@ -2,22 +2,22 @@ defmodule Heaters.Events.EventProcessor do
   @moduledoc """
   Event sourcing - read side (event processing).
 
-  This module handles the processing of events that have been created by the Events context.
+  This module handles the processing of events that have been created by the ReviewEvents context.
   It follows the CQRS pattern where this module handles the "query" side -
   reading events from the event store and converting them into worker jobs.
 
-  The write side (event creation) is handled by Events.
+  The write side (event creation) is handled by ReviewEvents.
   """
 
   import Ecto.Query, warn: false
 
-  alias Heaters.Events.ClipEvent
+  alias Heaters.Events.ReviewEvent
   alias Heaters.Repo
   alias Heaters.Workers.Clips.{SplitWorker, MergeWorker}
   require Logger
 
   @doc """
-  Finds unprocessed clip events and enqueues the appropriate worker jobs.
+  Finds unprocessed review events and enqueues the appropriate worker jobs.
 
   This function is designed to be called periodically by the Dispatcher. It looks
   for "selected_split" and "selected_merge_source" events that haven't been
@@ -78,11 +78,11 @@ defmodule Heaters.Events.EventProcessor do
   Get all unprocessed events that require worker job creation.
 
   Currently processes "selected_split" and "selected_merge_source" events.
-  Returns a list of ClipEvent structs.
+  Returns a list of ReviewEvent structs.
   """
-  @spec get_unprocessed_events() :: list(ClipEvent.t())
+  @spec get_unprocessed_events() :: list(ReviewEvent.t())
   def get_unprocessed_events do
-    from(e in ClipEvent,
+    from(e in ReviewEvent,
       where: is_nil(e.processed_at) and e.action in ["selected_split", "selected_merge_source"]
     )
     |> Repo.all()
@@ -91,15 +91,15 @@ defmodule Heaters.Events.EventProcessor do
   @doc """
   Mark a single event as processed by setting its processed_at timestamp.
   """
-  @spec mark_event_processed(integer()) :: {:ok, ClipEvent.t()} | {:error, any()}
+  @spec mark_event_processed(integer()) :: {:ok, ReviewEvent.t()} | {:error, any()}
   def mark_event_processed(event_id) do
-    case Repo.get(ClipEvent, event_id) do
+    case Repo.get(ReviewEvent, event_id) do
       nil ->
         {:error, :not_found}
 
       event ->
         event
-        |> ClipEvent.changeset(%{processed_at: DateTime.utc_now()})
+        |> ReviewEvent.changeset(%{processed_at: DateTime.utc_now()})
         |> Repo.update()
     end
   end
@@ -110,18 +110,18 @@ defmodule Heaters.Events.EventProcessor do
   """
   @spec mark_events_processed(list(integer())) :: {integer(), any()}
   def mark_events_processed(event_ids) when is_list(event_ids) do
-    from(e in ClipEvent, where: e.id in ^event_ids)
+    from(e in ReviewEvent, where: e.id in ^event_ids)
     |> Repo.update_all(set: [processed_at: DateTime.utc_now()])
   end
 
   @doc """
   Build an appropriate worker job for the given event.
 
-  Converts ClipEvent structs into Oban job structs that can be enqueued.
+  Converts ReviewEvent structs into Oban job structs that can be enqueued.
   Returns the job struct or nil if the event cannot be processed.
   """
-  @spec build_worker_job(ClipEvent.t()) :: Oban.Job.t() | nil
-  def build_worker_job(%ClipEvent{action: "selected_split"} = event) do
+  @spec build_worker_job(ReviewEvent.t()) :: Oban.Job.t() | nil
+  def build_worker_job(%ReviewEvent{action: "selected_split"} = event) do
     # Use Access.key to handle both atom and string keys gracefully.
     split_at_frame = get_in(event.event_data, [Access.key("split_at_frame")])
 
@@ -143,7 +143,7 @@ defmodule Heaters.Events.EventProcessor do
     end
   end
 
-  def build_worker_job(%ClipEvent{action: "selected_merge_source"} = event) do
+  def build_worker_job(%ReviewEvent{action: "selected_merge_source"} = event) do
     # Use Access.key to handle both atom and string keys gracefully.
     target_clip_id = get_in(event.event_data, [Access.key("merge_target_clip_id")])
 
@@ -165,7 +165,7 @@ defmodule Heaters.Events.EventProcessor do
     end
   end
 
-  def build_worker_job(%ClipEvent{action: action}) do
+  def build_worker_job(%ReviewEvent{action: action}) do
     Logger.debug("EventProcessor: No worker job defined for action: #{action}")
     nil
   end
@@ -177,9 +177,9 @@ defmodule Heaters.Events.EventProcessor do
   """
   @spec get_processing_stats() :: map()
   def get_processing_stats do
-    total_query = from(e in ClipEvent, select: count())
-    processed_query = from(e in ClipEvent, where: not is_nil(e.processed_at), select: count())
-    unprocessed_query = from(e in ClipEvent, where: is_nil(e.processed_at), select: count())
+    total_query = from(e in ReviewEvent, select: count())
+    processed_query = from(e in ReviewEvent, where: not is_nil(e.processed_at), select: count())
+    unprocessed_query = from(e in ReviewEvent, where: is_nil(e.processed_at), select: count())
 
     %{
       total_events: Repo.one(total_query),

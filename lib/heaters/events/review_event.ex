@@ -1,4 +1,4 @@
-defmodule Heaters.Events.ClipEvent do
+defmodule Heaters.Events.ReviewEvent do
   use Heaters.Schema
 
   @type t() :: %__MODULE__{
@@ -13,7 +13,7 @@ defmodule Heaters.Events.ClipEvent do
           processed_at: DateTime.t() | nil
         }
 
-  schema "clip_events" do
+  schema "review_events" do
     field(:action, :string)
     field(:reviewer_id, :string)
     field(:event_data, :map)

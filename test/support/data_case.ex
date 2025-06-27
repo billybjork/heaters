@@ -120,8 +120,8 @@ defmodule Heaters.DataCase do
 
     attrs = Map.merge(default_attrs, Enum.into(attrs, %{}))
 
-    %Heaters.Events.ClipEvent{}
-    |> Heaters.Events.ClipEvent.changeset(attrs)
+    %Heaters.Events.ReviewEvent{}
+    |> Heaters.Events.ReviewEvent.changeset(attrs)
     |> Heaters.Repo.insert!()
   end
 
