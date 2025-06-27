@@ -1,16 +1,16 @@
-defmodule Heaters.Clips.Embedding.Workflow do
+defmodule Heaters.Clips.Embeddings.Workflow do
   @moduledoc """
-  State management and workflow functions for embedding generation.
+  Embedding workflow state management.
 
-  Handles state transitions, embedding creation/completion flow,
-  and error handling workflows.
+  Handles the embedding generation lifecycle including state transitions,
+  data validation, and result processing for the async embedding pipeline.
   """
 
   import Ecto.Query, warn: false
   alias Heaters.Repo
   alias Heaters.Clips.Clip
-  alias Heaters.Clips.Embedding.Schema, as: Embedding
-  alias Heaters.Clips.Embedding.Types.EmbedResult
+  alias Heaters.Clips.Embeddings.Embedding
+  alias Heaters.Clips.Embeddings.Types.EmbedResult
   alias Heaters.Clips.Queries, as: ClipQueries
   require Logger
 

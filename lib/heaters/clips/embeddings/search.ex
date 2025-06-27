@@ -1,15 +1,16 @@
-defmodule Heaters.Clips.Embedding.Search do
+defmodule Heaters.Clips.Embeddings.Search do
   @moduledoc """
-  Search and discovery functions for embedded clips.
+  Similarity search and embedding lookup functions.
 
-  Handles vector similarity searches, random embedded clip selection,
-  and filter options for the embedding search interface.
+  Provides vector similarity search capabilities using pgvector,
+  pagination support, and filter options for finding relevant clips
+  based on their embeddings.
   """
 
   import Ecto.Query, warn: false
   alias Heaters.Repo
   alias Heaters.Clips.Clip
-  alias Heaters.Clips.Embedding.Schema, as: Embedding
+  alias Heaters.Clips.Embeddings.Embedding
 
   @doc "All available model names, generation strategies, and source videos for embedded clips"
   def embedded_filter_opts do

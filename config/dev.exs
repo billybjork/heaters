@@ -19,9 +19,11 @@ case System.get_env("DEV_DATABASE_URL") do
         in_docker ->
           # Running inside Docker container, connect to service name
           {"app-db-dev", 5432}
+
         use_docker_db ->
           # Running locally but using Docker Compose database
           {"localhost", 5433}
+
         true ->
           # Local PostgreSQL setup
           {"localhost", 5432}

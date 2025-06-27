@@ -1,4 +1,4 @@
-defmodule Heaters.Clips.Embedding do
+defmodule Heaters.Clips.Embeddings do
   @moduledoc """
   Embedding and similarity functions for clips.
 
@@ -8,14 +8,14 @@ defmodule Heaters.Clips.Embedding do
 
   This module serves as the main public API and delegates to specialized
   modules for specific functionality:
-  - `Heaters.Clips.Embedding.Search` for similarity search and discovery
-  - `Heaters.Clips.Embedding.Workflow` for state management and embedding workflow
-  - `Heaters.Clips.Embedding.Types` for shared type definitions
+  - `Heaters.Clips.Embeddings.Search` for similarity search and discovery
+  - `Heaters.Clips.Embeddings.Workflow` for state management and embedding workflow
+  - `Heaters.Clips.Embeddings.Types` for shared type definitions
   """
 
-  alias Heaters.Clips.Embedding.Search
-  alias Heaters.Clips.Embedding.Workflow
-  alias Heaters.Clips.Embedding.Types.EmbedResult
+  alias Heaters.Clips.Embeddings.Search
+  alias Heaters.Clips.Embeddings.Workflow
+  alias Heaters.Clips.Embeddings.Types.EmbedResult
 
   # Re-export functions from specialized modules
   defdelegate embedded_filter_opts(), to: Search
@@ -31,13 +31,21 @@ defmodule Heaters.Clips.Embedding do
   # Re-export the EmbedResult type for backward compatibility
   defmodule EmbedResult do
     @moduledoc """
-    Legacy alias for Heaters.Clips.Embedding.Types.EmbedResult.
-    Use Heaters.Clips.Embedding.Types.EmbedResult directly for new code.
+    Legacy alias for Heaters.Clips.Embeddings.Types.EmbedResult.
+    Use Heaters.Clips.Embeddings.Types.EmbedResult directly for new code.
     """
-    defstruct Heaters.Clips.Embedding.Types.EmbedResult.__struct__()
-              |> Map.keys()
-              |> Enum.reject(&(&1 == :__struct__))
+    defstruct [
+      :status,
+      :clip_id,
+      :embedding_id,
+      :model_name,
+      :generation_strategy,
+      :embedding_dim,
+      :metadata,
+      :duration_ms,
+      :processed_at
+    ]
 
-    @type t :: Heaters.Clips.Embedding.Types.EmbedResult.t()
+    @type t :: Heaters.Clips.Embeddings.Types.EmbedResult.t()
   end
 end

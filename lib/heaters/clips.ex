@@ -9,7 +9,7 @@ defmodule Heaters.Clips do
 
   - **Review**: Clip review workflow and queue management (`Heaters.Clips.Review`)
   - **Operations**: Video processing operations (`Heaters.Clips.Operations`)
-  - **Embedding**: Embedding generation and queries (`Heaters.Clips.Embedding`)
+  - **Embeddings**: Embedding generation and queries (`Heaters.Clips.Embeddings`)
 
   ## Schema
 
@@ -31,7 +31,7 @@ defmodule Heaters.Clips do
   """
 
   # Delegated functions for common operations
-  alias Heaters.Clips.{Review, Operations, Embedding, Queries}
+  alias Heaters.Clips.{Review, Operations, Embeddings, Queries}
 
   # Review operations
   defdelegate next_pending_review_clips(limit, exclude_ids \\ []), to: Review
@@ -56,13 +56,13 @@ defmodule Heaters.Clips do
   defdelegate process_sprite_success(clip, result), to: Operations
 
   # Embedding operations (formerly Embed)
-  defdelegate start_embedding(clip_id), to: Embedding
-  defdelegate complete_embedding(clip_id, embedding_data), to: Embedding
-  defdelegate process_embedding_success(clip, result), to: Embedding
-  defdelegate has_embedding?(clip_id, model_name, generation_strategy), to: Embedding
-  defdelegate similar_clips(main_clip_id, filters, asc?, page, per), to: Embedding
-  defdelegate random_embedded_clip(filters), to: Embedding
-  defdelegate embedded_filter_opts(), to: Embedding
+  defdelegate start_embedding(clip_id), to: Embeddings
+  defdelegate complete_embedding(clip_id, embedding_data), to: Embeddings
+  defdelegate process_embedding_success(clip, result), to: Embeddings
+  defdelegate has_embedding?(clip_id, model_name, generation_strategy), to: Embeddings
+  defdelegate similar_clips(main_clip_id, filters, asc?, page, per), to: Embeddings
+  defdelegate random_embedded_clip(filters), to: Embeddings
+  defdelegate embedded_filter_opts(), to: Embeddings
 
   # Query operations
   defdelegate get_clip(id), to: Queries

@@ -29,7 +29,8 @@ defmodule Heaters.Events.EventProcessorTest do
           processed_at: DateTime.utc_now()
         )
 
-      other_event = insert(:review_event, clip: clip, action: "selected_approve", processed_at: nil)
+      other_event =
+        insert(:review_event, clip: clip, action: "selected_approve", processed_at: nil)
 
       unprocessed = EventProcessor.get_unprocessed_events()
 
