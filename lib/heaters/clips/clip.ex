@@ -33,7 +33,7 @@ defmodule Heaters.Clips.Clip do
     field(:end_frame, :integer)
     field(:start_time_seconds, :float)
     field(:end_time_seconds, :float)
-    field(:ingest_state, :string, default: "new")
+    field(:ingest_state, :string, default: "spliced")
     field(:last_error, :string)
     field(:retry_count, :integer, default: 0)
 

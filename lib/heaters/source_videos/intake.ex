@@ -43,7 +43,6 @@ defmodule Heaters.SourceVideos.Intake do
 
     fields = %{
       title: title,
-      ingest_state: "new",
       original_url: if(is_http?, do: url, else: nil),
       web_scraped: is_http?,
       inserted_at: now,
