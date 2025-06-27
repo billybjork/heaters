@@ -9,6 +9,7 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
 
   alias Heaters.Infrastructure.S3
   alias Heaters.Clips.Clip
+  alias Heaters.Videos.Queries, as: VideoQueries
 
   @doc """
   Download a clip's video file to a local directory.
@@ -40,7 +41,7 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
   @spec upload_sprite(String.t(), Clip.t(), String.t()) :: {:ok, map()} | {:error, any()}
   def upload_sprite(local_sprite_path, %Clip{} = clip, filename)
       when is_binary(local_sprite_path) and is_binary(filename) do
-    s3_prefix = build_artifact_prefix(clip, "sprites")
+    s3_prefix = build_artifact_prefix(clip, "sprite_sheets")
     s3_key = "#{s3_prefix}/#{filename}"
 
     case S3.upload_file(local_sprite_path, s3_key, operation_name: "SpriteUpload") do
@@ -197,8 +198,17 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
 
   # Private helper functions
 
-  defp build_artifact_prefix(%Clip{id: clip_id, source_video_id: source_video_id}, artifact_type) do
-    "source_videos/#{source_video_id}/clips/#{clip_id}/#{artifact_type}"
+  defp build_artifact_prefix(%Clip{source_video_id: source_video_id}, artifact_type) do
+    # Get the source video to access the title
+    case VideoQueries.get_source_video(source_video_id) do
+      {:ok, source_video} ->
+        sanitized_title = Heaters.Utils.sanitize_filename(source_video.title)
+        "clip_artifacts/#{sanitized_title}/#{artifact_type}"
+
+      {:error, _} ->
+        # Fallback to ID-based structure if title lookup fails
+        "clip_artifacts/video_#{source_video_id}/#{artifact_type}"
+    end
   end
 
   defp get_file_size(file_path) do

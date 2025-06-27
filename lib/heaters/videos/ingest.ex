@@ -58,6 +58,8 @@ defmodule Heaters.Videos.Ingest do
       |> maybe_put(:fps, metadata[:fps])
       |> maybe_put(:width, metadata[:width])
       |> maybe_put(:height, metadata[:height])
+      # Extract title from nested metadata
+      |> maybe_put(:title, get_in(metadata, [:metadata, :title]))
 
     with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
       update_source_video(source_video, attrs)
@@ -117,11 +119,21 @@ defmodule Heaters.Videos.Ingest do
   end
 
   @doc """
+  Build S3 prefix for source video storage.
+  """
+  @spec build_source_video_s3_key(SourceVideo.t()) :: String.t()
+  def build_source_video_s3_key(%SourceVideo{title: title}) do
+    sanitized_title = Heaters.Utils.sanitize_filename(title)
+    "source_videos/#{sanitized_title}.mp4"
+  end
+
+  @doc """
   Build S3 prefix for splice outputs (clips).
   """
   @spec build_s3_prefix(SourceVideo.t()) :: String.t()
-  def build_s3_prefix(%SourceVideo{id: id}) do
-    "source_videos/#{id}/clips"
+  def build_s3_prefix(%SourceVideo{title: title}) do
+    sanitized_title = Heaters.Utils.sanitize_filename(title)
+    "clips/#{sanitized_title}"
   end
 
   @doc """

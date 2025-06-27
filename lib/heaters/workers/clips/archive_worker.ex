@@ -43,9 +43,9 @@ defmodule Heaters.Workers.Clips.ArchiveWorker do
     else
       # Handle cases where the clip is not found or already archived.
       # Clip doesn't exist, work is done.
-      {:error, :not_found} -> :ok
-      # Already archived, work is done.
-      {:error, :already_processed} -> :ok
+      {:error, :not_found} -> {:error, :not_found}
+      # Already archived, work is done - return error to prevent enqueue_next
+      {:error, :already_processed} -> {:error, :already_processed}
       # Propagate other errors.
       {:error, reason} -> {:error, reason}
     end

@@ -8,6 +8,7 @@ defmodule Heaters.Clips.Operations.Shared.FileNaming do
   """
 
   alias Heaters.Utils
+  alias Heaters.Videos.Queries, as: VideoQueries
 
   @doc """
   Generate a base filename for a clip with sanitization.
@@ -49,13 +50,22 @@ defmodule Heaters.Clips.Operations.Shared.FileNaming do
 
   ## Examples
 
-      iex> FileNaming.build_s3_prefix(123, 456, "sprites")
-      "source_videos/123/clips/456/sprites"
+      iex> FileNaming.build_s3_prefix(123, 456, "sprite_sheets")
+      "clip_artifacts/Berlin_Skies_Snow_VANS/sprite_sheets"
   """
   @spec build_s3_prefix(integer(), integer(), String.t()) :: String.t()
-  def build_s3_prefix(source_video_id, clip_id, artifact_type)
-      when is_integer(source_video_id) and is_integer(clip_id) and is_binary(artifact_type) do
-    "source_videos/#{source_video_id}/clips/#{clip_id}/#{artifact_type}"
+  def build_s3_prefix(source_video_id, _clip_id, artifact_type)
+      when is_integer(source_video_id) and is_binary(artifact_type) do
+    # Get the source video to access the title
+    case VideoQueries.get_source_video(source_video_id) do
+      {:ok, source_video} ->
+        sanitized_title = Heaters.Utils.sanitize_filename(source_video.title)
+        "clip_artifacts/#{sanitized_title}/#{artifact_type}"
+
+      {:error, _} ->
+        # Fallback to ID-based structure if title lookup fails
+        "clip_artifacts/video_#{source_video_id}/#{artifact_type}"
+    end
   end
 
   @doc """

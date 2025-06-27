@@ -236,7 +236,7 @@ def run_splice(
                     "-y", str(output_path)
                 ]
                 
-                run_ffmpeg_command(["ffmpeg"] + ffmpeg_args, f"Extracting clip {i+1}")
+                run_ffmpeg_command(ffmpeg_args, f"Extracting clip {i+1}")
                 
                 # Upload to S3
                 s3_key = f"{output_s3_prefix}/{output_filename}"

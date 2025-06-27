@@ -232,24 +232,33 @@ defmodule Heaters.Infrastructure.S3 do
   Build S3 path for a clip and operation type.
 
   Helper function to generate consistent S3 paths across transform operations.
+  Note: This function is deprecated. Use the new structure via Operations.build_artifact_prefix/2.
 
   ## Examples
 
       S3.build_clip_path(clip, "splits")
-      # Returns: "source_videos/123/clips/splits"
+      # Returns: "clips/Berlin_Skies_Snow_VANS/splits"
 
-      S3.build_clip_path(clip, "sprites", "sprite_sheet.jpg")
-      # Returns: "source_videos/123/clips/456/sprites/sprite_sheet.jpg"
+      S3.build_clip_path(clip, "sprite_sheets", "sprite_sheet.jpg")
+      # Returns: "clip_artifacts/Berlin_Skies_Snow_VANS/sprite_sheets/sprite_sheet.jpg"
   """
   @spec build_clip_path(map(), String.t(), String.t() | nil) :: String.t()
   def build_clip_path(clip, operation_type, filename \\ nil) do
-    base_path = "source_videos/#{clip.source_video_id}/clips"
+    # This function is deprecated but kept for backwards compatibility
+    # Use Operations.build_artifact_prefix/2 for new code
 
-    path =
-      case operation_type do
-        "splits" -> "#{base_path}/splits"
-        _ -> "#{base_path}/#{clip.id}/#{operation_type}"
-      end
+    # Get title through source_video_id lookup (expensive, should be avoided)
+    alias Heaters.Videos.Queries, as: VideoQueries
+
+    title = case VideoQueries.get_source_video(clip.source_video_id) do
+      {:ok, source_video} -> Heaters.Utils.sanitize_filename(source_video.title)
+      {:error, _} -> "video_#{clip.source_video_id}"
+    end
+
+    path = case operation_type do
+      "splits" -> "clips/#{title}/splits"
+      _ -> "clip_artifacts/#{title}/#{operation_type}"
+    end
 
     if filename do
       "#{path}/#{filename}"

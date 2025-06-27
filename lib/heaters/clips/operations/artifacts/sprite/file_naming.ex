@@ -108,14 +108,14 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.FileNaming do
   ## Examples
 
       iex> clip = %{id: 123, source_video_id: 456}
-      iex> filename = "clip_123_sprite_24fps_w480_c5_1705316245.jpg"
+      iex> filename = "Berlin_Skies_Snow_sprite_sheet_1.jpg"
       iex> FileNaming.build_sprite_s3_key(clip, filename)
-      "source_videos/456/clips/123/sprites/clip_123_sprite_24fps_w480_c5_1705316245.jpg"
+      "clip_artifacts/Berlin_Skies_Snow_VANS/sprite_sheets/Berlin_Skies_Snow_sprite_sheet_1.jpg"
   """
   @spec build_sprite_s3_key(map(), String.t()) :: String.t()
   def build_sprite_s3_key(%{id: clip_id, source_video_id: source_video_id}, filename)
       when is_integer(clip_id) and is_integer(source_video_id) and is_binary(filename) do
-    prefix = FileNaming.build_s3_prefix(source_video_id, clip_id, "sprites")
+    prefix = FileNaming.build_s3_prefix(source_video_id, clip_id, "sprite_sheets")
     "#{prefix}/#{filename}"
   end
 

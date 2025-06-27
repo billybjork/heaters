@@ -49,15 +49,16 @@ defmodule Heaters.Clips.Operations.Edits.Split.FileNaming do
   Generates S3 key for uploading a split clip.
 
   ## Parameters
-  - `source_video_id`: ID of the source video
+  - `title`: Source video title (sanitized)
   - `filename`: Filename of the split clip
 
   ## Returns
   - S3 key string for upload
   """
-  @spec generate_s3_key(integer(), String.t()) :: String.t()
-  def generate_s3_key(source_video_id, filename) do
-    "source_videos/#{source_video_id}/clips/splits/#{filename}"
+  @spec generate_s3_key(String.t(), String.t()) :: String.t()
+  def generate_s3_key(title, filename) do
+    sanitized_title = Utils.sanitize_filename(title)
+    "clips/#{sanitized_title}/splits/#{filename}"
   end
 
   @doc """
@@ -143,13 +144,14 @@ defmodule Heaters.Clips.Operations.Edits.Split.FileNaming do
   Generates upload prefix for split clips.
 
   ## Parameters
-  - `source_video_id`: ID of the source video
+  - `title`: Source video title
 
   ## Returns
   - S3 prefix string for split clips
   """
-  @spec generate_upload_prefix(integer()) :: String.t()
-  def generate_upload_prefix(source_video_id) do
-    "source_videos/#{source_video_id}/clips/splits"
+  @spec generate_upload_prefix(String.t()) :: String.t()
+  def generate_upload_prefix(title) do
+    sanitized_title = Utils.sanitize_filename(title)
+    "clips/#{sanitized_title}/splits"
   end
 end

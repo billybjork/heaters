@@ -23,6 +23,8 @@ import boto3
 import yt_dlp
 from botocore.exceptions import ClientError, NoCredentialsError
 
+from py.utils.filename_utils import sanitize_filename
+
 # --- Logging Configuration ---
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -76,7 +78,7 @@ class S3TransferProgress:
 def run_ingest(
     source_video_id: int, 
     input_source: str, 
-    output_s3_prefix: str,
+    output_s3_prefix: str = None,
     re_encode_for_qt: bool = True,
     **kwargs
 ):
@@ -87,7 +89,7 @@ def run_ingest(
     Args:
         source_video_id: The ID of the source video (for reference only)
         input_source: URL or local file path to the video
-        output_s3_prefix: S3 prefix where to upload the processed video
+        output_s3_prefix: S3 prefix where to upload the processed video (deprecated, constructs own path)
         re_encode_for_qt: Re-encode for QuickTime compatibility
         **kwargs: Additional options
     
@@ -95,7 +97,7 @@ def run_ingest(
         dict: Structured data about the processed video including S3 path and metadata
     """
     logger.info(f"RUNNING INGEST for source_video_id: {source_video_id}")
-    logger.info(f"Input: '{input_source}', Output prefix: '{output_s3_prefix}'")
+    logger.info(f"Input: '{input_source}'")
 
     # Get S3 resources from environment (provided by Elixir)
     s3_bucket_name = os.getenv("S3_BUCKET_NAME")
@@ -152,7 +154,14 @@ def run_ingest(
                 final_video_path = initial_video_path
 
             # Step 4: Upload to S3
-            s3_key = f"{output_s3_prefix}/{final_video_path.name}"
+            # Use the video title for S3 key instead of numeric prefix
+            video_title = metadata.get("title", f"video_{source_video_id}")
+            
+            # Sanitize title for filesystem/S3 compatibility
+            sanitized_title = sanitize_filename(video_title)
+            
+            # Generate S3 key for source video
+            s3_key = f"source_videos/{sanitized_title}.mp4"
             upload_to_s3(s3_client, s3_bucket_name, final_video_path, s3_key)
             
             # Return structured data for Elixir to process
@@ -418,7 +427,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ingest video processing task")
     parser.add_argument("--source-video-id", type=int, required=True)
     parser.add_argument("--input-source", required=True)
-    parser.add_argument("--output-s3-prefix", required=True)
+    parser.add_argument("--output-s3-prefix", required=False)
     parser.add_argument("--re-encode-for-qt", action="store_true", default=True)
     
     args = parser.parse_args()

@@ -74,6 +74,7 @@ defmodule Heaters.Clips.Operations do
   alias Heaters.Repo
   alias Heaters.Clips.Clip
   alias Heaters.Clips.Queries, as: ClipQueries
+  alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Clips.Operations.Artifacts.ClipArtifact
   alias Heaters.Clips.Operations.Shared.Types
   require Logger
@@ -120,21 +121,29 @@ defmodule Heaters.Clips.Operations do
   Build S3 prefix for artifact outputs.
 
   Creates a consistent S3 path structure for storing transformation artifacts.
-  Used by all transformation modules to ensure consistent storage patterns.
 
   ## Examples
 
       # For keyframes
       prefix = Operations.build_artifact_prefix(clip, "keyframes")
-      # Returns: "source_videos/123/clips/456/keyframes"
+      # Returns: "clip_artifacts/Berlin_Skies_Snow_VANS/keyframes"
 
       # For sprites
-      prefix = Operations.build_artifact_prefix(clip, "sprites")
-      # Returns: "source_videos/123/clips/456/sprites"
+      prefix = Operations.build_artifact_prefix(clip, "sprite_sheets")
+      # Returns: "clip_artifacts/Berlin_Skies_Snow_VANS/sprite_sheets"
   """
   @spec build_artifact_prefix(Clip.t(), String.t()) :: String.t()
-  def build_artifact_prefix(%Clip{id: id, source_video_id: source_video_id}, artifact_type) do
-    "source_videos/#{source_video_id}/clips/#{id}/#{artifact_type}"
+  def build_artifact_prefix(%Clip{source_video_id: source_video_id}, artifact_type) do
+    # Get the source video to access the title
+    case VideoQueries.get_source_video(source_video_id) do
+      {:ok, source_video} ->
+        sanitized_title = Heaters.Utils.sanitize_filename(source_video.title)
+        "clip_artifacts/#{sanitized_title}/#{artifact_type}"
+
+      {:error, _} ->
+        # Fallback to ID-based structure if title lookup fails
+        "clip_artifacts/video_#{source_video_id}/#{artifact_type}"
+    end
   end
 
   @doc """

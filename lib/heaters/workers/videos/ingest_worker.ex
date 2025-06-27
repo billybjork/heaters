@@ -21,11 +21,10 @@ defmodule Heaters.Workers.Videos.IngestWorker do
         "IngestWorker: Running PyRunner for source_video_id: #{source_video_id}, URL: #{updated_video.original_url}"
       )
 
-      # Python task now receives explicit S3 output prefix and returns data instead of managing state
+      # Python task constructs its own S3 path based on video title
       py_args = %{
         source_video_id: updated_video.id,
         input_source: updated_video.original_url,
-        output_s3_prefix: Ingest.build_s3_prefix(updated_video),
         re_encode_for_qt: true
       }
 
@@ -36,7 +35,9 @@ defmodule Heaters.Workers.Videos.IngestWorker do
           )
 
           # Elixir handles the state transition and metadata update
-          case Ingest.complete_downloading(source_video_id, result) do
+          # Convert string keys to atom keys for the metadata
+          metadata = for {key, value} <- result, into: %{}, do: {String.to_atom(key), value}
+          case Ingest.complete_downloading(source_video_id, metadata) do
             {:ok, _updated_video} ->
               # Store the video ID for enqueue_next/1 to use
               Process.put(:source_video_id, updated_video.id)
@@ -69,7 +70,8 @@ defmodule Heaters.Workers.Videos.IngestWorker do
           "IngestWorker: source_video_id #{source_video_id} already processed, skipping"
         )
 
-        :ok
+        # Return error to prevent enqueue_next from being called
+        {:error, :already_processed}
 
       {:error, reason} ->
         Logger.error(

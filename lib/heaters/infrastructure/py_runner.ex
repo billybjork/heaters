@@ -211,7 +211,13 @@ defmodule Heaters.Infrastructure.PyRunner do
         if pubsub_topic, do: Endpoint.broadcast(pubsub_topic, "progress", %{line: trimmed})
         handle_port_messages(port, [trimmed | buffer], pubsub_topic, timeout)
 
-      {^port, {:data, line}} ->
+      {^port, {:data, {:noeol, line}}} ->
+        trimmed = String.trim(line)
+        Logger.info("[py] " <> trimmed)
+        if pubsub_topic, do: Endpoint.broadcast(pubsub_topic, "progress", %{line: trimmed})
+        handle_port_messages(port, [trimmed | buffer], pubsub_topic, timeout)
+
+      {^port, {:data, line}} when is_binary(line) ->
         trimmed = String.trim(line)
         Logger.info("[py] " <> trimmed)
         if pubsub_topic, do: Endpoint.broadcast(pubsub_topic, "progress", %{line: trimmed})
