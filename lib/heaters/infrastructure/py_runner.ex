@@ -270,14 +270,24 @@ defmodule Heaters.Infrastructure.PyRunner do
 
   @spec extract_final_json([String.t()]) :: {:ok, map()} | :no_json | {:error, error_reason()}
   defp extract_final_json(lines) do
-    case Enum.find(lines, &String.starts_with?(&1, "FINAL_JSON:")) do
+    # Find the index of the line that starts with FINAL_JSON:
+    final_json_index = Enum.find_index(lines, &String.starts_with?(&1, "FINAL_JSON:"))
+
+    case final_json_index do
       nil ->
         :no_json
 
-      "FINAL_JSON:" <> json ->
-        json = String.trim(json)
+      index ->
+        # Get all lines from FINAL_JSON: onwards (lines are in reverse order)
+        json_lines = Enum.take(lines, index + 1) |> Enum.reverse()
 
-        case Jason.decode(json) do
+        # Extract JSON from the first line and join with remaining lines
+        ["FINAL_JSON:" <> first_json_part | remaining_lines] = json_lines
+
+        # Join all JSON parts together
+        complete_json = [String.trim(first_json_part) | remaining_lines] |> Enum.join("")
+
+        case Jason.decode(complete_json) do
           {:ok, decoded} ->
             {:ok, decoded}
 

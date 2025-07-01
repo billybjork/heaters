@@ -58,60 +58,60 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
   defp run_python_splice_task(source_video) do
     Logger.info("SpliceWorker: Running PyRunner for source_video_id: #{source_video.id}")
 
-    # Python task receives explicit S3 paths and detection parameters
-    py_args = %{
+        # Python task receives explicit S3 paths and detection parameters
+        py_args = %{
       source_video_id: source_video.id,
       input_s3_path: source_video.filepath,
       output_s3_prefix: Ingest.build_s3_prefix(source_video),
-      detection_params: %{threshold: 0.3}
-    }
+          detection_params: %{threshold: 0.3}
+        }
 
-    case PyRunner.run("splice", py_args) do
-      {:ok, %{"result" => %{"clips" => clips_data}}} when is_list(clips_data) ->
-        Logger.info(
-          "SpliceWorker: Successfully received #{length(clips_data)} clips from Python"
-        )
+        case PyRunner.run("splice", py_args) do
+          {:ok, %{"result" => %{"clips" => clips_data}}} when is_list(clips_data) ->
+            Logger.info(
+              "SpliceWorker: Successfully received #{length(clips_data)} clips from Python"
+            )
 
-        # Validate clips data before processing
-        case Ingest.validate_clips_data(clips_data) do
-          :ok ->
-            # Create clips and update source video state in Elixir
+            # Validate clips data before processing
+            case Ingest.validate_clips_data(clips_data) do
+              :ok ->
+                # Create clips and update source video state in Elixir
             case Ingest.create_clips_from_splice(source_video.id, clips_data) do
-              {:ok, clips} ->
+                  {:ok, clips} ->
                 case Ingest.complete_splicing(source_video.id) do
-                  {:ok, _final_video} ->
-                    # Store clips for enqueue_next/1 to use
-                    Process.put(:clips, clips)
-                    :ok
+                      {:ok, _final_video} ->
+                        # Store clips for enqueue_next/1 to use
+                        Process.put(:clips, clips)
+                        :ok
+
+                      {:error, reason} ->
+                        Logger.error(
+                          "SpliceWorker: Failed to mark splicing complete: #{inspect(reason)}"
+                        )
+
+                        {:error, reason}
+                    end
 
                   {:error, reason} ->
-                    Logger.error(
-                      "SpliceWorker: Failed to mark splicing complete: #{inspect(reason)}"
-                    )
-
-                    {:error, reason}
+                    Logger.error("SpliceWorker: Failed to create clips: #{inspect(reason)}")
+                mark_splicing_failed(source_video, reason)
                 end
 
-              {:error, reason} ->
-                Logger.error("SpliceWorker: Failed to create clips: #{inspect(reason)}")
-                mark_splicing_failed(source_video, reason)
+              {:error, validation_error} ->
+                Logger.error("SpliceWorker: Invalid clips data: #{validation_error}")
+            mark_splicing_failed(source_video, validation_error)
             end
 
-          {:error, validation_error} ->
-            Logger.error("SpliceWorker: Invalid clips data: #{validation_error}")
-            mark_splicing_failed(source_video, validation_error)
-        end
+          {:ok, unexpected_result} ->
+            error_message =
+              "Splice script returned unexpected result: #{inspect(unexpected_result)}"
 
-      {:ok, unexpected_result} ->
-        error_message =
-          "Splice script returned unexpected result: #{inspect(unexpected_result)}"
-
-        Logger.error("SpliceWorker: #{error_message}")
+            Logger.error("SpliceWorker: #{error_message}")
         mark_splicing_failed(source_video, error_message)
 
-      {:error, reason} ->
-        error_message = "Splice script failed: #{inspect(reason)}"
-        Logger.error("SpliceWorker: #{error_message}")
+          {:error, reason} ->
+            error_message = "Splice script failed: #{inspect(reason)}"
+            Logger.error("SpliceWorker: #{error_message}")
         mark_splicing_failed(source_video, reason)
     end
   end
