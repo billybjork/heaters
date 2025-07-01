@@ -20,7 +20,7 @@ from pathlib import Path
 import boto3
 import cv2
 from botocore.exceptions import ClientError, NoCredentialsError
-from utils import sanitize_filename
+from py.utils.filename_utils import sanitize_filename
 
 # --- Logging Configuration ---
 logging.basicConfig(

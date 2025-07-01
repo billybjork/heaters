@@ -65,6 +65,14 @@ config :heaters, Heaters.Infrastructure.PyRunner,
   working_dir: System.get_env("PYTHON_WORKING_DIR") || File.cwd!(),
   runner_script: "py/runner.py"
 
+# Configure native splice functionality
+config :heaters, :splice_config,
+  monitoring: %{
+    max_processing_time_ms: 900_000,  # 15 minutes
+    memory_limit_mb: 2048,
+    log_performance_metrics: true
+  }
+
 # Configure ExAws for S3 operations
 config :ex_aws,
   access_key_id: [{:system, "AWS_ACCESS_KEY_ID"}, :instance_role],

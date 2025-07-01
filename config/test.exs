@@ -12,10 +12,10 @@ config :heaters, Oban, testing: :manual
 # to provide built-in test partitioning in CI environment.
 # Run `mix help test` for more information.
 config :heaters, Heaters.Repo,
-  username: System.get_env("TEST_DB_USER") || "postgres",
-  password: System.get_env("TEST_DB_PASSWORD") || "postgres",
+  username: System.get_env("TEST_DB_USER") || "dev_user",
+  password: System.get_env("TEST_DB_PASSWORD") || "dev_password",
   hostname: System.get_env("TEST_DB_HOST") || "localhost",
-  port: String.to_integer(System.get_env("TEST_DB_PORT") || "5432"),
+  port: String.to_integer(System.get_env("TEST_DB_PORT") || "5433"),
   database:
     (System.get_env("TEST_DB_NAME") || "heaters_test") <>
       "#{System.get_env("MIX_TEST_PARTITION")}",

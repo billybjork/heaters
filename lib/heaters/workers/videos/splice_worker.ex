@@ -1,10 +1,8 @@
 defmodule Heaters.Workers.Videos.SpliceWorker do
   use Heaters.Workers.GenericWorker, queue: :media_processing
 
-  alias Heaters.Videos.Ingest
-  alias Heaters.Videos.SourceVideo
+  alias Heaters.Videos.{Ingest, SourceVideo, Operations}
   alias Heaters.Videos.Queries, as: VideoQueries
-  alias Heaters.Infrastructure.PyRunner
   alias Heaters.Workers.Clips.SpriteWorker
   require Logger
 
@@ -37,17 +35,17 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
 
   defp handle_splicing(%SourceVideo{ingest_state: "splicing"} = source_video) do
     Logger.info(
-      "SpliceWorker: Source video #{source_video.id} already in 'splicing' state, proceeding with Python task"
+      "SpliceWorker: Source video #{source_video.id} already in 'splicing' state, proceeding with splice task"
     )
 
-    run_python_splice_task(source_video)
+    run_splice_task(source_video)
   end
 
   defp handle_splicing(source_video) do
-    # Use new state management pattern
+    # Use existing state management pattern
     case Ingest.start_splicing(source_video.id) do
       {:ok, updated_video} ->
-        run_python_splice_task(updated_video)
+        run_splice_task(updated_video)
 
       {:error, reason} ->
         Logger.error("SpliceWorker: Failed to transition to splicing state: #{inspect(reason)}")
@@ -55,64 +53,63 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
     end
   end
 
-  defp run_python_splice_task(source_video) do
-    Logger.info("SpliceWorker: Running PyRunner for source_video_id: #{source_video.id}")
+    # Native Elixir splice implementation
+  defp run_splice_task(source_video) do
+    Logger.info("SpliceWorker: Running native Elixir splice for source_video_id: #{source_video.id}")
+    splice_opts = [
+      threshold: 0.3,
+      method: :correl,
+      min_duration_seconds: 1.0
+    ]
 
-        # Python task receives explicit S3 paths and detection parameters
-        py_args = %{
-      source_video_id: source_video.id,
-      input_s3_path: source_video.filepath,
-      output_s3_prefix: Ingest.build_s3_prefix(source_video),
-          detection_params: %{threshold: 0.3}
-        }
+    case Operations.Splice.run_splice(source_video, splice_opts) do
+      %{status: "success", clips_data: clips_data} when is_list(clips_data) ->
+        Logger.info(
+          "SpliceWorker: Successfully processed #{length(clips_data)} clips with native Elixir"
+        )
 
-        case PyRunner.run("splice", py_args) do
-          {:ok, %{"result" => %{"clips" => clips_data}}} when is_list(clips_data) ->
-            Logger.info(
-              "SpliceWorker: Successfully received #{length(clips_data)} clips from Python"
-            )
+        process_splice_results(source_video, clips_data)
 
-            # Validate clips data before processing
-            case Ingest.validate_clips_data(clips_data) do
-              :ok ->
-                # Create clips and update source video state in Elixir
-            case Ingest.create_clips_from_splice(source_video.id, clips_data) do
-                  {:ok, clips} ->
-                case Ingest.complete_splicing(source_video.id) do
-                      {:ok, _final_video} ->
-                        # Store clips for enqueue_next/1 to use
-                        Process.put(:clips, clips)
-                        :ok
-
-                      {:error, reason} ->
-                        Logger.error(
-                          "SpliceWorker: Failed to mark splicing complete: #{inspect(reason)}"
-                        )
-
-                        {:error, reason}
-                    end
-
-                  {:error, reason} ->
-                    Logger.error("SpliceWorker: Failed to create clips: #{inspect(reason)}")
-                mark_splicing_failed(source_video, reason)
-                end
-
-              {:error, validation_error} ->
-                Logger.error("SpliceWorker: Invalid clips data: #{validation_error}")
-            mark_splicing_failed(source_video, validation_error)
-            end
-
-          {:ok, unexpected_result} ->
-            error_message =
-              "Splice script returned unexpected result: #{inspect(unexpected_result)}"
-
-            Logger.error("SpliceWorker: #{error_message}")
+      %{status: "error", metadata: %{error: error_message}} ->
+        Logger.error("SpliceWorker: Native splice failed: #{error_message}")
         mark_splicing_failed(source_video, error_message)
 
+      unexpected_result ->
+        error_message = "Native splice returned unexpected result: #{inspect(unexpected_result)}"
+        Logger.error("SpliceWorker: #{error_message}")
+        mark_splicing_failed(source_video, error_message)
+    end
+  end
+
+  # Shared result processing for native implementation
+  defp process_splice_results(source_video, clips_data) do
+    # Validate clips data before processing
+    case Ingest.validate_clips_data(clips_data) do
+      :ok ->
+        # Create clips and update source video state
+        case Ingest.create_clips_from_splice(source_video.id, clips_data) do
+          {:ok, clips} ->
+            case Ingest.complete_splicing(source_video.id) do
+              {:ok, _final_video} ->
+                # Store clips for enqueue_next/1 to use (maintains existing pattern)
+                Process.put(:clips, clips)
+                :ok
+
+              {:error, reason} ->
+                Logger.error(
+                  "SpliceWorker: Failed to mark splicing complete: #{inspect(reason)}"
+                )
+                {:error, reason}
+            end
+
           {:error, reason} ->
-            error_message = "Splice script failed: #{inspect(reason)}"
-            Logger.error("SpliceWorker: #{error_message}")
-        mark_splicing_failed(source_video, reason)
+            Logger.error("SpliceWorker: Failed to create clips: #{inspect(reason)}")
+            mark_splicing_failed(source_video, reason)
+        end
+
+      {:error, validation_error} ->
+        Logger.error("SpliceWorker: Invalid clips data: #{validation_error}")
+        mark_splicing_failed(source_video, validation_error)
     end
   end
 

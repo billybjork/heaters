@@ -192,6 +192,37 @@ defmodule Heaters.Clips.Operations.Shared.ResultBuilding do
     }
   end
 
+  @doc """
+  Build a successful SpliceResult from operation data.
+  """
+  @spec build_splice_result(integer(), list(map()), map()) :: Types.SpliceResult.t()
+  def build_splice_result(source_video_id, clips_data, metadata \\ %{}) do
+    %Types.SpliceResult{
+      status: "success",
+      source_video_id: source_video_id,
+      clips_data: clips_data,
+      total_scenes_detected: Map.get(metadata, :total_scenes_detected),
+      clips_created: length(clips_data),
+      detection_params: Map.get(metadata, :detection_params),
+      metadata: metadata,
+      processed_at: DateTime.utc_now()
+    }
+  end
+
+  @doc """
+  Build a failed SpliceResult from error information.
+  """
+  @spec build_splice_error_result(integer(), String.t()) :: Types.SpliceResult.t()
+  def build_splice_error_result(source_video_id, error_message) do
+    %Types.SpliceResult{
+      status: "error",
+      source_video_id: source_video_id,
+      clips_data: [],
+      metadata: %{error: error_message},
+      processed_at: DateTime.utc_now()
+    }
+  end
+
   @spec build_error_result(String.t(), integer(), String.t(), any()) :: map()
   def build_error_result(operation, clip_id, error_reason, details \\ nil) do
     %{
@@ -202,6 +233,20 @@ defmodule Heaters.Clips.Operations.Shared.ResultBuilding do
       details: details,
       processed_at: DateTime.utc_now()
     }
+  end
+
+  @doc """
+  Build a simple success result with status and metadata.
+
+  Useful for operations that don't need full result structs.
+  """
+  @spec build_success_result(map()) :: map()
+  def build_success_result(metadata \\ %{}) do
+    %{
+      status: "success",
+      processed_at: DateTime.utc_now()
+    }
+    |> Map.merge(metadata)
   end
 
   @doc """

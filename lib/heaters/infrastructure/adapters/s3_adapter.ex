@@ -151,25 +151,64 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
   end
 
   @doc """
+  Check if an object exists in S3 using efficient HEAD operation.
+
+  This replaces the inefficient file_exists?/1 function with a proper
+  HEAD operation that doesn't download the entire file.
+
+  ## Examples
+
+      {:ok, metadata} = S3Adapter.head_object("clips/video.mp4")
+      {:error, :not_found} = S3Adapter.head_object("clips/missing.mp4")
+  """
+  @spec head_object(String.t()) :: {:ok, map()} | {:error, :not_found | any()}
+  def head_object(s3_path) do
+    S3.head_object(s3_path)
+  end
+
+  @doc """
   Check if a file exists in S3.
+
+  NOTE: This function is deprecated and inefficient as it downloads the entire file.
+  Use head_object/1 instead for better performance.
   """
   @spec file_exists?(String.t()) :: boolean()
+  @deprecated "Use head_object/1 instead for better performance"
   def file_exists?(s3_path) do
-    # Simple placeholder implementation - not used in current operations
-    s3_key = String.trim_leading(s3_path, "/")
-
-    case S3.download_file(s3_key, "/tmp/check_#{System.unique_integer()}",
-           operation_name: "Check"
-         ) do
-      {:ok, temp_file} ->
-        File.rm(temp_file)
-        true
-
-      {:error, _} ->
-        false
+    case head_object(s3_path) do
+      {:ok, _metadata} -> true
+      {:error, _} -> false
     end
   end
 
+  @doc """
+  Download a file from S3 to a local path.
+
+  ## Examples
+
+      {:ok, "/tmp/video.mp4"} = S3Adapter.download_file("clips/video.mp4", "/tmp/video.mp4")
+  """
+  @spec download_file(String.t(), String.t()) :: {:ok, String.t()} | {:error, any()}
+  def download_file(s3_path, local_path) do
+    S3.download_file(s3_path, local_path)
+  end
+
+  @doc """
+  Upload a file from local path to S3.
+
+  ## Examples
+
+      :ok = S3Adapter.upload_file("/tmp/video.mp4", "clips/new_video.mp4")
+  """
+  @spec upload_file(String.t(), String.t()) :: :ok | {:error, any()}
+  def upload_file(local_path, s3_key) do
+    case S3.upload_file(local_path, s3_key) do
+      {:ok, _s3_key} -> :ok
+      error -> error
+    end
+  end
+
+  # Legacy upload_file/3 function for compatibility
   @spec upload_file(String.t(), String.t(), String.t()) :: {:ok, String.t()} | {:error, any()}
   def upload_file(local_path, s3_key, operation_name) do
     case S3.upload_file(local_path, s3_key, operation_name: operation_name) do

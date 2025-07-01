@@ -63,6 +63,7 @@ defmodule Heaters.MixProject do
       {:hackney, "~> 1.20"},
       {:sweet_xml, "~> 0.7"},
       {:ffmpex, "~> 0.11.0"},
+      {:evision, "~> 0.2"},
       {:dialyxir, "~> 1.4", only: [:dev], runtime: false},
       {:stream_data, "~> 1.1", only: :test}
     ]

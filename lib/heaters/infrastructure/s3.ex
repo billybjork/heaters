@@ -143,6 +143,57 @@ defmodule Heaters.Infrastructure.S3 do
   end
 
   @doc """
+  Check if an object exists in S3 using HEAD operation.
+  This is much more efficient than download_file for existence checking.
+
+  ## Parameters
+  - `s3_path`: S3 path (can start with / or not)
+
+  ## Examples
+
+      S3.head_object("/path/to/video.mp4")
+      S3.head_object("clips/video.mp4")
+
+  ## Returns
+  - `{:ok, metadata}` on success - object exists
+  - `{:error, :not_found}` if object doesn't exist
+  - `{:error, reason}` on other failures
+  """
+  @spec head_object(String.t()) :: {:ok, map()} | {:error, :not_found | any()}
+  def head_object(s3_path) do
+    case get_bucket_name() do
+      {:ok, bucket_name} ->
+        s3_key = String.trim_leading(s3_path, "/")
+
+        Logger.debug("S3: Checking existence of s3://#{bucket_name}/#{s3_key}")
+
+        case ExAws.S3.head_object(bucket_name, s3_key) |> ExAws.request() do
+          {:ok, response} ->
+            # Extract useful metadata from headers
+            metadata = %{
+              content_length: get_header_value(response.headers, "content-length", "0") |> String.to_integer(),
+              content_type: get_header_value(response.headers, "content-type", ""),
+              last_modified: get_header_value(response.headers, "last-modified", ""),
+              etag: get_header_value(response.headers, "etag", "")
+            }
+            {:ok, metadata}
+
+          {:error, {:http_error, 404, _}} ->
+            Logger.debug("S3: Object not found: s3://#{bucket_name}/#{s3_key}")
+            {:error, :not_found}
+
+          {:error, reason} ->
+            Logger.warning("S3: Failed to check object existence: #{inspect(reason)}")
+            {:error, reason}
+        end
+
+      {:error, reason} ->
+        Logger.error("S3: Bucket name not configured: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  @doc """
   Upload a local file to S3 using streaming for memory efficiency.
 
   ## Parameters
@@ -336,6 +387,15 @@ defmodule Heaters.Infrastructure.S3 do
       ".gif" -> "image/gif"
       ".webp" -> "image/webp"
       _ -> nil
+    end
+  end
+
+  defp get_header_value(headers, key, default) do
+    case Enum.find(headers, fn {header_key, _} ->
+      String.downcase(header_key) == String.downcase(key)
+    end) do
+      {_, value} -> value
+      nil -> default
     end
   end
 end

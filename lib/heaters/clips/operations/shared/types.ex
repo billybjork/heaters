@@ -141,6 +141,40 @@ defmodule Heaters.Clips.Operations.Shared.Types do
           }
   end
 
+  defmodule SpliceResult do
+    @moduledoc """
+    Structured result type for Splice (video-to-clips) operations.
+
+    Used for the native Elixir scene detection workflow to replace
+    the Python subprocess approach.
+    """
+
+    @enforce_keys [:status, :source_video_id, :clips_data]
+    defstruct [
+      :status,
+      :source_video_id,
+      :clips_data,
+      :total_scenes_detected,
+      :clips_created,
+      :detection_params,
+      :metadata,
+      :duration_ms,
+      :processed_at
+    ]
+
+    @type t :: %__MODULE__{
+            status: String.t(),
+            source_video_id: integer(),
+            clips_data: [map()],
+            total_scenes_detected: integer() | nil,
+            clips_created: integer() | nil,
+            detection_params: map() | nil,
+            metadata: map() | nil,
+            duration_ms: integer() | nil,
+            processed_at: DateTime.t() | nil
+          }
+  end
+
   # Parameter types used across different transformation operations
 
   @type split_params :: %{
