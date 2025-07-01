@@ -1,4 +1,4 @@
- defmodule Heaters.Videos.Operations.Splice.SceneDetector do
+defmodule Heaters.Videos.Operations.Splice.SceneDetector do
   @moduledoc """
   Pure domain logic for scene detection using Evision (OpenCV bindings).
 
@@ -24,32 +24,32 @@
   require Logger
 
   @type scene :: %{
-    start_frame: non_neg_integer(),
-    end_frame: non_neg_integer(),
-    start_time_seconds: float(),
-    end_time_seconds: float(),
-    duration_seconds: float()
-  }
+          start_frame: non_neg_integer(),
+          end_frame: non_neg_integer(),
+          start_time_seconds: float(),
+          end_time_seconds: float(),
+          duration_seconds: float()
+        }
 
   @type video_info :: %{
-    fps: float(),
-    width: integer(),
-    height: integer(),
-    total_frames: integer(),
-    duration_seconds: float()
-  }
+          fps: float(),
+          width: integer(),
+          height: integer(),
+          total_frames: integer(),
+          duration_seconds: float()
+        }
 
   @type detection_params :: %{
-    threshold: float(),
-    method: atom(),
-    min_duration_seconds: float()
-  }
+          threshold: float(),
+          method: atom(),
+          min_duration_seconds: float()
+        }
 
   @type detection_result :: %{
-    scenes: [scene()],
-    video_info: video_info(),
-    detection_params: detection_params()
-  }
+          scenes: [scene()],
+          video_info: video_info(),
+          detection_params: detection_params()
+        }
 
   # OpenCV histogram comparison methods mapping
   @comparison_methods %{
@@ -94,7 +94,10 @@
     min_duration = Keyword.get(opts, :min_duration_seconds, 1.0)
 
     Logger.info("SceneDetector: Starting detection for #{video_path}")
-    Logger.debug("SceneDetector: Params - threshold: #{threshold}, method: #{method}, min_duration: #{min_duration}")
+
+    Logger.debug(
+      "SceneDetector: Params - threshold: #{threshold}, method: #{method}, min_duration: #{min_duration}"
+    )
 
     case File.exists?(video_path) do
       true ->
@@ -112,10 +115,11 @@
          {:ok, video_info} <- extract_video_properties(cap),
          {:ok, scene_cuts} <- analyze_frames_for_cuts(cap, threshold, method),
          :ok <- release_video_capture(cap) do
-
       scenes = build_scenes_from_cuts(scene_cuts, video_info.fps, min_duration)
 
-      Logger.info("SceneDetector: Detected #{length(scenes)} scenes from #{length(scene_cuts)} cuts")
+      Logger.info(
+        "SceneDetector: Detected #{length(scenes)} scenes from #{length(scene_cuts)} cuts"
+      )
 
       result = %{
         scenes: scenes,
@@ -155,9 +159,15 @@
 
       # Validate properties
       cond do
-        fps <= 0 -> {:error, "Invalid FPS: #{fps}"}
-        total_frames <= 0 -> {:error, "Invalid frame count: #{total_frames}"}
-        width <= 0 or height <= 0 -> {:error, "Invalid dimensions: #{width}x#{height}"}
+        fps <= 0 ->
+          {:error, "Invalid FPS: #{fps}"}
+
+        total_frames <= 0 ->
+          {:error, "Invalid frame count: #{total_frames}"}
+
+        width <= 0 or height <= 0 ->
+          {:error, "Invalid dimensions: #{width}x#{height}"}
+
         true ->
           duration_seconds = total_frames / fps
 
@@ -169,12 +179,18 @@
             duration_seconds: duration_seconds
           }
 
-          Logger.debug("SceneDetector: Video properties - #{width}x#{height}, #{fps} FPS, #{total_frames} frames, #{Float.round(duration_seconds, 2)}s")
+          Logger.debug(
+            "SceneDetector: Video properties - #{width}x#{height}, #{fps} FPS, #{total_frames} frames, #{Float.round(duration_seconds, 2)}s"
+          )
+
           {:ok, video_info}
       end
     rescue
       error ->
-        Logger.error("SceneDetector: Failed to extract video properties: #{Exception.message(error)}")
+        Logger.error(
+          "SceneDetector: Failed to extract video properties: #{Exception.message(error)}"
+        )
+
         {:error, "Failed to extract video properties: #{Exception.message(error)}"}
     end
   end
@@ -182,7 +198,9 @@
   defp analyze_frames_for_cuts(cap, threshold, method) do
     comparison_method = Map.get(@comparison_methods, method, @comparison_methods.correl)
 
-    Logger.debug("SceneDetector: Starting frame analysis with method #{method} (#{comparison_method})")
+    Logger.debug(
+      "SceneDetector: Starting frame analysis with method #{method} (#{comparison_method})"
+    )
 
     # Always start with frame 0 as a cut
     cut_frames = [0]
@@ -192,40 +210,62 @@
         Logger.debug("SceneDetector: Found #{length(final_cuts)} scene cuts")
         {:ok, final_cuts}
 
-      error -> error
+      error ->
+        error
     end
   end
 
-  defp process_video_stream(cap, threshold, comparison_method, method_name, cut_frames, prev_hist \\ nil, frame_num \\ 0) do
+  defp process_video_stream(
+         cap,
+         threshold,
+         comparison_method,
+         method_name,
+         cut_frames,
+         prev_hist \\ nil,
+         frame_num \\ 0
+       ) do
     case CV.VideoCapture.read(cap) do
       %CV.Mat{} = frame ->
         current_hist = calculate_bgr_histogram(frame)
 
-        updated_cuts = case prev_hist do
-          nil ->
-            cut_frames
-
-          _ ->
-            score = CV.compareHist(prev_hist, current_hist, comparison_method)
-
-            if is_scene_cut?(score, threshold, method_name) do
-              Logger.debug("SceneDetector: Scene cut detected at frame #{frame_num} (score: #{Float.round(score, 4)})")
-              [frame_num | cut_frames]
-            else
+        updated_cuts =
+          case prev_hist do
+            nil ->
               cut_frames
-            end
-        end
+
+            _ ->
+              score = CV.compareHist(prev_hist, current_hist, comparison_method)
+
+              if is_scene_cut?(score, threshold, method_name) do
+                Logger.debug(
+                  "SceneDetector: Scene cut detected at frame #{frame_num} (score: #{Float.round(score, 4)})"
+                )
+
+                [frame_num | cut_frames]
+              else
+                cut_frames
+              end
+          end
 
         # Continue processing next frame
-        process_video_stream(cap, threshold, comparison_method, method_name, updated_cuts, current_hist, frame_num + 1)
+        process_video_stream(
+          cap,
+          threshold,
+          comparison_method,
+          method_name,
+          updated_cuts,
+          current_hist,
+          frame_num + 1
+        )
 
       false ->
         # End of video - add final frame if not already present
-        final_cuts = if frame_num > 0 and not Enum.member?(cut_frames, frame_num) do
-          [frame_num | cut_frames]
-        else
-          cut_frames
-        end
+        final_cuts =
+          if frame_num > 0 and not Enum.member?(cut_frames, frame_num) do
+            [frame_num | cut_frames]
+          else
+            cut_frames
+          end
 
         # Reverse to get chronological order and remove duplicates
         final_cuts = final_cuts |> Enum.reverse() |> Enum.uniq()
@@ -242,12 +282,15 @@
     try do
       # Split into B, G, R channels - CV.split returns a list of Mats
       channels = CV.split(frame)
-      [b_channel, g_channel, r_channel] = case channels do
-        [b, g, r] -> [b, g, r]
-        [gray] -> [gray, gray, gray]  # Fallback for grayscale
-        {:error, reason} -> raise "Failed to split channels: #{reason}"
-        _ -> raise "Unexpected channel split result: #{inspect(channels)}"
-      end
+
+      [b_channel, g_channel, r_channel] =
+        case channels do
+          [b, g, r] -> [b, g, r]
+          # Fallback for grayscale
+          [gray] -> [gray, gray, gray]
+          {:error, reason} -> raise "Failed to split channels: #{reason}"
+          _ -> raise "Unexpected channel split result: #{inspect(channels)}"
+        end
 
       # Calculate histogram for each channel (256 bins, range 0-256)
       bins = [256]
@@ -273,11 +316,16 @@
 
   defp is_scene_cut?(score, threshold, method_name) do
     case method_name do
-      :correl -> score < threshold      # Lower correlation = more different
-      :intersect -> score < threshold   # Lower intersection = more different
-      :chisqr -> score > threshold      # Higher chi-square = more different
-      :bhattacharyya -> score > threshold  # Higher distance = more different
-      _ -> score < threshold  # Default to correlation-like behavior
+      # Lower correlation = more different
+      :correl -> score < threshold
+      # Lower intersection = more different
+      :intersect -> score < threshold
+      # Higher chi-square = more different
+      :chisqr -> score > threshold
+      # Higher distance = more different
+      :bhattacharyya -> score > threshold
+      # Default to correlation-like behavior
+      _ -> score < threshold
     end
   end
 
@@ -312,8 +360,12 @@
       :ok
     rescue
       error ->
-        Logger.warning("SceneDetector: Failed to release video capture: #{Exception.message(error)}")
-        :ok  # Don't fail the entire operation for cleanup issues
+        Logger.warning(
+          "SceneDetector: Failed to release video capture: #{Exception.message(error)}"
+        )
+
+        # Don't fail the entire operation for cleanup issues
+        :ok
     end
   end
 end

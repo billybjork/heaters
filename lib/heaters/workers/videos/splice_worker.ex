@@ -74,7 +74,10 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
   end
 
   defp run_splice_task(source_video) do
-    Logger.info("SpliceWorker: Running native Elixir splice for source_video_id: #{source_video.id}")
+    Logger.info(
+      "SpliceWorker: Running native Elixir splice for source_video_id: #{source_video.id}"
+    )
+
     splice_opts = [
       threshold: 0.3,
       method: :correl,
@@ -114,9 +117,7 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
                 :ok
 
               {:error, reason} ->
-                Logger.error(
-                  "SpliceWorker: Failed to mark splicing complete: #{inspect(reason)}"
-                )
+                Logger.error("SpliceWorker: Failed to mark splicing complete: #{inspect(reason)}")
                 {:error, reason}
             end
 

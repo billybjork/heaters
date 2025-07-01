@@ -125,13 +125,14 @@ config :heaters, dev_routes: true
 # Handle Docker vs local environment for Python executable
 in_docker = System.get_env("DOCKER_ENV") == "true"
 
-python_executable = if in_docker do
-  # In Docker container, Python is in /opt/venv
-  "/opt/venv/bin/python"
-else
-  # Local development, use local venv
-  Path.join(Path.expand("."), "py/venv/bin/python")
-end
+python_executable =
+  if in_docker do
+    # In Docker container, Python is in /opt/venv
+    "/opt/venv/bin/python"
+  else
+    # Local development, use local venv
+    Path.join(Path.expand("."), "py/venv/bin/python")
+  end
 
 config :heaters, Heaters.Infrastructure.PyRunner,
   python_executable: python_executable,

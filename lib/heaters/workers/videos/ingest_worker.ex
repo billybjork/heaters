@@ -37,9 +37,13 @@ defmodule Heaters.Workers.Videos.IngestWorker do
           # Elixir handles the state transition and metadata update
           # Convert string keys to atom keys for the metadata
           metadata = for {key, value} <- result, into: %{}, do: {String.to_atom(key), value}
+
           case Ingest.complete_downloading(source_video_id, metadata) do
             {:ok, _updated_video} ->
-              Logger.info("IngestWorker: Successfully completed download for source_video_id: #{source_video_id}")
+              Logger.info(
+                "IngestWorker: Successfully completed download for source_video_id: #{source_video_id}"
+              )
+
               # Pipeline will automatically pick up videos in 'downloaded' state for splicing
               :ok
 

@@ -19,8 +19,8 @@ defmodule Heaters.Clips.Clip do
           grouped_with_clip_id: integer() | nil,
           action_committed_at: NaiveDateTime.t() | nil,
           source_video: Heaters.Videos.SourceVideo.t() | Ecto.Association.NotLoaded.t(),
-                      clip_artifacts:
-              [Heaters.Clips.Operations.Artifacts.ClipArtifact.t()] | Ecto.Association.NotLoaded.t(),
+          clip_artifacts:
+            [Heaters.Clips.Operations.Artifacts.ClipArtifact.t()] | Ecto.Association.NotLoaded.t(),
           review_events: [Heaters.Events.ReviewEvent.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t(),
           updated_at: DateTime.t()

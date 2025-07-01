@@ -14,7 +14,7 @@ defmodule Heaters.Workers.Clips.EmbeddingWorker do
   def perform(%Oban.Job{args: %{"clip_id" => clip_id}}) do
     Logger.info("EmbeddingWorker: Starting embedding generation for clip_id: #{clip_id}")
 
-         with {:ok, clip} <- Heaters.Clips.get_clip(clip_id),
+    with {:ok, clip} <- Heaters.Clips.get_clip(clip_id),
          {:clip_ready, true} <- {:clip_ready, clip_ready?(clip)},
          {:ok, updated_clip} <- Embeddings.start_embedding(clip_id) do
       Logger.info("EmbeddingWorker: Running PyRunner for clip_id: #{clip_id}")
@@ -104,8 +104,10 @@ defmodule Heaters.Workers.Clips.EmbeddingWorker do
       generation_strategy = "average"
 
       case Embeddings.has_embedding?(clip.id, model_name, generation_strategy) do
-        false -> true  # No embedding exists, clip is ready
-        true -> false  # Embedding exists, skip processing
+        # No embedding exists, clip is ready
+        false -> true
+        # Embedding exists, skip processing
+        true -> false
       end
     end
   end

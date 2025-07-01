@@ -68,7 +68,8 @@ config :heaters, Heaters.Infrastructure.PyRunner,
 # Configure native splice functionality
 config :heaters, :splice_config,
   monitoring: %{
-    max_processing_time_ms: 900_000,  # 15 minutes
+    # 15 minutes
+    max_processing_time_ms: 900_000,
     memory_limit_mb: 2048,
     log_performance_metrics: true
   }

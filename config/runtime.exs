@@ -20,11 +20,11 @@ is_database_operation =
   System.argv()
   |> Enum.any?(fn arg ->
     String.contains?(arg, "ecto.") or
-    String.contains?(arg, "migrate") or
-    String.contains?(arg, "rollback") or
-    String.contains?(arg, "setup") or
-    String.contains?(arg, "create") or
-    String.contains?(arg, "drop")
+      String.contains?(arg, "migrate") or
+      String.contains?(arg, "rollback") or
+      String.contains?(arg, "setup") or
+      String.contains?(arg, "create") or
+      String.contains?(arg, "drop")
   end)
 
 if config_env() != :test and not is_database_operation do

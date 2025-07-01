@@ -171,11 +171,13 @@ defmodule Heaters.Infrastructure.S3 do
           {:ok, response} ->
             # Extract useful metadata from headers
             metadata = %{
-              content_length: get_header_value(response.headers, "content-length", "0") |> String.to_integer(),
+              content_length:
+                get_header_value(response.headers, "content-length", "0") |> String.to_integer(),
               content_type: get_header_value(response.headers, "content-type", ""),
               last_modified: get_header_value(response.headers, "last-modified", ""),
               etag: get_header_value(response.headers, "etag", "")
             }
+
             {:ok, metadata}
 
           {:error, {:http_error, 404, _}} ->
@@ -301,15 +303,17 @@ defmodule Heaters.Infrastructure.S3 do
     # Get title through source_video_id lookup (expensive, should be avoided)
     alias Heaters.Videos.Queries, as: VideoQueries
 
-    title = case VideoQueries.get_source_video(clip.source_video_id) do
-      {:ok, source_video} -> Heaters.Utils.sanitize_filename(source_video.title)
-      {:error, _} -> "video_#{clip.source_video_id}"
-    end
+    title =
+      case VideoQueries.get_source_video(clip.source_video_id) do
+        {:ok, source_video} -> Heaters.Utils.sanitize_filename(source_video.title)
+        {:error, _} -> "video_#{clip.source_video_id}"
+      end
 
-    path = case operation_type do
-      "splits" -> "clips/#{title}/splits"
-      _ -> "clip_artifacts/#{title}/#{operation_type}"
-    end
+    path =
+      case operation_type do
+        "splits" -> "clips/#{title}/splits"
+        _ -> "clip_artifacts/#{title}/#{operation_type}"
+      end
 
     if filename do
       "#{path}/#{filename}"
@@ -392,8 +396,8 @@ defmodule Heaters.Infrastructure.S3 do
 
   defp get_header_value(headers, key, default) do
     case Enum.find(headers, fn {header_key, _} ->
-      String.downcase(header_key) == String.downcase(key)
-    end) do
+           String.downcase(header_key) == String.downcase(key)
+         end) do
       {_, value} -> value
       nil -> default
     end
