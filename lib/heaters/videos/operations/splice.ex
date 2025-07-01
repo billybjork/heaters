@@ -2,37 +2,15 @@ defmodule Heaters.Videos.Operations.Splice do
   @moduledoc """
   I/O orchestration for the splice workflow using native Elixir scene detection.
 
-  This module replaces the Python subprocess approach (splice.py) with native Elixir
-  processing using the Evision library. It follows the "I/O at the edges" architecture
-  pattern, using domain logic modules for pure scene detection and orchestrating
-  all I/O operations here.
-
-  **Phase 2 Status**: Full implementation with Evision scene detection
-  **Feature Flag**: Controlled by :splice_config, :use_native_splice
+  This module implements scene detection and clip extraction using the Evision library
+  (OpenCV-Elixir bindings). It follows the "I/O at the edges" architecture pattern,
+  using domain logic modules for pure scene detection and orchestrating all I/O operations here.
 
   ## Architecture
 
   - **Domain Logic**: `Splice.SceneDetector` - Pure OpenCV scene detection
   - **I/O Orchestration**: This module - Downloads, uploads, coordinates workflow
-  - **Integration**: Used by `Videos.SpliceWorker` via feature flag
-
-  ## Usage
-
-      # Feature flag controls behavior
-      case Application.get_env(:heaters, :splice_config)[:use_native_splice] do
-        true -> Operations.Splice.run_splice(source_video, opts)
-        false -> PyRunner.run("splice", py_args)  # Fallback to Python
-      end
-  """
-
-  alias Heaters.Videos.{SourceVideo, Ingest}
-  alias Heaters.Videos.Operations.Splice.SceneDetector
-  alias Heaters.Infrastructure.Adapters.S3Adapter
-  alias Heaters.Clips.Operations.Shared.{TempManager, ResultBuilding, Types, FFmpegRunner}
-  require Logger
-
-  @doc """
-  Run the native Elixir splice workflow for a source video.
+  - **Integration**: Used by `Videos.SpliceWorker` for video processing pipeline
 
   ## Workflow
 
@@ -42,12 +20,30 @@ defmodule Heaters.Videos.Operations.Splice do
   4. Upload clips to S3
   5. Return structured SpliceResult
 
+  ## Usage
+
+      result = Operations.Splice.run_splice(source_video, threshold: 0.3)
+      # %Types.SpliceResult{status: "success", clips_data: [...]}
+  """
+
+  alias Heaters.Videos.{SourceVideo, Ingest}
+  alias Heaters.Videos.Operations.Splice.SceneDetector
+  alias Heaters.Infrastructure.Adapters.S3Adapter
+  alias Heaters.Clips.Operations.Shared.{TempManager, ResultBuilding, Types, FFmpegRunner}
+  require Logger
+
+  @doc """
+  Run the splice workflow for a source video using native Elixir scene detection.
+
+  Downloads the source video, detects scenes using Evision (OpenCV bindings),
+  extracts clips using FFmpeg, and uploads them to S3 with idempotency checking.
+
   ## Parameters
   - `source_video`: SourceVideo struct
-  - `opts`: Scene detection options (threshold, method, etc.)
+  - `opts`: Scene detection options (threshold, method, min_duration_seconds)
 
   ## Returns
-  - `Types.SpliceResult.t()` - Structured result with clips data
+  - `Types.SpliceResult.t()` - Structured result with clips data and metadata
 
   ## Examples
 

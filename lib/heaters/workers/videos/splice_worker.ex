@@ -1,4 +1,27 @@
 defmodule Heaters.Workers.Videos.SpliceWorker do
+  @moduledoc """
+  Worker for processing source videos into clips using native Elixir scene detection.
+
+  This worker handles the "downloaded → spliced" stage of the video processing pipeline.
+  It uses `Videos.Operations.Splice` to detect scenes and extract clips using Evision
+  (OpenCV-Elixir bindings) for high-performance processing.
+
+  ## Workflow
+
+  1. Transition source video to "splicing" state
+  2. Run native scene detection and clip extraction
+  3. Create clip records in database
+  4. Transition source video to "spliced" state
+  5. Enqueue sprite workers for each created clip
+
+  ## State Management
+
+  - **Input**: Source videos in "downloaded" state
+  - **Output**: Clips in "spliced" state, source video in "spliced" state
+  - **Error Handling**: Marks source video as "splicing_failed" on errors
+  - **Idempotency**: S3-based clip existence checking prevents reprocessing
+  """
+
   use Heaters.Workers.GenericWorker, queue: :media_processing
 
   alias Heaters.Videos.{Ingest, SourceVideo, Operations}
@@ -7,9 +30,6 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
   require Logger
 
   @splicing_complete_states ["spliced", "splicing_failed"]
-
-  # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
-  @dialyzer {:nowarn_function, [handle: 1, handle_splicing: 1]}
 
   @impl Heaters.Workers.GenericWorker
   def handle(%{"source_video_id" => source_video_id}) do
@@ -42,7 +62,7 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
   end
 
   defp handle_splicing(source_video) do
-    # Use existing state management pattern
+    # Transition to splicing state using existing state management pattern
     case Ingest.start_splicing(source_video.id) do
       {:ok, updated_video} ->
         run_splice_task(updated_video)
@@ -53,7 +73,6 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
     end
   end
 
-    # Native Elixir splice implementation
   defp run_splice_task(source_video) do
     Logger.info("SpliceWorker: Running native Elixir splice for source_video_id: #{source_video.id}")
     splice_opts = [
@@ -81,9 +100,8 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
     end
   end
 
-  # Shared result processing for native implementation
   defp process_splice_results(source_video, clips_data) do
-    # Validate clips data before processing
+    # Validate and process clips data
     case Ingest.validate_clips_data(clips_data) do
       :ok ->
         # Create clips and update source video state
@@ -91,7 +109,7 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
           {:ok, clips} ->
             case Ingest.complete_splicing(source_video.id) do
               {:ok, _final_video} ->
-                # Store clips for enqueue_next/1 to use (maintains existing pattern)
+                # Store clips for enqueue_next/1 (maintains existing pattern)
                 Process.put(:clips, clips)
                 :ok
 
@@ -128,7 +146,7 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
   def enqueue_next(_args) do
     case Process.get(:clips) do
       clips when is_list(clips) ->
-        # Enqueue sprite workers for all created clips (for review preparation)
+        # Enqueue sprite workers for all created clips
         jobs =
           clips
           |> Enum.map(fn clip ->

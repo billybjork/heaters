@@ -1,11 +1,10 @@
-defmodule Heaters.Videos.Operations.Splice.SceneDetector do
+ defmodule Heaters.Videos.Operations.Splice.SceneDetector do
   @moduledoc """
   Pure domain logic for scene detection using Evision (OpenCV bindings).
 
   This module contains no I/O operations - it accepts local file paths and returns
   scene data. Follows "I/O at the edges" architecture principle.
 
-  **Phase 2 Status**: Full Evision implementation
   **Performance**: Streaming frame-by-frame processing for memory efficiency
 
   ## Architecture
