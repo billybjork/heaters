@@ -11,7 +11,7 @@ defmodule Heaters.Workers.Videos.IngestWorker do
 
   @impl Heaters.Workers.GenericWorker
   def handle(%{"source_video_id" => source_video_id}) do
-    Logger.info("IngestWorker: Starting ingest for source_video_id: #{source_video_id}")
+    Logger.info("IngestWorker: Starting download for source_video_id: #{source_video_id}")
 
     # Use new state management pattern
     with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id),
@@ -39,8 +39,8 @@ defmodule Heaters.Workers.Videos.IngestWorker do
           metadata = for {key, value} <- result, into: %{}, do: {String.to_atom(key), value}
           case Ingest.complete_downloading(source_video_id, metadata) do
             {:ok, _updated_video} ->
-              # Store the video ID for enqueue_next/1 to use
-              Process.put(:source_video_id, updated_video.id)
+              Logger.info("IngestWorker: Successfully completed download for source_video_id: #{source_video_id}")
+              # Pipeline will automatically pick up videos in 'downloaded' state for splicing
               :ok
 
             {:error, reason} ->
@@ -54,7 +54,7 @@ defmodule Heaters.Workers.Videos.IngestWorker do
             "IngestWorker: PyRunner failed for source_video_id: #{source_video_id}, reason: #{inspect(reason)}"
           )
 
-          case Ingest.mark_failed(updated_video, "ingestion_failed", reason) do
+          case Ingest.mark_failed(updated_video, "download_failed", reason) do
             {:ok, _} ->
               {:error, reason}
 
@@ -70,7 +70,7 @@ defmodule Heaters.Workers.Videos.IngestWorker do
           "IngestWorker: source_video_id #{source_video_id} already processed, skipping"
         )
 
-        # Return error to prevent enqueue_next from being called
+        # Return error to prevent any further processing
         {:error, :already_processed}
 
       {:error, reason} ->
@@ -82,25 +82,8 @@ defmodule Heaters.Workers.Videos.IngestWorker do
     end
   end
 
-  @impl Heaters.Workers.GenericWorker
-  def enqueue_next(_args) do
-    case Process.get(:source_video_id) do
-      source_video_id when is_integer(source_video_id) ->
-        # Enqueue the next worker in the chain
-        case Oban.insert(
-               Heaters.Workers.Videos.SpliceWorker.new(%{source_video_id: source_video_id})
-             ) do
-          {:ok, _job} -> :ok
-          {:error, reason} -> {:error, "Failed to enqueue splice worker: #{inspect(reason)}"}
-        end
-
-      _ ->
-        {:error, "No source_video_id found to enqueue splice worker"}
-    end
-  end
-
   # Idempotency Check: Ensures we don't re-process completed work.
   defp check_idempotency(%{ingest_state: "new"}), do: :ok
-  defp check_idempotency(%{ingest_state: "ingestion_failed"}), do: :ok
+  defp check_idempotency(%{ingest_state: "download_failed"}), do: :ok
   defp check_idempotency(_), do: {:error, :already_processed}
 end

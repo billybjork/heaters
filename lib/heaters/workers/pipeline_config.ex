@@ -13,12 +13,15 @@ defmodule Heaters.Workers.PipelineConfig do
   - `call` function for direct operations (like EventProcessor actions)
 
   The `label` field provides human-readable descriptions for logging.
+
+  Pipeline Flow:
+  new → download → splice → sprites → review → keyframes → embeddings → archive
   """
 
   alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Events.EventProcessor
-  alias Heaters.Workers.Videos.IngestWorker
+  alias Heaters.Workers.Videos.{IngestWorker, SpliceWorker}
   alias Heaters.Workers.Clips.{SpriteWorker, KeyframeWorker, EmbeddingWorker, ArchiveWorker}
 
   @doc """
@@ -34,9 +37,14 @@ defmodule Heaters.Workers.PipelineConfig do
   def stages do
     [
       %{
-        label: "new videos → ingest",
+        label: "new videos → download",
         query: fn -> VideoQueries.get_videos_by_state("new") end,
         build: fn video -> IngestWorker.new(%{source_video_id: video.id}) end
+      },
+      %{
+        label: "downloaded videos → splice",
+        query: fn -> VideoQueries.get_videos_by_state("downloaded") end,
+        build: fn video -> SpliceWorker.new(%{source_video_id: video.id}) end
       },
       %{
         label: "spliced clips → sprites",

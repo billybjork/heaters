@@ -1,6 +1,6 @@
 # Clip-Level Idempotency via Native Elixir Scene Detection
 
-**Status:** Planned  
+**Status:** Architecture Validated - Ready for Implementation  
 **Priority:** High  
 **Estimated Effort:** 2-3 sprints  
 
@@ -19,6 +19,46 @@ The current SpliceWorker implementation has **subprocess reliability issues** th
 - JSON parsing: Failed due to multi-line response format ❌  
 - Database: 0 clip records created ❌
 - Recovery: Must re-process entire video (15 minutes wasted)
+
+## Architecture Analysis Findings ✅
+
+**Existing Patterns Perfectly Match**: Analysis of `keyframe.ex` + `keyframe/` structure confirms our proposed `splice.ex` + `splice/` pattern is architecturally consistent.
+
+**State Management Already Exists**: The `Ingest` module has all required functions:
+- `start_splicing/1` - Transitions video to "splicing" state
+- `complete_splicing/1` - Marks splicing as complete
+- `create_clips_from_splice/2` - Creates clip records from scene data
+- `validate_clips_data/1` - Validates clip data structure
+
+**Pipeline Integration Improved**: Split ingestion and splicing into separate pipeline stages for better separation of concerns and consistency.
+
+**Shared Infrastructure Ready**: All required adapters exist:
+- `S3Adapter` - S3 operations (needs `head_object/1` addition)
+- `FFmpegAdapter` - Video processing operations
+- `TempManager` - Temporary file management
+- `ResultBuilding` - Structured result types
+
+**Pipeline Architecture Improvement**: Split the video processing pipeline for better clarity:
+
+*Previous (Mixed Responsibilities):*
+```
+"new videos → ingest"     # IngestWorker handled BOTH download AND manual splice enqueueing
+"spliced clips → sprites" # Clean single responsibility
+```
+
+*Improved (Single Responsibility):*
+```
+"new videos → download"     # IngestWorker: new → downloaded (download only)
+"downloaded videos → splice" # SpliceWorker: downloaded → spliced (scene detection only)  
+"spliced clips → sprites"   # SpriteWorker: spliced → sprites (unchanged)
+```
+
+**Benefits of Pipeline Split:**
+- **Single Responsibility**: Each worker has one focused job
+- **Declarative Flow**: All stages visible in pipeline config (no hidden manual enqueueing)
+- **Consistent Patterns**: Every stage maps to exactly one state transition
+- **Better Monitoring**: Granular visibility into download vs splice performance
+- **Independent Retries**: Each phase can be retried independently
 
 ## Proposed Solution: Native Elixir Scene Detection
 
@@ -201,11 +241,12 @@ defmodule Heaters.Videos.Operations.Splice do
   
   @spec run_splice(SourceVideo.t(), keyword()) :: splice_result()
   def run_splice(%SourceVideo{} = source_video, opts \\ []) do
+    start_time = System.monotonic_time()
     Logger.info("Starting native splice for source_video_id: #{source_video.id}")
     
     # Use existing temp manager for file handling
     TempManager.with_temp_dir(fn temp_dir ->
-      perform_splice_workflow(source_video, temp_dir, opts)
+      perform_splice_workflow(source_video, temp_dir, opts, start_time)
     end)
   end
   
@@ -583,12 +624,64 @@ After analyzing existing migrations and state management, **no database changes 
 ### Implementation Plan
 
 #### Phase 1: Foundation & Dependencies (Week 1)
-1. **Add Evision dependency** - Add to `mix.exs` and test compilation in Docker environment
-2. **Add S3 head_object function** - Implement `S3Adapter.head_object/1` for idempotency checking
-3. **Create SpliceResult type** - Add to `Types` module to match existing result patterns
+
+**Missing Infrastructure Components (Required):**
+
+1. **Add Evision dependency** - Add `{:evision, "~> 0.2"}` to `mix.exs` and test compilation in Docker environment
+
+2. **Add S3 head_object function** - Current `S3Adapter.file_exists?/1` downloads entire files inefficiently:
+   ```elixir
+   # Current inefficient implementation
+   def file_exists?(s3_path) do
+     case S3.download_file(s3_key, "/tmp/check_#{System.unique_integer()}", operation_name: "Check") do
+   ```
+   
+   Need proper HEAD operation:
+   ```elixir
+   @spec head_object(String.t()) :: {:ok, map()} | {:error, :not_found | any()}
+   def head_object(s3_key) do
+     # Use ExAws.S3.head_object for efficient existence checking
+   end
+   ```
+
+3. **Create SpliceResult type** - Add to `Types` module matching existing patterns:
+   ```elixir
+   defmodule SpliceResult do
+     @enforce_keys [:status, :source_video_id, :clips_data]
+     defstruct [
+       :status,
+       :source_video_id, 
+       :clips_data,
+       :total_scenes_detected,
+       :clips_created,
+       :detection_params,
+       :metadata,
+       :duration_ms,
+       :processed_at
+     ]
+   end
+   ```
+
+**Configuration & Setup:**
 4. **Add feature flag configuration** - Setup for gradual rollout (`config :heaters, :use_native_splice`)
-5. **Create module structure** - `operations/splice.ex` + `operations/splice/` directory
-6. **Basic scene detection proof-of-concept** - Simple histogram-based detection using Evision
+5. **Create module structure** - `lib/heaters/videos/operations/splice.ex` + `operations/splice/` directory following keyframe pattern
+
+**Proof of Concept:**
+6. **Basic scene detection validation** - Simple histogram-based detection using Evision, compare with Python output
+
+**Existing Infrastructure Confirmed Ready:**
+✅ `Ingest.start_splicing/1` - State transition to "splicing"  
+✅ `Ingest.complete_splicing/1` - Mark splicing complete  
+✅ `Ingest.create_clips_from_splice/2` - Create clip records  
+✅ `Ingest.validate_clips_data/1` - Validate clip data structure  
+✅ `Ingest.build_s3_prefix/1` - S3 path generation  
+✅ `S3Adapter.download_file/2` - Download source videos  
+✅ `S3Adapter.upload_file/3` - Upload processed clips  
+✅ `TempManager.with_temp_dir/1` - Temporary file management  
+✅ `FFmpegRunner.create_video_clip/4` - Video clip extraction  
+✅ Worker integration patterns - `GenericWorker`, `enqueue_next/1`  
+✅ Result building utilities - `ResultBuilding` module  
+✅ Error handling patterns - `mark_failed/3`, structured errors  
 
 #### Phase 2: Core Scene Detection Implementation (Week 2)  
 1. **Port Python OpenCV logic** - Frame-by-frame histogram comparison using Evision
@@ -654,17 +747,21 @@ After analyzing existing migrations and state management, **no database changes 
 
 ---
 
-## Summary: Simplified Architecture Approach
+## Summary: Architecture Validated & Ready for Implementation
 
-### Key Findings from Architecture Analysis
+### Key Findings from Architecture Analysis ✅
 
-**Zero Database Changes Needed**: Current schema already supports all required functionality with proper state transitions and S3 file management.
+**✅ Zero Database Changes Needed**: Current schema already supports all required functionality with proper state transitions and S3 file management.
 
-**Existing Patterns Are Perfect**: The `keyframe.ex` + `keyframe/` pattern provides the exact template for implementing `splice.ex` + `splice/` structure.
+**✅ Existing Patterns Are Perfect**: The `keyframe.ex` + `keyframe/` pattern provides the exact template for implementing `splice.ex` + `splice/` structure.
 
-**State Management Already Exists**: The `Ingest` module already has all necessary functions (`start_splicing/1`, `complete_splicing/1`, `create_clips_from_splice/2`).
+**✅ State Management Already Exists**: The `Ingest` module already has all necessary functions (`start_splicing/1`, `complete_splicing/1`, `create_clips_from_splice/2`).
 
-**Pipeline Integration Is Simple**: SpliceWorker is triggered by IngestWorker completion, requires no pipeline config changes.
+**✅ Pipeline Integration Improved**: Split ingestion and splicing into separate pipeline stages for better single responsibility and consistent patterns.
+
+**✅ Shared Infrastructure Ready**: All adapters (`S3Adapter`, `TempManager`, `FFmpegRunner`) exist and work correctly.
+
+**✅ Worker Patterns Established**: `GenericWorker` interface, `enqueue_next/1` patterns, error handling all established.
 
 ### Core Benefits Delivered
 
@@ -678,14 +775,18 @@ After analyzing existing migrations and state management, **no database changes 
 
 This approach is much simpler than initially conceived:
 
-**What We Actually Need:**
-- Add Evision dependency to `mix.exs` and test Docker compilation
-- Add `S3Adapter.head_object/1` function for S3 existence checking
-- Create `SpliceResult` type in `Types` module to match existing patterns
-- Create `operations/splice.ex` + `operations/splice/` directory structure  
-- Port Python OpenCV logic to Evision (OpenCV-Elixir bindings)
-- Update `SpliceWorker` to call `Operations.Splice.run_splice()` instead of `PyRunner.run()`
-- Add feature flag configuration for safe rollout
+**What We Actually Need (3 Infrastructure Pieces + Implementation):**
+
+**Infrastructure Additions:**
+1. **Evision dependency** - Add `{:evision, "~> 0.2"}` to `mix.exs` and test Docker compilation
+2. **S3 head_object function** - Replace inefficient `file_exists?/1` with proper `S3Adapter.head_object/1`
+3. **SpliceResult type** - Add to `Types` module matching existing `KeyframeResult` pattern
+
+**Implementation Work:**
+4. **Create module structure** - `lib/heaters/videos/operations/splice.ex` + `operations/splice/` directory following keyframe pattern
+5. **Port Python OpenCV logic** - Native Elixir scene detection using Evision (OpenCV-Elixir bindings)
+6. **Update SpliceWorker** - Replace `PyRunner.run("splice", py_args)` with `Operations.Splice.run_splice(source_video, opts)`
+7. **Add feature flag** - Configuration for safe gradual rollout
 
 **What We Don't Need:**
 - Database schema changes (current schema is perfect)
@@ -700,14 +801,19 @@ This approach is much simpler than initially conceived:
 - Integrates with existing infrastructure adapters
 - Maintains all current worker interfaces and behaviors
 
-**Next Steps:**
-1. **Add Evision dependency**: Add to `mix.exs` and test compilation in Docker environment
-2. **Add S3 head_object function**: Implement `S3Adapter.head_object/1` for idempotency checking
-3. **Create SpliceResult type**: Add to `Types` module to match existing result patterns
-4. **Add feature flag**: Setup configuration for gradual rollout
-5. **Create module structure**: Set up `operations/splice.ex` + `operations/splice/` directory structure  
-6. **Proof of concept**: Implement basic scene detection using Evision histogram comparison
-7. **Update SpliceWorker**: Replace `PyRunner.run()` call with native `Operations.Splice.run_splice()`
+**Phase 1 Implementation Tasks (Ready to Start):**
+
+**Infrastructure Additions (Priority Order):**
+1. **Add Evision dependency** - Add `{:evision, "~> 0.2"}` to `mix.exs` and test compilation in Docker environment
+2. **Add S3 head_object function** - Implement `S3Adapter.head_object/1` using `ExAws.S3.head_object` for efficient S3 existence checking
+3. **Create SpliceResult type** - Add structured result type to `Types` module matching existing `KeyframeResult`, `SpriteResult` patterns
+
+**Module Structure Setup:**
+4. **Create operations directory** - Set up `lib/heaters/videos/operations/splice.ex` + `operations/splice/` directory structure following keyframe pattern
+5. **Add feature flag configuration** - Setup `config :heaters, :use_native_splice` for gradual rollout
+
+**Proof of Concept:**
+6. **Basic scene detection validation** - Implement simple histogram-based scene detection using Evision, compare results with Python implementation for accuracy validation
 
 **Key Implementation Notes:**
 - **Zero database changes**: Use existing schema and state management from `Ingest` module
