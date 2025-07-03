@@ -9,18 +9,19 @@ Heaters processes videos through a multi-stage pipeline: ingestion → clips →
 - **Database**: PostgreSQL with pgvector extension
 - **Scene Detection**: Native Elixir using Evision (OpenCV bindings)
 - **ML Processing**: Python with PyTorch, Transformers
-- **Media Processing**: Python with yt-dlp, FFmpeg
-- **Storage**: AWS S3 with idempotent operations
-- **Background Jobs**: Oban with PostgreSQL
+- **Media Processing**: Python with yt-dlp, FFmpeg, Rust (rambo for sprite generation)
+- **Storage**: AWS S3 with idempotent operations and robust error handling
+- **Background Jobs**: Oban with PostgreSQL and idempotent worker patterns
 
 ## Architecture Principles
 
 - **Functional Domain Modeling**: "I/O at the edges" with pure business logic separated from I/O operations
 - **Semantic Organization**: Clear distinction between user **Edits** (review actions) and automated **Artifacts** (pipeline stages)
-- **Event Sourcing**: Human review actions tracked via `clip_events` table for audit and reliability
+- **Event Sourcing**: Human review actions tracked via `review_events` table for audit and reliability
 - **Structured Results**: Type-safe Result structs with rich metadata and performance timing
-- **Generic Workers**: Standardized Oban worker behavior eliminates boilerplate
+- **Generic Workers**: Standardized Oban worker behavior with idempotent state management
 - **Hybrid Processing**: Native Elixir for performance-critical operations (scene detection), Python for ML/media processing
+- **Robust Error Handling**: Graceful degradation with comprehensive logging and state recovery
 
 ## State Flow
 
@@ -50,7 +51,7 @@ This reflects the fundamental difference between human review actions and automa
 ### Event Sourcing for Review Actions
 
 Human review actions use CQRS pattern:
-- **Write-side**: `Events.Events` logs all actions to `clip_events` table
+- **Write-side**: `Events.Events` logs all actions to `review_events` table
 - **Read-side**: `Events.EventProcessor` processes events and orchestrates follow-up jobs
 - **Benefits**: Audit trail, reliable job queuing, ability to replay/undo actions
 
@@ -82,6 +83,7 @@ The system uses a **hybrid approach** combining native Elixir and Python process
 - **Technology**: Python for ML embedding generation and media processing
 - **Benefits**: Leverages mature ML ecosystems and specialized media libraries
 - **Interface**: Pure functions with structured JSON responses, no database access
+- **Rust Integration**: Uses `rambo` binary for efficient sprite generation
 
 ```python
 # Python tasks remain pure media processing functions
@@ -103,6 +105,14 @@ All operations return type-safe structs with `@enforce_keys`:
 
 **Benefits**: Compile-time validation, rich metadata, direct field access without defensive `Map.get`.
 
+### Idempotent Worker Patterns
+
+All workers implement robust idempotency patterns:
+- **State Validation**: Check current state before processing to prevent duplicate work
+- **Graceful Degradation**: Handle partial failures and retry scenarios
+- **Resource Cleanup**: Ensure proper cleanup of temporary files and S3 objects
+- **Error Recovery**: Comprehensive error handling with detailed logging
+
 ## Workflow Examples
 
 ### Video Ingestion
@@ -111,13 +121,18 @@ All operations return type-safe structs with `@enforce_keys`:
 3. `Videos.SpliceWorker` runs **native Elixir scene detection** → clips in `spliced` state
 
 ### Review Workflow
-1. `Clips.SpriteWorker` generates sprites → clips in `pending_review` state
+1. `Clips.SpriteWorker` generates sprites using rambo → clips in `pending_review` state
 2. Human reviews and takes actions (approve/archive/merge/split)
 3. Actions logged via event sourcing, new clips automatically flow back through pipeline
 
 ### Post-Approval Processing
 1. `Clips.KeyframeWorker` extracts keyframes → `keyframed` state
 2. `Clips.EmbeddingWorker` generates ML embeddings → `embedded` state (final)
+
+### Archive Workflow
+1. `Clips.ArchiveWorker` safely deletes S3 objects and database records
+2. Robust S3 deletion handling for both XML and JSON responses
+3. Proper cleanup of all associated artifacts and metadata
 
 ## Orchestration
 
@@ -136,25 +151,43 @@ This pattern reduced orchestration code from 98 to 42 lines through configuratio
 - **`Clips.Review`**: Human review workflow and action coordination  
 - **`Clips.Embeddings`**: ML embedding generation and queries
 - **`Events`**: Event sourcing infrastructure for review actions
-- **`Infrastructure`**: I/O adapters (S3, FFmpeg, Database) with consistent interfaces
+- **`Infrastructure`**: I/O adapters (S3, FFmpeg, Database) with consistent interfaces and robust error handling
 
-## Recent Architectural Improvements
+## Recent Reliability Improvements
 
-### Native Elixir Scene Detection
-The system now uses native Elixir scene detection via Evision (OpenCV bindings) instead of Python subprocess communication. This eliminates subprocess reliability issues and provides better performance for the most frequent operation in the pipeline.
+### Sprite Generation Reliability
+- **Rust Integration**: Added `rambo` binary for efficient sprite generation
+- **Docker Support**: Multi-stage Dockerfile with Rust toolchain for rambo compilation
+- **Error Handling**: Comprehensive error handling for sprite generation failures
+- **State Management**: Proper state transitions with idempotent worker patterns
 
-### Hybrid Processing Architecture
-The architecture combines native Elixir and Python processing based on the specific requirements of each operation:
-- **Native Elixir**: Scene detection (performance-critical, frequent operations)
-- **Python**: ML embedding generation and media processing (leveraging mature ecosystems)
+### S3 Operations Robustness
+- **Flexible Response Handling**: S3 deletion operations handle both XML and JSON responses
+- **Error Recovery**: Graceful handling of S3 API variations and network issues
+- **Resource Cleanup**: Proper cleanup of temporary files and S3 objects
+- **Idempotent Operations**: Safe retry mechanisms for failed S3 operations
+
+### State Transition Management
+- **Idempotent Workers**: All workers check current state before processing
+- **Concurrent Safety**: Prevents multiple workers from processing the same clip
+- **Error Recovery**: Comprehensive error handling with detailed logging
+- **Database Consistency**: Proper datetime handling and schema validation
+
+### Database Schema Improvements
+- **Timestamp Standardization**: Consistent datetime handling across all tables
+- **Event Table Renaming**: `clip_events` → `review_events` for semantic clarity
+- **Index Optimization**: Improved database performance with proper indexing
+- **Data Integrity**: Enhanced validation and constraint handling
 
 ## Key Benefits
 
 1. **Clear Separation**: Media processing vs business logic vs I/O operations
 2. **Maintainable**: Functional architecture with pure domain logic
-3. **Reliable**: Event sourcing and structured error handling
+3. **Reliable**: Event sourcing, structured error handling, and robust state management
 4. **Type-Safe**: Structured results with compile-time validation  
 5. **Testable**: Pure functions without I/O dependencies
 6. **Semantic**: Operations organized by business purpose, not implementation details
 7. **Performance**: Native Elixir scene detection eliminates subprocess overhead and JSON parsing brittleness
-8. **Hybrid Efficiency**: Best of both worlds - Elixir for performance-critical operations, Python for ML/media processing 
+8. **Hybrid Efficiency**: Best of both worlds - Elixir for performance-critical operations, Python for ML/media processing
+9. **Production Ready**: Comprehensive error handling, logging, and recovery mechanisms
+10. **Scalable**: Idempotent workers and robust orchestration patterns 
