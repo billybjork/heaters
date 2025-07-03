@@ -137,9 +137,10 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
         |> add_output_file(output_path)
         |> add_file_option(option_vf(vf_filter))
         |> add_file_option(option_an())
-        |> add_file_option(option_qscale("#{@jpeg_quality}"))
+        |> add_stream_specifier(stream_type: :video)
+        |> add_stream_option(option_q("#{@jpeg_quality}"))
 
-      execute_and_get_file_size(command, output_path)
+      execute_and_get_file_size_with_fallback(command, output_path)
     rescue
       e ->
         {:error, "Exception creating sprite sheet: #{inspect(e)}"}
@@ -182,13 +183,13 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
   Extracts comprehensive video metadata using ffprobe.
 
   Replicates the ffprobe command used in sprite operations:
-  ffprobe -v error -select_streams v:0 -show_entries stream=duration,r_frame_rate,nb_frames -count_frames -of json video_path
+  ffprobe -v error -select_streams v:0 -show_entries stream=duration,r_frame_rate,nb_frames,width,height -count_frames -of json video_path
 
   ## Parameters
   - `video_path`: Path to video file to analyze
 
   ## Returns
-  - `{:ok, metadata}` with map containing duration, fps, and total_frames
+  - `{:ok, metadata}` with map containing duration, fps, total_frames, width, and height
   - `{:error, reason}` on failure
   """
   @spec get_video_metadata(String.t()) :: metadata_result()
@@ -201,7 +202,7 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
           "-select_streams",
           "v:0",
           "-show_entries",
-          "stream=duration,r_frame_rate,nb_frames",
+          "stream=duration,r_frame_rate,nb_frames,width,height",
           "-count_frames",
           "-of",
           "json",
@@ -311,11 +312,44 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
             {:ok, file_size}
 
           {:error, reason} ->
-            {:error, "Created file not found: #{reason}"}
+            {:error, "Created file not found: #{inspect(reason)}"}
         end
 
       {:error, reason} ->
-        {:error, "FFmpeg error: #{reason}"}
+        Logger.error("FFmpegRunner: FFmpeg execution failed: #{inspect(reason)}")
+        {:error, "FFmpeg error: #{inspect(reason)}"}
+    end
+  end
+
+  @spec execute_and_get_file_size_with_fallback(FFmpex.Command.t(), String.t()) :: ffmpeg_result()
+  defp execute_and_get_file_size_with_fallback(command, output_path) do
+    case FFmpex.execute(command) do
+      {:ok, _output} ->
+        # Verify the file was created and get its size
+        case File.stat(output_path) do
+          {:ok, %File.Stat{size: file_size}} ->
+            Logger.debug("FFmpegRunner: Successfully created file: #{output_path} (#{file_size} bytes)")
+            {:ok, file_size}
+
+          {:error, reason} ->
+            {:error, "Created file not found: #{inspect(reason)}"}
+        end
+
+      {:error, reason} ->
+        # For sprite generation, check if file was created despite stderr warnings
+        case File.stat(output_path) do
+          {:ok, %File.Stat{size: file_size}} when file_size > 0 ->
+            Logger.info("FFmpegRunner: File created successfully despite stderr warnings: #{output_path} (#{file_size} bytes)")
+            {:ok, file_size}
+
+          {:ok, %File.Stat{size: 0}} ->
+            Logger.error("FFmpegRunner: Created file is empty: #{output_path}")
+            {:error, "Created file is empty"}
+
+          {:error, _} ->
+            Logger.error("FFmpegRunner: FFmpeg execution failed and no output file created: #{inspect(reason)}")
+            {:error, "FFmpeg error: #{inspect(reason)}"}
+        end
     end
   end
 
@@ -325,15 +359,19 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
 
     with {:ok, duration} <- extract_duration(probe_data),
          {:ok, fps} <- extract_fps(probe_data),
-         {:ok, total_frames} <- extract_total_frames(probe_data, duration, fps) do
-      if duration <= 0 or fps <= 0 or total_frames <= 0 do
+         {:ok, total_frames} <- extract_total_frames(probe_data, duration, fps),
+         {:ok, width} <- extract_width(probe_data),
+         {:ok, height} <- extract_height(probe_data) do
+      if duration <= 0 or fps <= 0 or total_frames <= 0 or width <= 0 or height <= 0 do
         {:error,
-         "Invalid video metadata: duration=#{duration}s, fps=#{fps}, frames=#{total_frames}"}
+         "Invalid video metadata: duration=#{duration}s, fps=#{fps}, frames=#{total_frames}, dimensions=#{width}x#{height}"}
       else
         metadata = %{
           duration: duration,
           fps: fps,
-          total_frames: total_frames
+          total_frames: total_frames,
+          width: width,
+          height: height
         }
 
         {:ok, metadata}
@@ -391,4 +429,16 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
     Logger.info("FFmpegRunner: Calculated total frames from duration*fps: #{total_frames}")
     {:ok, total_frames}
   end
+
+  defp extract_width(%{"width" => width}) when is_integer(width) and width > 0 do
+    {:ok, width}
+  end
+
+  defp extract_width(_), do: {:error, "Could not determine video width"}
+
+  defp extract_height(%{"height" => height}) when is_integer(height) and height > 0 do
+    {:ok, height}
+  end
+
+  defp extract_height(_), do: {:error, "Could not determine video height"}
 end

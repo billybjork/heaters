@@ -10,9 +10,14 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadataTest do
       assert VideoMetadata.calculate_effective_fps(24.0, nil) == 24.0
     end
 
-    test "returns sprite fps when provided" do
+    test "returns minimum of video fps and sprite fps when provided" do
+      # When sprite fps is lower than video fps, use sprite fps
       assert VideoMetadata.calculate_effective_fps(30.0, 15.0) == 15.0
       assert VideoMetadata.calculate_effective_fps(24.0, 1.0) == 1.0
+
+      # When sprite fps is higher than video fps, cap at video fps
+      assert VideoMetadata.calculate_effective_fps(15.0, 30.0) == 15.0
+      assert VideoMetadata.calculate_effective_fps(24.0, 60.0) == 24.0
     end
 
     property "effective fps is always positive and finite" do
@@ -28,13 +33,15 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadataTest do
       end
     end
 
-    property "effective fps matches expected value" do
+    property "effective fps is minimum of video and sprite fps" do
       check all(
               video_fps <- positive_float(),
               sprite_fps <- positive_float()
             ) do
         result = VideoMetadata.calculate_effective_fps(video_fps, sprite_fps)
-        assert result == sprite_fps
+        assert result == min(video_fps, sprite_fps)
+        assert result <= video_fps
+        assert result <= sprite_fps
       end
     end
   end
@@ -171,8 +178,8 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadataTest do
       check all(
               duration <- positive_float(),
               fps <- positive_float(),
-              width <- positive_integer(),
-              height <- positive_integer()
+              width <- positive_int(),
+              height <- positive_int()
             ) do
         metadata = %{
           duration: duration,
@@ -193,7 +200,7 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadataTest do
     end
   end
 
-  defp positive_integer do
+  defp positive_int do
     gen all(num <- integer(1..10000)) do
       num
     end

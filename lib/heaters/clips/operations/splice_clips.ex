@@ -12,6 +12,7 @@ defmodule Heaters.Clips.Operations.SpliceClips do
   - Generate consistent clip identifiers
   """
 
+  import Ecto.Query
   alias Heaters.Repo
   alias Heaters.Clips.Clip
   require Logger
@@ -66,20 +67,57 @@ defmodule Heaters.Clips.Operations.SpliceClips do
           build_clip_attrs(source_video_id, clip_data, index)
         end)
 
-      case Repo.insert_all(Clip, clips_attrs, returning: true) do
-        {count, clips} when count > 0 ->
+      # Check for existing clips to make this operation idempotent
+      clip_filepaths = Enum.map(clips_attrs, & &1.clip_filepath)
+
+      existing_clips =
+        from(c in Clip, where: c.clip_filepath in ^clip_filepaths)
+        |> Repo.all()
+
+      existing_filepaths = MapSet.new(existing_clips, & &1.clip_filepath)
+
+      # Filter out clips that already exist
+      new_clips_attrs =
+        Enum.filter(clips_attrs, fn attrs ->
+          not MapSet.member?(existing_filepaths, attrs.clip_filepath)
+        end)
+
+      case {length(existing_clips), length(new_clips_attrs)} do
+        {existing_count, 0} when existing_count > 0 ->
           Logger.info(
-            "SpliceClips: Successfully created #{count} clips for source_video_id: #{source_video_id}"
+            "SpliceClips: All #{existing_count} clips already exist for source_video_id: #{source_video_id}, skipping creation"
           )
+          {:ok, existing_clips}
 
-          {:ok, clips}
+        {existing_count, new_count} when new_count > 0 ->
+          case Repo.insert_all(Clip, new_clips_attrs, returning: true) do
+            {^new_count, new_clips} ->
+              all_clips = existing_clips ++ new_clips
+              Logger.info(
+                "SpliceClips: Found #{existing_count} existing clips, created #{new_count} new clips for source_video_id: #{source_video_id}"
+              )
+              {:ok, all_clips}
 
-        {0, _} ->
+            {0, _} ->
+              Logger.error(
+                "SpliceClips: Failed to create new clips for source_video_id: #{source_video_id}"
+              )
+              {:error, "Failed to create new clips"}
+
+            {created_count, new_clips} ->
+              # Partial success - some clips created but not all
+              all_clips = existing_clips ++ new_clips
+              Logger.warning(
+                "SpliceClips: Expected #{new_count} new clips but created #{created_count} for source_video_id: #{source_video_id}"
+              )
+              {:ok, all_clips}
+          end
+
+        {0, 0} ->
           Logger.error(
-            "SpliceClips: Failed to create clips for source_video_id: #{source_video_id}"
+            "SpliceClips: No clips to create for source_video_id: #{source_video_id}"
           )
-
-          {:error, "No clips were created"}
+          {:error, "No clips to create"}
       end
     end
   rescue

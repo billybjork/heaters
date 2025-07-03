@@ -16,10 +16,17 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadata do
 
       iex> VideoMetadata.calculate_effective_fps(15.0, 24)
       15.0
+
+      iex> VideoMetadata.calculate_effective_fps(30.0, nil)
+      30.0
   """
-  @spec calculate_effective_fps(float(), integer()) :: float()
+  @spec calculate_effective_fps(float(), integer() | float() | nil) :: float()
+  def calculate_effective_fps(video_fps, nil) when is_float(video_fps) do
+    video_fps
+  end
+
   def calculate_effective_fps(video_fps, desired_fps)
-      when is_float(video_fps) and is_integer(desired_fps) do
+      when is_float(video_fps) and (is_integer(desired_fps) or is_float(desired_fps)) do
     min(video_fps, desired_fps * 1.0)
   end
 
@@ -54,7 +61,7 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadata do
   """
   @spec validate_metadata(map()) :: :ok | {:error, atom()}
   def validate_metadata(metadata) when is_map(metadata) do
-    required_fields = [:duration, :fps]
+    required_fields = [:duration, :fps, :width, :height]
 
     cond do
       not has_required_fields?(metadata, required_fields) ->
@@ -65,6 +72,9 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadata do
 
       not valid_fps?(metadata.fps) ->
         {:error, :invalid_fps}
+
+      not valid_dimensions?(metadata.width, metadata.height) ->
+        {:error, :invalid_dimensions}
 
       true ->
         :ok
@@ -148,6 +158,41 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadata do
     width / height
   end
 
+  @doc """
+  Calculate tile height for sprite generation when preserving aspect ratio.
+
+  When tile_height is -1, this function calculates the proper height based on
+  the video's aspect ratio and the specified tile width.
+
+  ## Examples
+
+      iex> VideoMetadata.calculate_tile_height(1920, 1080, 480, -1)
+      270
+
+      iex> VideoMetadata.calculate_tile_height(1080, 1920, 480, -1)  # Portrait video
+      853
+
+      iex> VideoMetadata.calculate_tile_height(1920, 1080, 480, 200)  # Fixed height
+      200
+  """
+  @spec calculate_tile_height(integer(), integer(), integer(), integer()) :: integer()
+  def calculate_tile_height(_video_width, _video_height, _tile_width, tile_height)
+      when tile_height > 0 do
+    # If tile_height is already specified (not -1), return it as-is
+    tile_height
+  end
+
+  def calculate_tile_height(video_width, video_height, tile_width, -1)
+      when is_integer(video_width) and is_integer(video_height) and
+           is_integer(tile_width) and video_width > 0 and video_height > 0 and tile_width > 0 do
+    # Calculate height to preserve aspect ratio: new_height = new_width * (original_height / original_width)
+    aspect_ratio = video_height / video_width
+    calculated_height = round(tile_width * aspect_ratio)
+
+    # Ensure the height is at least 1 pixel and even (for video encoding compatibility)
+    max(2, calculated_height - rem(calculated_height, 2))
+  end
+
   # Private helper functions
 
   defp has_required_fields?(metadata, fields) do
@@ -161,4 +206,10 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadata do
   defp valid_fps?(fps) when is_float(fps), do: fps > 0.0
   defp valid_fps?(fps) when is_integer(fps), do: fps > 0
   defp valid_fps?(_), do: false
+
+  defp valid_dimensions?(width, height) when is_integer(width) and is_integer(height) do
+    width > 0 and height > 0
+  end
+
+  defp valid_dimensions?(_, _), do: false
 end

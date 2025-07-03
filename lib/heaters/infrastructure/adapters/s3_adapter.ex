@@ -38,9 +38,9 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
       upload_data = %{s3_key: "sprites/sprite.jpg", metadata: %{file_size: 1024}}
       {:ok, ^upload_data} = S3Adapter.upload_sprite("/tmp/sprite.jpg", clip, "sprite.jpg")
   """
-  @spec upload_sprite(String.t(), Clip.t(), String.t()) :: {:ok, map()} | {:error, any()}
-  def upload_sprite(local_sprite_path, %Clip{} = clip, filename)
-      when is_binary(local_sprite_path) and is_binary(filename) do
+  @spec upload_sprite(String.t(), Clip.t(), String.t(), map()) :: {:ok, map()} | {:error, any()}
+  def upload_sprite(local_sprite_path, %Clip{} = clip, filename, sprite_metadata \\ %{})
+      when is_binary(local_sprite_path) and is_binary(filename) and is_map(sprite_metadata) do
     s3_prefix = build_artifact_prefix(clip, "sprite_sheets")
     s3_key = "#{s3_prefix}/#{filename}"
 
@@ -48,13 +48,16 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
       {:ok, _upload_result} ->
         file_size = get_file_size(local_sprite_path)
 
+        # Merge sprite generation metadata with upload metadata
+        combined_metadata =
+          sprite_metadata
+          |> Map.put("file_size", file_size)
+          |> Map.put("filename", filename)
+          |> Map.put("upload_timestamp", DateTime.utc_now())
+
         result = %{
           s3_key: s3_key,
-          metadata: %{
-            file_size: file_size,
-            filename: filename,
-            upload_timestamp: DateTime.utc_now()
-          }
+          metadata: combined_metadata
         }
 
         {:ok, result}

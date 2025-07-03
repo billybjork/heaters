@@ -56,7 +56,7 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite do
            {:ok, sprite_spec} <- calculate_sprite_specifications(video_metadata, final_params),
            filename <- generate_sprite_filename(clip_id, sprite_spec),
            {:ok, sprite_path} <- create_sprite_file(video_path, sprite_spec, filename, temp_dir),
-           {:ok, upload_result} <- upload_sprite_file(sprite_path, clip, filename) do
+           {:ok, upload_result} <- upload_sprite_file(sprite_path, clip, filename, sprite_spec, video_metadata) do
         duration_ms = calculate_duration(start_time)
         result = build_success_result(clip_id, upload_result, sprite_spec, duration_ms)
 
@@ -184,10 +184,14 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite do
     end
   end
 
-  @spec upload_sprite_file(String.t(), map(), String.t()) :: {:ok, map()} | {:error, any()}
-  defp upload_sprite_file(sprite_path, clip, filename) do
+  @spec upload_sprite_file(String.t(), map(), String.t(), map(), map()) :: {:ok, map()} | {:error, any()}
+  defp upload_sprite_file(sprite_path, clip, filename, sprite_spec, video_metadata) do
     Logger.info("Sprite: Uploading sprite sheet for clip_id: #{clip.id}")
-    S3Adapter.upload_sprite(sprite_path, clip, filename)
+
+    # Build comprehensive metadata for JavaScript player compatibility
+    sprite_metadata = build_sprite_metadata(sprite_spec, video_metadata, clip)
+
+    S3Adapter.upload_sprite(sprite_path, clip, filename, sprite_metadata)
   end
 
   @spec build_success_result(integer(), map(), map(), integer()) :: Types.SpriteResult.t()
@@ -207,4 +211,30 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite do
 
   @spec get_error_context(atom(), map()) :: any()
   defp get_error_context(_, _), do: "unknown"
+
+  @spec build_sprite_metadata(map(), map(), map()) :: map()
+  defp build_sprite_metadata(sprite_spec, video_metadata, clip) do
+    # Build metadata that matches what the JavaScript player expects
+    # Based on sprite_player.ex build_sprite_player_meta function
+    %{
+      "cols" => sprite_spec.cols,
+      "rows" => sprite_spec.rows,
+      "tile_width" => sprite_spec.tile_width,
+      "tile_height_calculated" => sprite_spec.tile_height,
+      "total_sprite_frames" => sprite_spec.num_frames,
+      "clip_fps" => sprite_spec.effective_fps,
+      "clip_fps_source" => video_metadata.fps,
+      "clip_total_frames_source" =>
+        if clip.start_time_seconds && clip.end_time_seconds do
+          Float.ceil((clip.end_time_seconds - clip.start_time_seconds) * video_metadata.fps)
+        else
+          sprite_spec.num_frames
+        end,
+      "video_duration" => video_metadata.duration,
+      "video_fps" => video_metadata.fps,
+      "effective_fps" => sprite_spec.effective_fps,
+      "num_frames" => sprite_spec.num_frames,
+      "grid_dimensions" => sprite_spec.grid_dimensions
+    }
+  end
 end
