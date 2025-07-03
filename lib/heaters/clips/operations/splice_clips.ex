@@ -1,6 +1,6 @@
-defmodule Heaters.Clips.Operations.SplicePersister do
+defmodule Heaters.Clips.Operations.SpliceClips do
   @moduledoc """
-  Persistence operations for splice workflow results.
+  Clip creation and management for splice workflow results.
 
   This module handles creating clips from splice operation results,
   extracted from the general Ingest module to maintain clear separation of concerns.
@@ -50,13 +50,13 @@ defmodule Heaters.Clips.Operations.SplicePersister do
         }
       ]
 
-      {:ok, clips} = SplicePersister.create_clips_from_splice(123, clips_data)
+      {:ok, clips} = SpliceClips.create_clips_from_splice(123, clips_data)
   """
   @spec create_clips_from_splice(integer(), list(map())) ::
           {:ok, list(Clip.t())} | {:error, any()}
   def create_clips_from_splice(source_video_id, clips_data) when is_list(clips_data) do
     Logger.info(
-      "SplicePersister: Creating #{length(clips_data)} clips for source_video_id: #{source_video_id}"
+      "SpliceClips: Creating #{length(clips_data)} clips for source_video_id: #{source_video_id}"
     )
 
     with :ok <- validate_clips_data(clips_data) do
@@ -70,14 +70,14 @@ defmodule Heaters.Clips.Operations.SplicePersister do
       case Repo.insert_all(Clip, clips_attrs, returning: true) do
         {count, clips} when count > 0 ->
           Logger.info(
-            "SplicePersister: Successfully created #{count} clips for source_video_id: #{source_video_id}"
+            "SpliceClips: Successfully created #{count} clips for source_video_id: #{source_video_id}"
           )
 
           {:ok, clips}
 
         {0, _} ->
           Logger.error(
-            "SplicePersister: Failed to create clips for source_video_id: #{source_video_id}"
+            "SpliceClips: Failed to create clips for source_video_id: #{source_video_id}"
           )
 
           {:error, "No clips were created"}
@@ -86,7 +86,7 @@ defmodule Heaters.Clips.Operations.SplicePersister do
   rescue
     e ->
       Logger.error(
-        "SplicePersister: Error creating clips for source_video_id #{source_video_id}: #{Exception.message(e)}"
+        "SpliceClips: Error creating clips for source_video_id #{source_video_id}: #{Exception.message(e)}"
       )
 
       {:error, Exception.message(e)}
@@ -105,7 +105,7 @@ defmodule Heaters.Clips.Operations.SplicePersister do
   ## Examples
 
       clips_data = [%{clip_filepath: "path.mp4", start_time_seconds: 0.0, end_time_seconds: 5.0}]
-      :ok = SplicePersister.validate_clips_data(clips_data)
+      :ok = SpliceClips.validate_clips_data(clips_data)
   """
   @spec validate_clips_data(list(map())) :: :ok | {:error, String.t()}
   def validate_clips_data(clips_data) when is_list(clips_data) do

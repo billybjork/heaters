@@ -33,7 +33,7 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
 
   alias Heaters.Videos.{SourceVideo, Operations}
   alias Heaters.Videos.Operations.Splice.StateManager
-  alias Heaters.Clips.Operations.SplicePersister
+  alias Heaters.Clips.Operations.SpliceClips
   alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Workers.Clips.SpriteWorker
   require Logger
@@ -113,11 +113,11 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
   end
 
   defp process_splice_results(source_video, clips_data) do
-    # Use new SplicePersister for clip creation and validation
-    case SplicePersister.validate_clips_data(clips_data) do
+    # Use new SpliceClips for clip creation and validation
+    case SpliceClips.validate_clips_data(clips_data) do
       :ok ->
         # Create clips and update source video state
-        case SplicePersister.create_clips_from_splice(source_video.id, clips_data) do
+        case SpliceClips.create_clips_from_splice(source_video.id, clips_data) do
           {:ok, clips} ->
             case StateManager.complete_splicing(source_video.id) do
               {:ok, _final_video} ->

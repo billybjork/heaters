@@ -245,32 +245,42 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
   """
   @spec download_json(String.t()) :: {:ok, map()} | {:error, :not_found | any()}
   def download_json(s3_key) do
-    # Create a temporary file for downloading
-    temp_file = Path.join(System.tmp_dir!(), "s3_json_#{System.unique_integer([:positive])}.json")
+    # First check if the file exists using head_object
+    case head_object(s3_key) do
+      {:error, :not_found} ->
+        {:error, :not_found}
 
-    try do
-      case download_file(s3_key, temp_file) do
-        {:ok, ^temp_file} ->
-          case File.read(temp_file) do
-            {:ok, json_content} ->
-              case Jason.decode(json_content) do
-                {:ok, data} ->
-                  {:ok, data}
+      {:error, reason} ->
+        {:error, reason}
 
-                {:error, %Jason.DecodeError{} = error} ->
-                  {:error, "JSON decode error: #{Exception.message(error)}"}
+      {:ok, _metadata} ->
+        # File exists, proceed with download
+        temp_file = Path.join(System.tmp_dir!(), "s3_json_#{System.unique_integer([:positive])}.json")
+
+        try do
+          case download_file(s3_key, temp_file) do
+            {:ok, ^temp_file} ->
+              case File.read(temp_file) do
+                {:ok, json_content} ->
+                  case Jason.decode(json_content) do
+                    {:ok, data} ->
+                      {:ok, data}
+
+                    {:error, %Jason.DecodeError{} = error} ->
+                      {:error, "JSON decode error: #{Exception.message(error)}"}
+                  end
+
+                {:error, reason} ->
+                  {:error, "File read error: #{inspect(reason)}"}
               end
 
             {:error, reason} ->
-              {:error, "File read error: #{inspect(reason)}"}
+              {:error, reason}
           end
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    after
-      # Clean up temporary file
-      File.rm(temp_file)
+        after
+          # Clean up temporary file
+          File.rm(temp_file)
+        end
     end
   end
 
