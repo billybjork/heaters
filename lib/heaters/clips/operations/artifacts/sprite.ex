@@ -67,7 +67,13 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite do
         {:ok, result}
       else
         {:error, domain_error} when is_atom(domain_error) ->
-          error_message = ErrorFormatting.format_domain_error(domain_error, clip_id)
+          # Get clip data again for error context since it may not be in scope
+          clip_for_error = case fetch_clip_data(clip_id) do
+            {:ok, c} -> c
+            _ -> %{ingest_state: "unknown"}
+          end
+          error_context = get_error_context(domain_error, clip_for_error)
+          error_message = ErrorFormatting.format_domain_error(domain_error, error_context)
           Logger.error("Sprite: Domain error for clip_id: #{clip_id}, error: #{error_message}")
           {:error, error_message}
 
@@ -198,4 +204,7 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite do
       :millisecond
     )
   end
+
+  @spec get_error_context(atom(), map()) :: any()
+  defp get_error_context(_, _), do: "unknown"
 end

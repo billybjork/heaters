@@ -74,6 +74,10 @@ defmodule Heaters.Workers.Clips.SpriteWorker do
     {:error, :already_processed}
   end
 
+  defp check_idempotency(%{ingest_state: "generating_sprite"}), do: {:error, :already_processed}
+  defp check_idempotency(%{ingest_state: "spliced"}), do: :ok
+  defp check_idempotency(%{ingest_state: "sprite_failed"}), do: :ok
+
   defp check_idempotency(%{clip_artifacts: artifacts} = _clip) do
     has_sprite? = Enum.any?(artifacts, &(&1.artifact_type == "sprite_sheet"))
 
@@ -83,9 +87,6 @@ defmodule Heaters.Workers.Clips.SpriteWorker do
       :ok
     end
   end
-
-  defp check_idempotency(%{ingest_state: "spliced"}), do: :ok
-  defp check_idempotency(%{ingest_state: "sprite_failed"}), do: :ok
 
   defp check_idempotency(%{ingest_state: state}) do
     Logger.warning("SpriteWorker: Unexpected clip state '#{state}' for sprite generation")

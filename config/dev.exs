@@ -76,8 +76,9 @@ config :heaters, HeatersWeb.Endpoint,
     patterns: [
       ~r"priv/static/(?!uploads/).*(js|css|png|jpeg|jpg|gif|svg)$",
       ~r"priv/gettext/.*(po)$",
-      ~r"lib/frontend_web/(live|views)/.*(ex)$",
-      ~r"lib/frontend_web/templates/.*(eex)$"
+      ~r"lib/heaters_web/(live|views)/.*(ex)$",
+      ~r"lib/heaters_web/templates/.*(eex)$",
+      ~r"lib/heaters/.*(ex)$"
     ]
   ]
 
@@ -138,3 +139,17 @@ config :heaters, Heaters.Infrastructure.PyRunner,
   python_executable: python_executable,
   working_dir: if(in_docker, do: "/app", else: Path.expand(".")),
   runner_script: "py/runner.py"
+
+# ───────────────────────────────────────────
+#  S3/ExAws Configuration for Development
+# ───────────────────────────────────────────
+# Override base ExAws config for development-specific needs
+config :ex_aws,
+  access_key_id: System.get_env("AWS_ACCESS_KEY_ID"),
+  secret_access_key: System.get_env("AWS_SECRET_ACCESS_KEY"),
+  region: System.get_env("AWS_REGION") || "us-west-1"
+
+config :ex_aws, :s3,
+  scheme: "https://",
+  host: "s3.us-west-1.amazonaws.com",
+  region: System.get_env("AWS_REGION") || "us-west-1"

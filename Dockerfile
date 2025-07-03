@@ -7,7 +7,7 @@ FROM elixir:1.16.2-otp-26-slim AS build
 
 ENV MIX_ENV=prod
 
-# Install system dependencies
+# Install system dependencies (including Rust for rambo/FFmpex)
 RUN apt-get update && apt-get install -y --no-install-recommends \
   build-essential \
   git \
@@ -16,7 +16,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   python3 \
   python3-pip \
   python3-venv \
+  curl \
   && rm -rf /var/lib/apt/lists/*
+
+# Install Rust for rambo compilation BEFORE installing Elixir dependencies
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:$PATH"
+
+# Verify Rust installation
+RUN rustc --version && cargo --version
 
 WORKDIR /app
 
@@ -27,7 +35,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Install Elixir tools
 RUN mix local.hex --force && mix local.rebar --force
 
-# Install Elixir dependencies
+# Install Elixir dependencies (with Rust now available for rambo compilation)
 COPY mix.exs mix.lock ./
 RUN mix deps.get --only prod
 RUN mix deps.compile

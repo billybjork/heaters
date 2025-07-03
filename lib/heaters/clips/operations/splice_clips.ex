@@ -32,7 +32,6 @@ defmodule Heaters.Clips.Operations.SpliceClips do
   - `:clip_identifier` - Custom identifier (auto-generated if not provided)
   - `:start_frame` - Start frame number
   - `:end_frame` - End frame number
-  - `:duration_seconds` - Clip duration (calculated if not provided)
 
   ## Returns
   - `{:ok, clips}` - List of created Clip structs
@@ -131,24 +130,12 @@ defmodule Heaters.Clips.Operations.SpliceClips do
   # Private helper functions
 
   defp build_clip_attrs(source_video_id, clip_data, index) do
-    now = DateTime.utc_now()
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
 
     # Generate clip_identifier if not provided
     clip_identifier =
       Map.get(clip_data, :clip_identifier) ||
         "#{source_video_id}_clip_#{String.pad_leading(to_string(index + 1), 3, "0")}"
-
-    # Calculate duration if not provided
-    duration_seconds =
-      case Map.get(clip_data, :duration_seconds) do
-        nil ->
-          end_time = Map.fetch!(clip_data, :end_time_seconds)
-          start_time = Map.fetch!(clip_data, :start_time_seconds)
-          end_time - start_time
-
-        duration ->
-          duration
-      end
 
     %{
       source_video_id: source_video_id,
@@ -158,7 +145,6 @@ defmodule Heaters.Clips.Operations.SpliceClips do
       end_frame: Map.get(clip_data, :end_frame),
       start_time_seconds: Map.fetch!(clip_data, :start_time_seconds),
       end_time_seconds: Map.fetch!(clip_data, :end_time_seconds),
-      duration_seconds: duration_seconds,
       # Set initial state for splice-created clips
       ingest_state: "spliced",
       inserted_at: now,

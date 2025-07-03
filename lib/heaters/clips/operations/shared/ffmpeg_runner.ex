@@ -21,9 +21,10 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
   @type metadata_result :: {:ok, map()} | {:error, any()}
 
   # Standard video encoding settings used across operations
+  # Conservative settings for 4K video to avoid resource exhaustion
   @video_codec "libx264"
-  @video_preset "medium"
-  @video_crf 23
+  @video_preset "fast"      # Changed from "medium" to "fast" for lower CPU usage
+  @video_crf 25            # Changed from "23" to "25" for lower quality but faster encoding
   @video_pix_fmt "yuv420p"
   @audio_codec "aac"
   @audio_bitrate "128k"
@@ -52,28 +53,37 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
   @spec create_video_clip(String.t(), String.t(), float(), float()) :: ffmpeg_result()
   def create_video_clip(input_path, output_path, start_time, end_time) do
     try do
+      # Convert float times to strings for FFmpex compatibility
+      start_time_str = Float.to_string(start_time)
+      duration = end_time - start_time
+      duration_str = Float.to_string(duration)
+
+      Logger.debug("FFmpegRunner: Creating video clip with FFmpex - start_time=#{start_time}, duration=#{duration}")
+
       command =
         FFmpex.new_command()
         |> add_input_file(input_path)
-        |> add_file_option(option_ss(start_time))
-        |> add_file_option(option_to(end_time))
+        |> add_output_file(output_path)
+        |> add_file_option(option_ss(start_time_str))
+        |> add_file_option(option_t(duration_str))
+        |> add_file_option(option_map("0:v:0?"))
+        |> add_file_option(option_map("0:a:0?"))
         |> add_stream_specifier(stream_type: :video)
-        |> add_stream_option(option_map("0:v:0?"))
         |> add_stream_option(option_c(@video_codec))
-        |> add_stream_option(option_preset(@video_preset))
-        |> add_stream_option(option_crf(@video_crf))
-        |> add_stream_option(option_pix_fmt(@video_pix_fmt))
+        |> add_file_option(option_preset(@video_preset))
+        |> add_file_option(option_crf(to_string(@video_crf)))
+        |> add_file_option(option_pix_fmt(@video_pix_fmt))
         |> add_stream_specifier(stream_type: :audio)
-        |> add_stream_option(option_map("0:a:0?"))
         |> add_stream_option(option_c(@audio_codec))
         |> add_stream_option(option_b(@audio_bitrate))
         |> add_file_option(option_movflags("+faststart"))
-        |> add_file_option(option_y())
-        |> add_output_file(output_path)
+        |> add_file_option(option_threads("2"))
+        |> add_global_option(option_y())
 
       execute_and_get_file_size(command, output_path)
     rescue
       e ->
+        Logger.error("FFmpegRunner: Exception creating video clip: #{inspect(e)}")
         {:error, "Exception creating video clip: #{inspect(e)}"}
     end
   end
@@ -127,7 +137,7 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
         |> add_output_file(output_path)
         |> add_file_option(option_vf(vf_filter))
         |> add_file_option(option_an())
-        |> add_file_option(option_qscale("#{@jpeg_quality}:v"))
+        |> add_file_option(option_qscale("#{@jpeg_quality}"))
 
       execute_and_get_file_size(command, output_path)
     rescue

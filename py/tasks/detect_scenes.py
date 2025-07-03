@@ -48,7 +48,7 @@ def run_detect_scenes(
     Detect scene cuts in a video using OpenCV histogram comparison.
     
     Args:
-        source_video_path: S3 path to the source video (e.g., 's3://bucket/path/video.mp4')
+        source_video_path: Local file path or S3 path to the source video
         source_video_id: ID of the source video (for caching)
         threshold: Similarity threshold for scene detection (0.0-1.0)
         method: Comparison method ('correl', 'chisqr', 'intersect', 'bhattacharyya')
@@ -63,6 +63,90 @@ def run_detect_scenes(
     logger.info(f"Video path: {source_video_path}")
     logger.info(f"Params: threshold={threshold}, method={method}, min_duration={min_duration_seconds}")
 
+    # Check if we received a local file path
+    is_local_file = os.path.exists(source_video_path)
+    
+    if is_local_file:
+        logger.info(f"Using local file: {source_video_path}")
+        return process_local_video_file(
+            source_video_path, source_video_id, threshold, method, min_duration_seconds, force_redetect
+        )
+    else:
+        logger.info(f"Downloading from S3: {source_video_path}")
+        return process_s3_video_file(
+            source_video_path, source_video_id, threshold, method, min_duration_seconds, force_redetect
+        )
+
+def process_local_video_file(
+    local_video_path: str,
+    source_video_id: int,
+    threshold: float,
+    method: str,
+    min_duration_seconds: float,
+    force_redetect: bool
+) -> Dict[str, Any]:
+    """Process a video file that's already available locally."""
+    
+    # Get S3 resources for caching (if available)
+    s3_bucket_name = os.getenv("S3_BUCKET_NAME")
+    s3_client = None
+    
+    if s3_bucket_name:
+        try:
+            s3_client = boto3.client("s3")
+        except NoCredentialsError:
+            logger.warning("S3 credentials not found - caching disabled")
+    
+    # Check for cached results first (unless force_redetect)
+    cache_key = f"scene_detection_results/{source_video_id}.json"
+    if not force_redetect and s3_client:
+        cached_result = load_cached_result(s3_client, s3_bucket_name, cache_key)
+        if cached_result:
+            logger.info(f"Using cached scene detection results for video {source_video_id}")
+            return cached_result
+
+    # Validate method
+    if method not in COMPARISON_METHODS:
+        error_msg = f"Invalid comparison method '{method}'. Must be one of: {list(COMPARISON_METHODS.keys())}"
+        logger.error(error_msg)
+        return {
+            "status": "error",
+            "error": error_msg,
+            "source_video_id": source_video_id
+        }
+
+    try:
+        # Perform scene detection directly on local file
+        local_video_path_obj = Path(local_video_path)
+        detection_result = detect_scenes_opencv(
+            local_video_path_obj, threshold, method, min_duration_seconds
+        )
+        
+        # Cache results to S3 if available
+        if s3_client:
+            cache_result_to_s3(s3_client, s3_bucket_name, cache_key, detection_result)
+        
+        logger.info(f"Scene detection completed: {len(detection_result['scenes'])} scenes found")
+        return detection_result
+
+    except Exception as e:
+        logger.error(f"Error during scene detection: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "source_video_id": source_video_id
+        }
+
+def process_s3_video_file(
+    source_video_path: str,
+    source_video_id: int,
+    threshold: float,
+    method: str,
+    min_duration_seconds: float,
+    force_redetect: bool
+) -> Dict[str, Any]:
+    """Process a video file from S3 (original behavior)."""
+    
     # Get S3 resources from environment 
     s3_bucket_name = os.getenv("S3_BUCKET_NAME")
     if not s3_bucket_name:

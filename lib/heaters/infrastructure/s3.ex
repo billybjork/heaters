@@ -109,31 +109,21 @@ defmodule Heaters.Infrastructure.S3 do
           "#{operation_name}: Downloading s3://#{bucket_name}/#{s3_key} to #{local_path}"
         )
 
-        try do
-          # Use streaming download for better memory efficiency with large files
-          file = File.open!(local_path, [:write, :binary])
+        case ExAws.S3.get_object(bucket_name, s3_key) |> ExAws.request() do
+          {:ok, %{body: body}} ->
+            case File.write(local_path, body) do
+              :ok ->
+                Logger.debug("#{operation_name}: Successfully downloaded to #{local_path}")
+                {:ok, local_path}
 
-          try do
-            ExAws.S3.get_object(bucket_name, s3_key)
-            |> ExAws.stream!()
-            |> Enum.each(&IO.binwrite(file, &1))
-          after
-            File.close(file)
-          end
+              {:error, reason} ->
+                Logger.error("#{operation_name}: Failed to write file: #{inspect(reason)}")
+                {:error, "Failed to write downloaded file: #{inspect(reason)}"}
+            end
 
-          if File.exists?(local_path) do
-            Logger.debug("#{operation_name}: Successfully downloaded to #{local_path}")
-            {:ok, local_path}
-          else
-            {:error, "Downloaded file does not exist at #{local_path}"}
-          end
-        rescue
-          error ->
-            Logger.error(
-              "#{operation_name}: Failed to stream download from S3: #{Exception.message(error)}"
-            )
-
-            {:error, "Failed to download from S3: #{Exception.message(error)}"}
+          {:error, reason} ->
+            Logger.error("#{operation_name}: Failed to download from S3: #{inspect(reason)}")
+            {:error, "Failed to download from S3: #{inspect(reason)}"}
         end
 
       {:error, reason} ->

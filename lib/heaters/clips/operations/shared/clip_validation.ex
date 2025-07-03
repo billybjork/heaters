@@ -7,7 +7,7 @@ defmodule Heaters.Clips.Operations.Shared.ClipValidation do
   No side effects or I/O operations.
   """
 
-  @valid_sprite_states ~w[spliced]
+  @valid_sprite_states ~w[spliced generating_sprite]
   @valid_keyframe_states ~w[review_approved keyframe_failed]
   @valid_split_states ~w[pending_review]
   @valid_merge_states ~w[pending_review]

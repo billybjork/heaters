@@ -81,6 +81,7 @@ defmodule Heaters.Videos.Operations.Splice do
 
   defp perform_splice_workflow(source_video, temp_dir, opts, start_time) do
     with {:ok, detection_result} <- get_or_detect_scenes(source_video, temp_dir, opts),
+         {:ok, _local_video_path} <- ensure_source_video_downloaded(source_video, temp_dir),
          {:ok, clips_data} <- process_scenes_to_clips(source_video, detection_result, temp_dir) do
       duration_ms =
         System.convert_time_unit(System.monotonic_time() - start_time, :native, :millisecond)
@@ -130,7 +131,9 @@ defmodule Heaters.Videos.Operations.Splice do
     case S3Adapter.download_json(cache_key) do
       {:ok, cached_data} ->
         Logger.debug("Port Splice: Found cached scene detection results")
-        {:ok, cached_data}
+        # Parse cached data through the same parser as fresh results
+        parsed_data = parse_python_detection_result(cached_data)
+        {:ok, parsed_data}
 
       {:error, :not_found} ->
         Logger.debug("Port Splice: No cached scene detection results found")
@@ -223,9 +226,9 @@ defmodule Heaters.Videos.Operations.Splice do
       %{
         start_frame: Map.get(scene, "start_frame", 0),
         end_frame: Map.get(scene, "end_frame", 0),
-        start_time_seconds: Map.get(scene, "start_time", 0.0),
-        end_time_seconds: Map.get(scene, "end_time", 0.0),
-        duration_seconds: Map.get(scene, "duration", 0.0)
+        start_time_seconds: Map.get(scene, "start_time_seconds", 0.0),
+        end_time_seconds: Map.get(scene, "end_time_seconds", 0.0),
+        duration_seconds: Map.get(scene, "duration_seconds", 0.0)
       }
     end)
   end

@@ -35,8 +35,8 @@ defmodule Heaters.Workers.Videos.IngestWorker do
           )
 
           # Elixir handles the state transition and metadata update
-          # Convert string keys to atom keys for the metadata
-          metadata = for {key, value} <- result, into: %{}, do: {String.to_atom(key), value}
+          # Convert string keys to atom keys for the metadata (recursively)
+          metadata = convert_keys_to_atoms(result)
 
           case Ingest.complete_downloading(source_video_id, metadata) do
             {:ok, _updated_video} ->
@@ -90,4 +90,16 @@ defmodule Heaters.Workers.Videos.IngestWorker do
   defp check_idempotency(%{ingest_state: "new"}), do: :ok
   defp check_idempotency(%{ingest_state: "download_failed"}), do: :ok
   defp check_idempotency(_), do: {:error, :already_processed}
+
+  defp convert_keys_to_atoms(map) when is_map(map) do
+    for {key, value} <- map, into: %{} do
+      {String.to_atom(key), convert_keys_to_atoms(value)}
+    end
+  end
+
+  defp convert_keys_to_atoms(list) when is_list(list) do
+    for item <- list, do: convert_keys_to_atoms(item)
+  end
+
+  defp convert_keys_to_atoms(other), do: other
 end

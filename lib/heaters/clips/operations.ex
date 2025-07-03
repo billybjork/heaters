@@ -284,7 +284,7 @@ defmodule Heaters.Clips.Operations do
   end
 
   defp build_artifact_attrs(clip_id, artifact_type, artifact_data) do
-    now = DateTime.utc_now()
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
 
     %{
       clip_id: clip_id,

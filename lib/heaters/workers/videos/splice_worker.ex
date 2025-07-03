@@ -29,7 +29,7 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
   - **Storage**: S3 for videos/clips and scene detection caching
   """
 
-  use Heaters.Workers.GenericWorker, queue: :media_processing
+  use Heaters.Workers.GenericWorker, queue: :media_processing, unique: [period: 300, fields: [:args]]
 
   alias Heaters.Videos.{SourceVideo, Operations}
   alias Heaters.Videos.Operations.Splice.StateManager
