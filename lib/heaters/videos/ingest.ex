@@ -1,13 +1,14 @@
 defmodule Heaters.Videos.Ingest do
   @moduledoc """
   Context for managing source video ingestion workflow and state transitions.
-  This module handles all state management that was previously done in Python.
+
+  This module handles the initial ingestion phase: video submission and download.
+  Splice operations are handled separately by the Videos.Operations.Splice module.
   """
 
   alias Heaters.Repo
   alias Heaters.Videos.SourceVideo
   alias Heaters.Videos.Queries, as: VideoQueries
-  alias Heaters.Clips.Clip
   require Logger
 
   # Ecto.Repo.insert_all takes table name as string
@@ -67,34 +68,6 @@ defmodule Heaters.Videos.Ingest do
   end
 
   @doc """
-  Transition a source video to "splicing" state.
-  """
-  @spec start_splicing(integer()) :: {:ok, SourceVideo.t()} | {:error, any()}
-  def start_splicing(source_video_id) do
-    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id),
-         :ok <- validate_state_transition(source_video.ingest_state, "splicing") do
-      update_source_video(source_video, %{
-        ingest_state: "splicing",
-        last_error: nil
-      })
-    end
-  end
-
-  @doc """
-  Mark a source video as successfully spliced.
-  """
-  @spec complete_splicing(integer()) :: {:ok, SourceVideo.t()} | {:error, any()}
-  def complete_splicing(source_video_id) do
-    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
-      update_source_video(source_video, %{
-        ingest_state: "spliced",
-        spliced_at: DateTime.utc_now(),
-        last_error: nil
-      })
-    end
-  end
-
-  @doc """
   Mark a source video as failed with error details.
   """
   @spec mark_failed(SourceVideo.t() | integer(), String.t(), any()) ::
@@ -118,105 +91,7 @@ defmodule Heaters.Videos.Ingest do
     end
   end
 
-  @doc """
-  Build S3 prefix for source video storage.
-  """
-  @spec build_source_video_s3_key(SourceVideo.t()) :: String.t()
-  def build_source_video_s3_key(%SourceVideo{title: title}) do
-    sanitized_title = Heaters.Utils.sanitize_filename(title)
-    "source_videos/#{sanitized_title}.mp4"
-  end
-
-  @doc """
-  Build S3 prefix for splice outputs (clips).
-  """
-  @spec build_s3_prefix(SourceVideo.t()) :: String.t()
-  def build_s3_prefix(%SourceVideo{title: title}) do
-    sanitized_title = Heaters.Utils.sanitize_filename(title)
-    "clips/#{sanitized_title}"
-  end
-
-  @doc """
-  Create clips from splice operation results.
-  Expects clips_data to be a list of maps with clip information.
-  """
-  @spec create_clips_from_splice(integer(), list(map())) ::
-          {:ok, list(Clip.t())} | {:error, any()}
-  def create_clips_from_splice(source_video_id, clips_data) when is_list(clips_data) do
-    Logger.info("Creating #{length(clips_data)} clips for source_video_id: #{source_video_id}")
-
-    clips_attrs =
-      clips_data
-      |> Enum.with_index()
-      |> Enum.map(fn {clip_data, index} ->
-        build_clip_attrs(source_video_id, clip_data, index)
-      end)
-
-    case Repo.insert_all(Clip, clips_attrs, returning: true) do
-      {count, clips} when count > 0 ->
-        Logger.info("Successfully created #{count} clips for source_video_id: #{source_video_id}")
-        {:ok, clips}
-
-      {0, _} ->
-        Logger.error("Failed to create clips for source_video_id: #{source_video_id}")
-        {:error, "No clips were created"}
-    end
-  rescue
-    e ->
-      Logger.error(
-        "Error creating clips for source_video_id #{source_video_id}: #{Exception.message(e)}"
-      )
-
-      {:error, Exception.message(e)}
-  end
-
-  @doc """
-  Validate that clips data has required fields.
-  """
-  @spec validate_clips_data(list(map())) :: :ok | {:error, String.t()}
-  def validate_clips_data(clips_data) when is_list(clips_data) do
-    required_fields = [:clip_filepath, :start_time_seconds, :end_time_seconds]
-
-    invalid_clips =
-      clips_data
-      |> Enum.with_index()
-      |> Enum.filter(fn {clip_data, _index} ->
-        not Enum.all?(required_fields, &Map.has_key?(clip_data, &1))
-      end)
-
-    if Enum.empty?(invalid_clips) do
-      :ok
-    else
-      invalid_indices = Enum.map(invalid_clips, fn {_clip_data, index} -> index end)
-
-      {:error,
-       "Clips at indices #{inspect(invalid_indices)} are missing required fields: #{inspect(required_fields)}"}
-    end
-  end
-
   # Private helper functions
-
-  defp build_clip_attrs(source_video_id, clip_data, index) do
-    now = DateTime.utc_now()
-
-    # Generate clip_identifier if not provided
-    clip_identifier =
-      Map.get(clip_data, :clip_identifier) ||
-        "#{source_video_id}_clip_#{String.pad_leading(to_string(index + 1), 3, "0")}"
-
-    %{
-      source_video_id: source_video_id,
-      clip_filepath: Map.fetch!(clip_data, :clip_filepath),
-      clip_identifier: clip_identifier,
-      start_frame: Map.get(clip_data, :start_frame),
-      end_frame: Map.get(clip_data, :end_frame),
-      start_time_seconds: Map.fetch!(clip_data, :start_time_seconds),
-      end_time_seconds: Map.fetch!(clip_data, :end_time_seconds),
-      duration_seconds: Map.get(clip_data, :duration_seconds),
-      inserted_at: now,
-      updated_at: now
-    }
-  end
 
   defp insert_source_video(url) do
     is_http? = String.starts_with?(url, ["http://", "https://"])

@@ -1,15 +1,15 @@
 defmodule Heaters.Workers.Videos.SpliceWorker do
   @moduledoc """
-  Worker for processing source videos into clips using native Elixir scene detection.
+  Worker for processing source videos into clips using Python-based scene detection.
 
   This worker handles the "downloaded → spliced" stage of the video processing pipeline.
-  It uses `Videos.Operations.Splice` to detect scenes and extract clips using Evision
-  (OpenCV-Elixir bindings) for high-performance processing.
+  It uses Python OpenCV for scene detection via PyRunner port communication, then
+  processes clips using Elixir FFmpeg operations.
 
   ## Workflow
 
   1. Transition source video to "splicing" state
-  2. Run native scene detection and clip extraction
+  2. Run Python scene detection and Elixir clip extraction
   3. Create clip records in database
   4. Transition source video to "spliced" state
   5. Enqueue sprite workers for each created clip
@@ -19,12 +19,21 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
   - **Input**: Source videos in "downloaded" state
   - **Output**: Clips in "spliced" state, source video in "spliced" state
   - **Error Handling**: Marks source video as "splicing_failed" on errors
-  - **Idempotency**: S3-based clip existence checking prevents reprocessing
+  - **Idempotency**: S3-based scene detection caching and clip existence checking prevents reprocessing
+
+  ## Architecture
+
+  - **Scene Detection**: Python OpenCV via PyRunner port
+  - **Clip Extraction**: Elixir FFmpeg operations
+  - **State Management**: Elixir state transitions and database operations
+  - **Storage**: S3 for videos/clips and scene detection caching
   """
 
   use Heaters.Workers.GenericWorker, queue: :media_processing
 
-  alias Heaters.Videos.{Ingest, SourceVideo, Operations}
+  alias Heaters.Videos.{SourceVideo, Operations}
+  alias Heaters.Videos.Operations.Splice.StateManager
+  alias Heaters.Clips.Operations.SplicePersister
   alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Workers.Clips.SpriteWorker
   require Logger
@@ -62,8 +71,8 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
   end
 
   defp handle_splicing(source_video) do
-    # Transition to splicing state using existing state management pattern
-    case Ingest.start_splicing(source_video.id) do
+    # Use new StateManager for splice-specific state transitions
+    case StateManager.start_splicing(source_video.id) do
       {:ok, updated_video} ->
         run_splice_task(updated_video)
 
@@ -75,7 +84,7 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
 
   defp run_splice_task(source_video) do
     Logger.info(
-      "SpliceWorker: Running native Elixir splice for source_video_id: #{source_video.id}"
+      "SpliceWorker: Running Python-based splice for source_video_id: #{source_video.id}"
     )
 
     splice_opts = [
@@ -87,30 +96,30 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
     case Operations.Splice.run_splice(source_video, splice_opts) do
       %{status: "success", clips_data: clips_data} when is_list(clips_data) ->
         Logger.info(
-          "SpliceWorker: Successfully processed #{length(clips_data)} clips with native Elixir"
+          "SpliceWorker: Successfully processed #{length(clips_data)} clips with Python-based splice"
         )
 
         process_splice_results(source_video, clips_data)
 
       %{status: "error", metadata: %{error: error_message}} ->
-        Logger.error("SpliceWorker: Native splice failed: #{error_message}")
+        Logger.error("SpliceWorker: Python splice failed: #{error_message}")
         mark_splicing_failed(source_video, error_message)
 
       unexpected_result ->
-        error_message = "Native splice returned unexpected result: #{inspect(unexpected_result)}"
+        error_message = "Python splice returned unexpected result: #{inspect(unexpected_result)}"
         Logger.error("SpliceWorker: #{error_message}")
         mark_splicing_failed(source_video, error_message)
     end
   end
 
   defp process_splice_results(source_video, clips_data) do
-    # Validate and process clips data
-    case Ingest.validate_clips_data(clips_data) do
+    # Use new SplicePersister for clip creation and validation
+    case SplicePersister.validate_clips_data(clips_data) do
       :ok ->
         # Create clips and update source video state
-        case Ingest.create_clips_from_splice(source_video.id, clips_data) do
+        case SplicePersister.create_clips_from_splice(source_video.id, clips_data) do
           {:ok, clips} ->
-            case Ingest.complete_splicing(source_video.id) do
+            case StateManager.complete_splicing(source_video.id) do
               {:ok, _final_video} ->
                 # Store clips for enqueue_next/1 (maintains existing pattern)
                 Process.put(:clips, clips)
@@ -133,7 +142,7 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
   end
 
   defp mark_splicing_failed(source_video, reason) do
-    case Ingest.mark_failed(source_video, "splicing_failed", reason) do
+    case StateManager.mark_splicing_failed(source_video, reason) do
       {:ok, _} ->
         {:error, reason}
 

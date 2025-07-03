@@ -1,0 +1,168 @@
+defmodule Heaters.Clips.Operations.SplicePersister do
+  @moduledoc """
+  Persistence operations for splice workflow results.
+
+  This module handles creating clips from splice operation results,
+  extracted from the general Ingest module to maintain clear separation of concerns.
+
+  ## Responsibilities
+  - Validate clip data structure
+  - Bulk insert clips with proper attributes
+  - Handle clip creation errors gracefully
+  - Generate consistent clip identifiers
+  """
+
+  alias Heaters.Repo
+  alias Heaters.Clips.Clip
+  require Logger
+
+  @doc """
+  Create clips from splice operation results.
+
+  ## Parameters
+  - `source_video_id`: ID of the source video these clips belong to
+  - `clips_data`: List of maps with clip information
+
+  ## Required fields in clips_data
+  - `:clip_filepath` - S3 path to the clip file
+  - `:start_time_seconds` - Clip start time in seconds
+  - `:end_time_seconds` - Clip end time in seconds
+
+  ## Optional fields in clips_data
+  - `:clip_identifier` - Custom identifier (auto-generated if not provided)
+  - `:start_frame` - Start frame number
+  - `:end_frame` - End frame number
+  - `:duration_seconds` - Clip duration (calculated if not provided)
+
+  ## Returns
+  - `{:ok, clips}` - List of created Clip structs
+  - `{:error, reason}` - Error message if creation fails
+
+  ## Examples
+
+      clips_data = [
+        %{
+          clip_filepath: "clips/video1/clip_001.mp4",
+          start_time_seconds: 0.0,
+          end_time_seconds: 5.0,
+          start_frame: 0,
+          end_frame: 150
+        }
+      ]
+
+      {:ok, clips} = SplicePersister.create_clips_from_splice(123, clips_data)
+  """
+  @spec create_clips_from_splice(integer(), list(map())) ::
+          {:ok, list(Clip.t())} | {:error, any()}
+  def create_clips_from_splice(source_video_id, clips_data) when is_list(clips_data) do
+    Logger.info(
+      "SplicePersister: Creating #{length(clips_data)} clips for source_video_id: #{source_video_id}"
+    )
+
+    with :ok <- validate_clips_data(clips_data) do
+      clips_attrs =
+        clips_data
+        |> Enum.with_index()
+        |> Enum.map(fn {clip_data, index} ->
+          build_clip_attrs(source_video_id, clip_data, index)
+        end)
+
+      case Repo.insert_all(Clip, clips_attrs, returning: true) do
+        {count, clips} when count > 0 ->
+          Logger.info(
+            "SplicePersister: Successfully created #{count} clips for source_video_id: #{source_video_id}"
+          )
+
+          {:ok, clips}
+
+        {0, _} ->
+          Logger.error(
+            "SplicePersister: Failed to create clips for source_video_id: #{source_video_id}"
+          )
+
+          {:error, "No clips were created"}
+      end
+    end
+  rescue
+    e ->
+      Logger.error(
+        "SplicePersister: Error creating clips for source_video_id #{source_video_id}: #{Exception.message(e)}"
+      )
+
+      {:error, Exception.message(e)}
+  end
+
+  @doc """
+  Validate that clips data has required fields.
+
+  ## Parameters
+  - `clips_data`: List of clip data maps to validate
+
+  ## Returns
+  - `:ok` if all clips have required fields
+  - `{:error, message}` if validation fails
+
+  ## Examples
+
+      clips_data = [%{clip_filepath: "path.mp4", start_time_seconds: 0.0, end_time_seconds: 5.0}]
+      :ok = SplicePersister.validate_clips_data(clips_data)
+  """
+  @spec validate_clips_data(list(map())) :: :ok | {:error, String.t()}
+  def validate_clips_data(clips_data) when is_list(clips_data) do
+    required_fields = [:clip_filepath, :start_time_seconds, :end_time_seconds]
+
+    invalid_clips =
+      clips_data
+      |> Enum.with_index()
+      |> Enum.filter(fn {clip_data, _index} ->
+        not Enum.all?(required_fields, &Map.has_key?(clip_data, &1))
+      end)
+
+    if Enum.empty?(invalid_clips) do
+      :ok
+    else
+      invalid_indices = Enum.map(invalid_clips, fn {_clip_data, index} -> index end)
+
+      {:error,
+       "Clips at indices #{inspect(invalid_indices)} are missing required fields: #{inspect(required_fields)}"}
+    end
+  end
+
+  # Private helper functions
+
+  defp build_clip_attrs(source_video_id, clip_data, index) do
+    now = DateTime.utc_now()
+
+    # Generate clip_identifier if not provided
+    clip_identifier =
+      Map.get(clip_data, :clip_identifier) ||
+        "#{source_video_id}_clip_#{String.pad_leading(to_string(index + 1), 3, "0")}"
+
+    # Calculate duration if not provided
+    duration_seconds =
+      case Map.get(clip_data, :duration_seconds) do
+        nil ->
+          end_time = Map.fetch!(clip_data, :end_time_seconds)
+          start_time = Map.fetch!(clip_data, :start_time_seconds)
+          end_time - start_time
+
+        duration ->
+          duration
+      end
+
+    %{
+      source_video_id: source_video_id,
+      clip_filepath: Map.fetch!(clip_data, :clip_filepath),
+      clip_identifier: clip_identifier,
+      start_frame: Map.get(clip_data, :start_frame),
+      end_frame: Map.get(clip_data, :end_frame),
+      start_time_seconds: Map.fetch!(clip_data, :start_time_seconds),
+      end_time_seconds: Map.fetch!(clip_data, :end_time_seconds),
+      duration_seconds: duration_seconds,
+      # Set initial state for splice-created clips
+      ingest_state: "spliced",
+      inserted_at: now,
+      updated_at: now
+    }
+  end
+end

@@ -235,6 +235,80 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
     end
   end
 
+  @doc """
+  Download JSON data from S3 and parse it.
+
+  ## Examples
+
+      {:ok, %{"scenes" => [...]}} = S3Adapter.download_json("scene_detection_results/123.json")
+      {:error, :not_found} = S3Adapter.download_json("missing.json")
+  """
+  @spec download_json(String.t()) :: {:ok, map()} | {:error, :not_found | any()}
+  def download_json(s3_key) do
+    # Create a temporary file for downloading
+    temp_file = Path.join(System.tmp_dir!(), "s3_json_#{System.unique_integer([:positive])}.json")
+
+    try do
+      case download_file(s3_key, temp_file) do
+        {:ok, ^temp_file} ->
+          case File.read(temp_file) do
+            {:ok, json_content} ->
+              case Jason.decode(json_content) do
+                {:ok, data} ->
+                  {:ok, data}
+
+                {:error, %Jason.DecodeError{} = error} ->
+                  {:error, "JSON decode error: #{Exception.message(error)}"}
+              end
+
+            {:error, reason} ->
+              {:error, "File read error: #{inspect(reason)}"}
+          end
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    after
+      # Clean up temporary file
+      File.rm(temp_file)
+    end
+  end
+
+  @doc """
+  Upload data as JSON to S3.
+
+  ## Examples
+
+      :ok = S3Adapter.upload_json("scene_detection_results/123.json", %{scenes: [...]})
+  """
+  @spec upload_json(String.t(), map() | list()) :: :ok | {:error, any()}
+  def upload_json(s3_key, data) do
+    # Create a temporary file for uploading
+    temp_file = Path.join(System.tmp_dir!(), "s3_json_#{System.unique_integer([:positive])}.json")
+
+    try do
+      case Jason.encode(data, pretty: true) do
+        {:ok, json_content} ->
+          case File.write(temp_file, json_content) do
+            :ok ->
+              case upload_file(temp_file, s3_key) do
+                :ok -> :ok
+                error -> error
+              end
+
+            {:error, reason} ->
+              {:error, "File write error: #{inspect(reason)}"}
+          end
+
+        {:error, %Jason.EncodeError{} = error} ->
+          {:error, "JSON encode error: #{Exception.message(error)}"}
+      end
+    after
+      # Clean up temporary file
+      File.rm(temp_file)
+    end
+  end
+
   # Private helper functions
 
   defp build_artifact_prefix(%Clip{source_video_id: source_video_id}, artifact_type) do
