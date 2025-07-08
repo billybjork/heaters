@@ -1,5 +1,5 @@
 defmodule Heaters.Workers.Clips.MergeWorker do
-  use Heaters.Workers.GenericWorker, queue: :media_processing
+  use Oban.Worker, queue: :media_processing
 
   alias Heaters.Clips.Operations.Edits.Merge
   alias Heaters.Clips.Operations.Shared.Types
@@ -22,15 +22,62 @@ defmodule Heaters.Workers.Clips.MergeWorker do
   # - Pattern matching covers all possible return values
   # - Error handling is comprehensive
   # - Function behavior is deterministic and testable
-  @dialyzer {:nowarn_function, handle: 1}
+  @dialyzer {:nowarn_function, [perform: 1, handle_merge_work: 1, handle_merge_result: 3]}
 
-  @impl Heaters.Workers.GenericWorker
-  def handle(
-        %{
-          "clip_id_target" => clip_id_target,
-          "clip_id_source" => clip_id_source
-        } = args
-      ) do
+  @impl Oban.Worker
+  def perform(%Oban.Job{args: args}) do
+    module_name = __MODULE__ |> Module.split() |> List.last()
+    Logger.info("#{module_name}: Starting job with args: #{inspect(args)}")
+
+    start_time = System.monotonic_time()
+
+    try do
+      with :ok <- handle_merge_work(args),
+           :ok <- enqueue_next_work(args) do
+        duration_ms =
+          System.convert_time_unit(
+            System.monotonic_time() - start_time,
+            :native,
+            :millisecond
+          )
+
+        Logger.info("#{module_name}: Job completed successfully in #{duration_ms}ms")
+        :ok
+      else
+        {:error, reason} ->
+          Logger.error("#{module_name}: Job failed: #{inspect(reason)}")
+          {:error, reason}
+
+        other ->
+          Logger.error("#{module_name}: Job returned unexpected result: #{inspect(other)}")
+          {:error, "Unexpected return value: #{inspect(other)}"}
+      end
+    rescue
+      error ->
+        Logger.error("#{module_name}: Job crashed with exception: #{Exception.message(error)}")
+
+        Logger.error(
+          "#{module_name}: Exception details: #{Exception.format(:error, error, __STACKTRACE__)}"
+        )
+
+        {:error, Exception.message(error)}
+    catch
+      :exit, reason ->
+        Logger.error("#{module_name}: Job exited with reason: #{inspect(reason)}")
+        {:error, "Process exit: #{inspect(reason)}"}
+
+      :throw, value ->
+        Logger.error("#{module_name}: Job threw value: #{inspect(value)}")
+        {:error, "Thrown value: #{inspect(value)}"}
+    end
+  end
+
+  defp handle_merge_work(
+         %{
+           "clip_id_target" => clip_id_target,
+           "clip_id_source" => clip_id_source
+         } = args
+       ) do
     Logger.info(
       "MergeWorker: Starting merge for target_clip_id: #{clip_id_target}, source_clip_id: #{clip_id_source}"
     )
@@ -51,7 +98,6 @@ defmodule Heaters.Workers.Clips.MergeWorker do
   end
 
   # Helper function to handle merge results
-  @dialyzer {:nowarn_function, handle_merge_result: 3}
   defp handle_merge_result(merge_result, clip_id_target, clip_id_source) do
     case merge_result do
       {:ok, %Types.MergeResult{status: "success", merged_clip_id: merged_clip_id}}
@@ -60,7 +106,7 @@ defmodule Heaters.Workers.Clips.MergeWorker do
           "MergeWorker: Merge succeeded for clips #{clip_id_target}, #{clip_id_source}. New clip: #{merged_clip_id}"
         )
 
-        # Store the merged clip ID for enqueue_next/1 to use
+        # Store the merged clip ID for enqueue_next_work/1 to use
         Process.put(:merged_clip_id, merged_clip_id)
         :ok
 
@@ -82,8 +128,7 @@ defmodule Heaters.Workers.Clips.MergeWorker do
     end
   end
 
-  @impl Heaters.Workers.GenericWorker
-  def enqueue_next(_args) do
+  defp enqueue_next_work(_args) do
     case Process.get(:merged_clip_id) do
       merged_clip_id when is_integer(merged_clip_id) ->
         # The merge was successful. The new clip is in "spliced" state.

@@ -56,7 +56,8 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite do
            {:ok, sprite_spec} <- calculate_sprite_specifications(video_metadata, final_params),
            filename <- generate_sprite_filename(clip_id, sprite_spec),
            {:ok, sprite_path} <- create_sprite_file(video_path, sprite_spec, filename, temp_dir),
-           {:ok, upload_result} <- upload_sprite_file(sprite_path, clip, filename, sprite_spec, video_metadata) do
+           {:ok, upload_result} <-
+             upload_sprite_file(sprite_path, clip, filename, sprite_spec, video_metadata) do
         duration_ms = calculate_duration(start_time)
         result = build_success_result(clip_id, upload_result, sprite_spec, duration_ms)
 
@@ -68,10 +69,12 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite do
       else
         {:error, domain_error} when is_atom(domain_error) ->
           # Get clip data again for error context since it may not be in scope
-          clip_for_error = case fetch_clip_data(clip_id) do
-            {:ok, c} -> c
-            _ -> %{ingest_state: "unknown"}
-          end
+          clip_for_error =
+            case fetch_clip_data(clip_id) do
+              {:ok, c} -> c
+              _ -> %{ingest_state: "unknown"}
+            end
+
           error_context = get_error_context(domain_error, clip_for_error)
           error_message = ErrorFormatting.format_domain_error(domain_error, error_context)
           Logger.error("Sprite: Domain error for clip_id: #{clip_id}, error: #{error_message}")
@@ -184,7 +187,8 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite do
     end
   end
 
-  @spec upload_sprite_file(String.t(), map(), String.t(), map(), map()) :: {:ok, map()} | {:error, any()}
+  @spec upload_sprite_file(String.t(), map(), String.t(), map(), map()) ::
+          {:ok, map()} | {:error, any()}
   defp upload_sprite_file(sprite_path, clip, filename, sprite_spec, video_metadata) do
     Logger.info("Sprite: Uploading sprite sheet for clip_id: #{clip.id}")
 

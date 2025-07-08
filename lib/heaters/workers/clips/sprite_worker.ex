@@ -15,7 +15,50 @@ defmodule Heaters.Workers.Clips.SpriteWorker do
   ]
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"clip_id" => clip_id}}) do
+  def perform(%Oban.Job{args: args}) do
+    module_name = __MODULE__ |> Module.split() |> List.last()
+    Logger.info("#{module_name}: Starting job with args: #{inspect(args)}")
+
+    start_time = System.monotonic_time()
+
+    try do
+      case handle_sprite_work(args) do
+        :ok ->
+          duration_ms =
+            System.convert_time_unit(
+              System.monotonic_time() - start_time,
+              :native,
+              :millisecond
+            )
+
+          Logger.info("#{module_name}: Job completed successfully in #{duration_ms}ms")
+          :ok
+
+        {:error, reason} ->
+          Logger.error("#{module_name}: Job failed: #{inspect(reason)}")
+          {:error, reason}
+      end
+    rescue
+      error ->
+        Logger.error("#{module_name}: Job crashed with exception: #{Exception.message(error)}")
+
+        Logger.error(
+          "#{module_name}: Exception details: #{Exception.format(:error, error, __STACKTRACE__)}"
+        )
+
+        {:error, Exception.message(error)}
+    catch
+      :exit, reason ->
+        Logger.error("#{module_name}: Job exited with reason: #{inspect(reason)}")
+        {:error, "Process exit: #{inspect(reason)}"}
+
+      :throw, value ->
+        Logger.error("#{module_name}: Job threw value: #{inspect(value)}")
+        {:error, "Thrown value: #{inspect(value)}"}
+    end
+  end
+
+  defp handle_sprite_work(%{"clip_id" => clip_id}) do
     Logger.info("SpriteWorker: Starting sprite generation for clip_id: #{clip_id}")
 
     with {:ok, clip} <- ClipQueries.get_clip_with_artifacts(clip_id),

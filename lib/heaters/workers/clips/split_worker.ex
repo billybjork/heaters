@@ -1,16 +1,65 @@
 defmodule Heaters.Workers.Clips.SplitWorker do
-  use Heaters.Workers.GenericWorker, queue: :media_processing
+  use Oban.Worker, queue: :media_processing
 
   alias Heaters.Clips.Operations.Edits.Split
   alias Heaters.Clips.Operations.Shared.Types
   alias Heaters.Workers.Clips.SpriteWorker
 
-  @impl Heaters.Workers.GenericWorker
-  def handle(%{"clip_id" => clip_id, "split_at_frame" => split_at_frame}) do
+  require Logger
+
+  @impl Oban.Worker
+  def perform(%Oban.Job{args: args}) do
+    module_name = __MODULE__ |> Module.split() |> List.last()
+    Logger.info("#{module_name}: Starting job with args: #{inspect(args)}")
+
+    start_time = System.monotonic_time()
+
+    try do
+      with :ok <- handle_split_work(args),
+           :ok <- enqueue_next_work(args) do
+        duration_ms =
+          System.convert_time_unit(
+            System.monotonic_time() - start_time,
+            :native,
+            :millisecond
+          )
+
+        Logger.info("#{module_name}: Job completed successfully in #{duration_ms}ms")
+        :ok
+      else
+        {:error, reason} ->
+          Logger.error("#{module_name}: Job failed: #{inspect(reason)}")
+          {:error, reason}
+
+        other ->
+          Logger.error("#{module_name}: Job returned unexpected result: #{inspect(other)}")
+          {:error, "Unexpected return value: #{inspect(other)}"}
+      end
+    rescue
+      error ->
+        Logger.error("#{module_name}: Job crashed with exception: #{Exception.message(error)}")
+
+        Logger.error(
+          "#{module_name}: Exception details: #{Exception.format(:error, error, __STACKTRACE__)}"
+        )
+
+        {:error, Exception.message(error)}
+    catch
+      :exit, reason ->
+        Logger.error("#{module_name}: Job exited with reason: #{inspect(reason)}")
+        {:error, "Process exit: #{inspect(reason)}"}
+
+      :throw, value ->
+        Logger.error("#{module_name}: Job threw value: #{inspect(value)}")
+        {:error, "Thrown value: #{inspect(value)}"}
+    end
+  end
+
+  defp handle_split_work(%{"clip_id" => clip_id, "split_at_frame" => split_at_frame}) do
     case Split.run_split(clip_id, split_at_frame) do
       {:ok, %Types.SplitResult{status: "success", new_clip_ids: new_clip_ids}}
       when is_list(new_clip_ids) ->
-        # Store the new clip IDs for enqueue_next/1 to use
+        # Store the new clip IDs for enqueue_next_work/1 to use
         Process.put(:new_clip_ids, new_clip_ids)
         :ok
 
@@ -22,8 +71,7 @@ defmodule Heaters.Workers.Clips.SplitWorker do
     end
   end
 
-  @impl Heaters.Workers.GenericWorker
-  def enqueue_next(%{"clip_id" => _clip_id}) do
+  defp enqueue_next_work(%{"clip_id" => _clip_id}) do
     case Process.get(:new_clip_ids) do
       new_clip_ids when is_list(new_clip_ids) ->
         # The split was successful. The original clip has been archived and two

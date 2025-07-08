@@ -11,7 +11,65 @@ defmodule Heaters.Workers.Clips.EmbeddingWorker do
   @dialyzer {:nowarn_function, [perform: 1]}
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"clip_id" => clip_id}}) do
+  def perform(%Oban.Job{args: args}) do
+    module_name = __MODULE__ |> Module.split() |> List.last()
+    Logger.info("#{module_name}: Starting job with args: #{inspect(args)}")
+
+    start_time = System.monotonic_time()
+
+    try do
+      case handle_embedding_work(args) do
+        {:ok, result} ->
+          duration_ms =
+            System.convert_time_unit(
+              System.monotonic_time() - start_time,
+              :native,
+              :millisecond
+            )
+
+          Logger.info("#{module_name}: Job completed successfully in #{duration_ms}ms")
+          {:ok, result}
+
+        :ok ->
+          duration_ms =
+            System.convert_time_unit(
+              System.monotonic_time() - start_time,
+              :native,
+              :millisecond
+            )
+
+          Logger.info("#{module_name}: Job completed successfully in #{duration_ms}ms")
+          :ok
+
+        {:error, reason} ->
+          Logger.error("#{module_name}: Job failed: #{inspect(reason)}")
+          {:error, reason}
+
+        other ->
+          Logger.error("#{module_name}: Job returned unexpected result: #{inspect(other)}")
+          {:error, "Unexpected return value: #{inspect(other)}"}
+      end
+    rescue
+      error ->
+        Logger.error("#{module_name}: Job crashed with exception: #{Exception.message(error)}")
+
+        Logger.error(
+          "#{module_name}: Exception details: #{Exception.format(:error, error, __STACKTRACE__)}"
+        )
+
+        {:error, Exception.message(error)}
+    catch
+      :exit, reason ->
+        Logger.error("#{module_name}: Job exited with reason: #{inspect(reason)}")
+        {:error, "Process exit: #{inspect(reason)}"}
+
+      :throw, value ->
+        Logger.error("#{module_name}: Job threw value: #{inspect(value)}")
+        {:error, "Thrown value: #{inspect(value)}"}
+    end
+  end
+
+  defp handle_embedding_work(%{"clip_id" => clip_id}) do
     Logger.info("EmbeddingWorker: Starting embedding generation for clip_id: #{clip_id}")
 
     with {:ok, clip} <- Heaters.Clips.get_clip(clip_id),
@@ -19,11 +77,14 @@ defmodule Heaters.Workers.Clips.EmbeddingWorker do
          {:ok, updated_clip} <- Embeddings.start_embedding(clip_id) do
       Logger.info("EmbeddingWorker: Running PyRunner for clip_id: #{clip_id}")
 
+      # Build artifact prefix dynamically using the Operations utility
+      artifact_prefix = Heaters.Clips.Operations.build_artifact_prefix(updated_clip, "embeddings")
+
       # Python task receives explicit parameters for embedding generation
       py_args = %{
         clip_id: clip_id,
-        artifact_prefix: updated_clip.artifact_prefix,
-        keyframes_file: "#{updated_clip.artifact_prefix}/keyframes.json",
+        artifact_prefix: artifact_prefix,
+        keyframes_file: "#{artifact_prefix}/keyframes.json",
         embedding_config:
           %{
             # Add any embedding-specific configuration here
@@ -37,8 +98,8 @@ defmodule Heaters.Workers.Clips.EmbeddingWorker do
           # Use the Embeddings context to process the success and create embedding records
           case Embeddings.process_embedding_success(updated_clip, result) do
             {:ok,
-             %Embeddings.EmbedResult{
-               status: "embedded",
+             %Heaters.Clips.Embeddings.Types.EmbedResult{
+               status: "success",
                embedding_id: embedding_id,
                model_name: model
              }} ->
@@ -48,7 +109,7 @@ defmodule Heaters.Workers.Clips.EmbeddingWorker do
 
               {:ok, result}
 
-            {:ok, %Embeddings.EmbedResult{status: status}} ->
+            {:ok, %Heaters.Clips.Embeddings.Types.EmbedResult{status: status}} ->
               Logger.warning(
                 "EmbeddingWorker: Embedding finished with unexpected status: #{status}"
               )

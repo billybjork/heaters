@@ -1,5 +1,5 @@
 defmodule Heaters.Workers.Videos.IngestWorker do
-  use Heaters.Workers.GenericWorker, queue: :media_processing
+  use Oban.Worker, queue: :media_processing
 
   alias Heaters.Videos.Ingest
   alias Heaters.Videos.Queries, as: VideoQueries
@@ -7,10 +7,57 @@ defmodule Heaters.Workers.Videos.IngestWorker do
   require Logger
 
   # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
-  @dialyzer {:nowarn_function, handle: 1}
+  @dialyzer {:nowarn_function, [perform: 1]}
 
-  @impl Heaters.Workers.GenericWorker
-  def handle(%{"source_video_id" => source_video_id}) do
+  @impl Oban.Worker
+  def perform(%Oban.Job{args: args}) do
+    module_name = __MODULE__ |> Module.split() |> List.last()
+    Logger.info("#{module_name}: Starting job with args: #{inspect(args)}")
+
+    start_time = System.monotonic_time()
+
+    try do
+      case handle_ingest_work(args) do
+        :ok ->
+          duration_ms =
+            System.convert_time_unit(
+              System.monotonic_time() - start_time,
+              :native,
+              :millisecond
+            )
+
+          Logger.info("#{module_name}: Job completed successfully in #{duration_ms}ms")
+          :ok
+
+        {:error, reason} ->
+          Logger.error("#{module_name}: Job failed: #{inspect(reason)}")
+          {:error, reason}
+
+        other ->
+          Logger.error("#{module_name}: Job returned unexpected result: #{inspect(other)}")
+          {:error, "Unexpected return value: #{inspect(other)}"}
+      end
+    rescue
+      error ->
+        Logger.error("#{module_name}: Job crashed with exception: #{Exception.message(error)}")
+
+        Logger.error(
+          "#{module_name}: Exception details: #{Exception.format(:error, error, __STACKTRACE__)}"
+        )
+
+        {:error, Exception.message(error)}
+    catch
+      :exit, reason ->
+        Logger.error("#{module_name}: Job exited with reason: #{inspect(reason)}")
+        {:error, "Process exit: #{inspect(reason)}"}
+
+      :throw, value ->
+        Logger.error("#{module_name}: Job threw value: #{inspect(value)}")
+        {:error, "Thrown value: #{inspect(value)}"}
+    end
+  end
+
+  defp handle_ingest_work(%{"source_video_id" => source_video_id}) do
     Logger.info("IngestWorker: Starting download for source_video_id: #{source_video_id}")
 
     # Use new state management pattern

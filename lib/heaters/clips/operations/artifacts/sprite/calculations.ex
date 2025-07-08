@@ -79,7 +79,8 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.Calculations do
           {:ok, sprite_grid_spec()} | {:error, String.t()}
   def calculate_sprite_grid(video_metadata, sprite_params)
       when is_map(video_metadata) and is_map(sprite_params) do
-    %{duration: duration, fps: video_fps, width: video_width, height: video_height} = video_metadata
+    %{duration: duration, fps: video_fps, width: video_width, height: video_height} =
+      video_metadata
 
     %{tile_width: tile_width, tile_height: tile_height, fps: sprite_fps, cols: cols} =
       sprite_params
@@ -94,7 +95,8 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.Calculations do
       {:error, "Video too short for sprite generation: #{duration}s"}
     else
       # Calculate actual tile height (handles -1 for aspect ratio preservation)
-      actual_tile_height = VideoMetadata.calculate_tile_height(video_width, video_height, tile_width, tile_height)
+      actual_tile_height =
+        VideoMetadata.calculate_tile_height(video_width, video_height, tile_width, tile_height)
 
       # Calculate grid dimensions
       num_rows = max(1, ceil(num_sprite_frames / cols))

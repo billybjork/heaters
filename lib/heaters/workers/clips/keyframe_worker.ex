@@ -1,5 +1,5 @@
 defmodule Heaters.Workers.Clips.KeyframeWorker do
-  use Heaters.Workers.GenericWorker, queue: :media_processing
+  use Oban.Worker, queue: :media_processing
 
   alias Heaters.Clips.Operations.Artifacts.Keyframe
   alias Heaters.Clips.Operations.Shared.Types
@@ -14,8 +14,51 @@ defmodule Heaters.Workers.Clips.KeyframeWorker do
     "review_archived"
   ]
 
-  @impl Heaters.Workers.GenericWorker
-  def handle(%{"clip_id" => clip_id} = args) do
+  @impl Oban.Worker
+  def perform(%Oban.Job{args: args}) do
+    module_name = __MODULE__ |> Module.split() |> List.last()
+    Logger.info("#{module_name}: Starting job with args: #{inspect(args)}")
+
+    start_time = System.monotonic_time()
+
+    try do
+      case handle_keyframe_work(args) do
+        :ok ->
+          duration_ms =
+            System.convert_time_unit(
+              System.monotonic_time() - start_time,
+              :native,
+              :millisecond
+            )
+
+          Logger.info("#{module_name}: Job completed successfully in #{duration_ms}ms")
+          :ok
+
+        {:error, reason} ->
+          Logger.error("#{module_name}: Job failed: #{inspect(reason)}")
+          {:error, reason}
+      end
+    rescue
+      error ->
+        Logger.error("#{module_name}: Job crashed with exception: #{Exception.message(error)}")
+
+        Logger.error(
+          "#{module_name}: Exception details: #{Exception.format(:error, error, __STACKTRACE__)}"
+        )
+
+        {:error, Exception.message(error)}
+    catch
+      :exit, reason ->
+        Logger.error("#{module_name}: Job exited with reason: #{inspect(reason)}")
+        {:error, "Process exit: #{inspect(reason)}"}
+
+      :throw, value ->
+        Logger.error("#{module_name}: Job threw value: #{inspect(value)}")
+        {:error, "Thrown value: #{inspect(value)}"}
+    end
+  end
+
+  defp handle_keyframe_work(%{"clip_id" => clip_id} = args) do
     strategy = Map.get(args, "strategy", "multi")
 
     Logger.info(

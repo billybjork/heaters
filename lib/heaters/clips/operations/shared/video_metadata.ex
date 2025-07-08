@@ -184,7 +184,7 @@ defmodule Heaters.Clips.Operations.Shared.VideoMetadata do
 
   def calculate_tile_height(video_width, video_height, tile_width, -1)
       when is_integer(video_width) and is_integer(video_height) and
-           is_integer(tile_width) and video_width > 0 and video_height > 0 and tile_width > 0 do
+             is_integer(tile_width) and video_width > 0 and video_height > 0 and tile_width > 0 do
     # Calculate height to preserve aspect ratio: new_height = new_width * (original_height / original_width)
     aspect_ratio = video_height / video_width
     calculated_height = round(tile_width * aspect_ratio)

@@ -28,20 +28,13 @@ defmodule Heaters.TestHelper do
   end
 
   @doc """
-  Simplifies testing worker callbacks without Oban job wrapper.
+  Simplifies testing worker perform/1 functions.
 
   ## Examples
-
-      # Test just the handle/1 callback
-      result = TestHelper.test_handle(MyWorker, %{"test" => "data"})
 
       # Test the full perform cycle
       result = TestHelper.test_perform(MyWorker, %{"test" => "data"})
   """
-  def test_handle(worker_module, args) do
-    worker_module.handle(args)
-  end
-
   def test_perform(worker_module, args) do
     job = mock_job(args)
     worker_module.perform(job)
@@ -60,24 +53,18 @@ defmodule Heaters.TestHelper do
   end
 
   @doc """
-  Asserts that a module implements the GenericWorker behavior correctly.
+  Asserts that a module implements the Oban.Worker behavior correctly.
   """
-  def assert_generic_worker_behavior(worker_module) do
+  def assert_oban_worker_behavior(worker_module) do
     # Check required functions exist
-    assert function_exported?(worker_module, :handle, 1),
-           "#{worker_module} must implement handle/1"
-
-    assert function_exported?(worker_module, :enqueue_next, 1),
-           "#{worker_module} must implement enqueue_next/1"
-
     assert function_exported?(worker_module, :perform, 1),
-           "#{worker_module} must implement perform/1 (from GenericWorker)"
+           "#{worker_module} must implement perform/1 (from Oban.Worker)"
 
     # Check behavior is implemented
     behaviors = worker_module.__info__(:attributes)[:behaviour] || []
 
-    assert Heaters.Workers.GenericWorker in behaviors,
-           "#{worker_module} must use GenericWorker behavior"
+    assert Oban.Worker in behaviors,
+           "#{worker_module} must use Oban.Worker behavior"
   end
 
   @doc """

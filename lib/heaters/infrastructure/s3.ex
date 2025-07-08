@@ -113,13 +113,13 @@ defmodule Heaters.Infrastructure.S3 do
           {:ok, %{body: body}} ->
             case File.write(local_path, body) do
               :ok ->
-            Logger.debug("#{operation_name}: Successfully downloaded to #{local_path}")
-            {:ok, local_path}
+                Logger.debug("#{operation_name}: Successfully downloaded to #{local_path}")
+                {:ok, local_path}
 
               {:error, reason} ->
                 Logger.error("#{operation_name}: Failed to write file: #{inspect(reason)}")
                 {:error, "Failed to write downloaded file: #{inspect(reason)}"}
-          end
+            end
 
           {:error, reason} ->
             Logger.error("#{operation_name}: Failed to download from S3: #{inspect(reason)}")
@@ -330,7 +330,11 @@ defmodule Heaters.Infrastructure.S3 do
             # Body is raw XML string - this indicates successful deletion
             # Parse basic success from XML (simple regex for now)
             deleted_count = count_deleted_objects_in_xml(xml_string)
-            Logger.info("S3 deletion completed successfully, parsed #{deleted_count} deleted objects from XML")
+
+            Logger.info(
+              "S3 deletion completed successfully, parsed #{deleted_count} deleted objects from XML"
+            )
+
             {:ok, deleted_count}
 
           _ ->

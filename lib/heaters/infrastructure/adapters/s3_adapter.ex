@@ -258,7 +258,8 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
 
       {:ok, _metadata} ->
         # File exists, proceed with download
-        temp_file = Path.join(System.tmp_dir!(), "s3_json_#{System.unique_integer([:positive])}.json")
+        temp_file =
+          Path.join(System.tmp_dir!(), "s3_json_#{System.unique_integer([:positive])}.json")
 
         try do
           case download_file(s3_key, temp_file) do

@@ -23,8 +23,10 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
   # Standard video encoding settings used across operations
   # Conservative settings for 4K video to avoid resource exhaustion
   @video_codec "libx264"
-  @video_preset "fast"      # Changed from "medium" to "fast" for lower CPU usage
-  @video_crf 25            # Changed from "23" to "25" for lower quality but faster encoding
+  # Changed from "medium" to "fast" for lower CPU usage
+  @video_preset "fast"
+  # Changed from "23" to "25" for lower quality but faster encoding
+  @video_crf 25
   @video_pix_fmt "yuv420p"
   @audio_codec "aac"
   @audio_bitrate "128k"
@@ -58,7 +60,9 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
       duration = end_time - start_time
       duration_str = Float.to_string(duration)
 
-      Logger.debug("FFmpegRunner: Creating video clip with FFmpex - start_time=#{start_time}, duration=#{duration}")
+      Logger.debug(
+        "FFmpegRunner: Creating video clip with FFmpex - start_time=#{start_time}, duration=#{duration}"
+      )
 
       command =
         FFmpex.new_command()
@@ -328,7 +332,10 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
         # Verify the file was created and get its size
         case File.stat(output_path) do
           {:ok, %File.Stat{size: file_size}} ->
-            Logger.debug("FFmpegRunner: Successfully created file: #{output_path} (#{file_size} bytes)")
+            Logger.debug(
+              "FFmpegRunner: Successfully created file: #{output_path} (#{file_size} bytes)"
+            )
+
             {:ok, file_size}
 
           {:error, reason} ->
@@ -339,7 +346,10 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
         # For sprite generation, check if file was created despite stderr warnings
         case File.stat(output_path) do
           {:ok, %File.Stat{size: file_size}} when file_size > 0 ->
-            Logger.info("FFmpegRunner: File created successfully despite stderr warnings: #{output_path} (#{file_size} bytes)")
+            Logger.info(
+              "FFmpegRunner: File created successfully despite stderr warnings: #{output_path} (#{file_size} bytes)"
+            )
+
             {:ok, file_size}
 
           {:ok, %File.Stat{size: 0}} ->
@@ -347,7 +357,10 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
             {:error, "Created file is empty"}
 
           {:error, _} ->
-            Logger.error("FFmpegRunner: FFmpeg execution failed and no output file created: #{inspect(reason)}")
+            Logger.error(
+              "FFmpegRunner: FFmpeg execution failed and no output file created: #{inspect(reason)}"
+            )
+
             {:error, "FFmpeg error: #{inspect(reason)}"}
         end
     end

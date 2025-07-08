@@ -87,36 +87,40 @@ defmodule Heaters.Clips.Operations.SpliceClips do
           Logger.info(
             "SpliceClips: All #{existing_count} clips already exist for source_video_id: #{source_video_id}, skipping creation"
           )
+
           {:ok, existing_clips}
 
         {existing_count, new_count} when new_count > 0 ->
           case Repo.insert_all(Clip, new_clips_attrs, returning: true) do
             {^new_count, new_clips} ->
               all_clips = existing_clips ++ new_clips
+
               Logger.info(
                 "SpliceClips: Found #{existing_count} existing clips, created #{new_count} new clips for source_video_id: #{source_video_id}"
               )
+
               {:ok, all_clips}
 
             {0, _} ->
               Logger.error(
                 "SpliceClips: Failed to create new clips for source_video_id: #{source_video_id}"
               )
+
               {:error, "Failed to create new clips"}
 
             {created_count, new_clips} ->
               # Partial success - some clips created but not all
               all_clips = existing_clips ++ new_clips
+
               Logger.warning(
                 "SpliceClips: Expected #{new_count} new clips but created #{created_count} for source_video_id: #{source_video_id}"
               )
+
               {:ok, all_clips}
           end
 
         {0, 0} ->
-          Logger.error(
-            "SpliceClips: No clips to create for source_video_id: #{source_video_id}"
-          )
+          Logger.error("SpliceClips: No clips to create for source_video_id: #{source_video_id}")
           {:error, "No clips to create"}
       end
     end
