@@ -5,10 +5,42 @@ defmodule Heaters.Infrastructure.PyRunner do
   """
 
   alias HeatersWeb.Endpoint
-  alias Heaters.Infrastructure.PyRunner.Config
   require Logger
 
   @default_timeout :timer.minutes(30)
+
+  ## Configuration
+
+  @config_key Heaters.Infrastructure.PyRunner
+
+  defp python_executable do
+    get_config!(:python_executable)
+  end
+
+  defp working_dir do
+    get_config!(:working_dir)
+  end
+
+  defp runner_script do
+    get_config!(:runner_script)
+  end
+
+  defp runner_script_path do
+    Path.join(working_dir(), runner_script())
+  end
+
+  defp get_config!(key) do
+    case Application.get_env(:heaters, @config_key)[key] do
+      nil ->
+        raise "Heaters.PyRunner configuration missing key: #{key}. Please check your config files."
+
+      value when is_binary(value) ->
+        value
+
+      value ->
+        raise "Heaters.PyRunner configuration key #{key} must be a string, got: #{inspect(value)}"
+    end
+  end
 
   @type error_reason ::
           :timeout
@@ -89,14 +121,14 @@ defmodule Heaters.Infrastructure.PyRunner do
   @spec create_port(String.t(), String.t(), [{String.t(), String.t()}]) ::
           {:ok, port()} | {:error, String.t()}
   defp create_port(task_name, tmp_file, env) do
-    py_exe = Config.python_executable()
-    working_dir = Config.working_dir()
-    runner_script_path = Config.runner_script_path()
+    py_exe = python_executable()
+    working_dir_path = working_dir()
+    runner_script_path_val = runner_script_path()
 
-    args = [runner_script_path, task_name, "--args-file", tmp_file]
+    args = [runner_script_path_val, task_name, "--args-file", tmp_file]
 
     Logger.info(
-      "PyRunner: Creating port with py_exe=#{py_exe}, working_dir=#{working_dir}, script_exists=#{File.exists?(runner_script_path)}"
+      "PyRunner: Creating port with py_exe=#{py_exe}, working_dir=#{working_dir_path}, script_exists=#{File.exists?(runner_script_path_val)}"
     )
 
     Logger.info("PyRunner: Args: #{inspect(args)}")
@@ -122,7 +154,7 @@ defmodule Heaters.Infrastructure.PyRunner do
       :line,
       {:args, args},
       {:env, charlist_env},
-      {:cd, working_dir}
+      {:cd, working_dir_path}
     ]
 
     Logger.info("PyRunner: Port options: #{inspect(port_options)}")
@@ -146,8 +178,8 @@ defmodule Heaters.Infrastructure.PyRunner do
         Logger.error("PyRunner: #{error_msg}")
         Logger.error("PyRunner: Exception details: #{inspect(e)}")
         Logger.error("PyRunner: Python exe exists? #{File.exists?(py_exe)}")
-        Logger.error("PyRunner: Working dir exists? #{File.exists?(working_dir)}")
-        Logger.error("PyRunner: Runner script exists? #{File.exists?(runner_script_path)}")
+        Logger.error("PyRunner: Working dir exists? #{File.exists?(working_dir_path)}")
+        Logger.error("PyRunner: Runner script exists? #{File.exists?(runner_script_path_val)}")
         {:error, error_msg}
     end
   end
