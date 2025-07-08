@@ -1,80 +1,38 @@
-defmodule Heaters.Workers.Clips.EmbeddingWorker do
-  use Oban.Worker, queue: :default
+defmodule Heaters.Clips.Embeddings.Worker do
+  use Heaters.Infrastructure.Orchestration.WorkerBehavior, queue: :default
 
   alias Heaters.Clips.Embeddings
   alias Heaters.Infrastructure.PyRunner
+  alias Heaters.Infrastructure.Orchestration.WorkerBehavior
   require Logger
 
   @complete_states ["embedded", "embedding_failed"]
 
   # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
-  @dialyzer {:nowarn_function, [perform: 1]}
+  @dialyzer {:nowarn_function, [handle_work: 1]}
 
-  @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) do
-    module_name = __MODULE__ |> Module.split() |> List.last()
-    Logger.info("#{module_name}: Starting job with args: #{inspect(args)}")
+  @impl WorkerBehavior
+  def handle_work(%{"clip_id" => clip_id} = args) do
+    with {:ok, clip} <- Heaters.Clips.get_clip(clip_id),
+         :ok <- check_idempotency(clip) do
+      handle_embedding_work(args)
+    else
+      {:error, :not_found} ->
+        WorkerBehavior.handle_not_found("Clip", clip_id)
 
-    start_time = System.monotonic_time()
+      {:error, :already_processed} ->
+        WorkerBehavior.handle_already_processed("Clip", clip_id)
 
-    try do
-      case handle_embedding_work(args) do
-        {:ok, result} ->
-          duration_ms =
-            System.convert_time_unit(
-              System.monotonic_time() - start_time,
-              :native,
-              :millisecond
-            )
-
-          Logger.info("#{module_name}: Job completed successfully in #{duration_ms}ms")
-          {:ok, result}
-
-        :ok ->
-          duration_ms =
-            System.convert_time_unit(
-              System.monotonic_time() - start_time,
-              :native,
-              :millisecond
-            )
-
-          Logger.info("#{module_name}: Job completed successfully in #{duration_ms}ms")
-          :ok
-
-        {:error, reason} ->
-          Logger.error("#{module_name}: Job failed: #{inspect(reason)}")
-          {:error, reason}
-
-        other ->
-          Logger.error("#{module_name}: Job returned unexpected result: #{inspect(other)}")
-          {:error, "Unexpected return value: #{inspect(other)}"}
-      end
-    rescue
-      error ->
-        Logger.error("#{module_name}: Job crashed with exception: #{Exception.message(error)}")
-
-        Logger.error(
-          "#{module_name}: Exception details: #{Exception.format(:error, error, __STACKTRACE__)}"
-        )
-
-        {:error, Exception.message(error)}
-    catch
-      :exit, reason ->
-        Logger.error("#{module_name}: Job exited with reason: #{inspect(reason)}")
-        {:error, "Process exit: #{inspect(reason)}"}
-
-      :throw, value ->
-        Logger.error("#{module_name}: Job threw value: #{inspect(value)}")
-        {:error, "Thrown value: #{inspect(value)}"}
+      {:error, reason} ->
+        Logger.error("EmbeddingWorker: Error in workflow for clip #{clip_id}: #{inspect(reason)}")
+        {:error, reason}
     end
   end
 
   defp handle_embedding_work(%{"clip_id" => clip_id}) do
     Logger.info("EmbeddingWorker: Starting embedding generation for clip_id: #{clip_id}")
 
-    with {:ok, clip} <- Heaters.Clips.get_clip(clip_id),
-         {:clip_ready, true} <- {:clip_ready, clip_ready?(clip)},
-         {:ok, updated_clip} <- Embeddings.start_embedding(clip_id) do
+    with {:ok, updated_clip} <- Embeddings.start_embedding(clip_id) do
       Logger.info("EmbeddingWorker: Running PyRunner for clip_id: #{clip_id}")
 
       # Build artifact prefix dynamically using the Operations utility
@@ -140,14 +98,6 @@ defmodule Heaters.Workers.Clips.EmbeddingWorker do
           end
       end
     else
-      {:error, :not_found} ->
-        Logger.warning("EmbeddingWorker: Clip #{clip_id} not found, likely deleted")
-        :ok
-
-      {:clip_ready, false} ->
-        Logger.info("EmbeddingWorker: Clip #{clip_id} already processed, skipping")
-        :ok
-
       {:error, reason} ->
         Logger.error("EmbeddingWorker: Error in workflow for clip #{clip_id}: #{inspect(reason)}")
         {:error, reason}
@@ -155,21 +105,23 @@ defmodule Heaters.Workers.Clips.EmbeddingWorker do
   end
 
   # Idempotency check: Skip processing if already done or has embedding for this model/strategy
-  defp clip_ready?(clip) do
-    # Skip if clip is already in a complete state
-    if clip.ingest_state in @complete_states do
-      false
-    else
-      # Check if embedding already exists for this specific model and strategy
-      model_name = "clip-vit-base-patch32"
-      generation_strategy = "average"
+  defp check_idempotency(clip) do
+    with :ok <- WorkerBehavior.check_complete_states(clip, @complete_states),
+         :ok <- check_embedding_exists(clip) do
+      :ok
+    end
+  end
 
-      case Embeddings.has_embedding?(clip.id, model_name, generation_strategy) do
-        # No embedding exists, clip is ready
-        false -> true
-        # Embedding exists, skip processing
-        true -> false
-      end
+  defp check_embedding_exists(clip) do
+    # Check if embedding already exists for this specific model and strategy
+    model_name = "clip-vit-base-patch32"
+    generation_strategy = "average"
+
+    case Embeddings.has_embedding?(clip.id, model_name, generation_strategy) do
+      # No embedding exists, clip is ready
+      false -> :ok
+      # Embedding exists, skip processing
+      true -> {:error, :already_processed}
     end
   end
 end

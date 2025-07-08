@@ -13,7 +13,8 @@ defmodule Heaters.Events.EventProcessor do
 
   alias Heaters.Events.ReviewEvent
   alias Heaters.Repo
-  alias Heaters.Workers.Clips.{SplitWorker, MergeWorker}
+  alias Heaters.Clips.Operations.Edits.Split.Worker, as: SplitWorker
+  alias Heaters.Clips.Operations.Edits.Merge.Worker, as: MergeWorker
   require Logger
 
   @doc """

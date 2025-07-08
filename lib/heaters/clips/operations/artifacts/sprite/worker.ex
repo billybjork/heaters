@@ -1,10 +1,10 @@
-defmodule Heaters.Workers.Clips.SpriteWorker do
-  use Oban.Worker, queue: :default
+defmodule Heaters.Clips.Operations.Artifacts.Sprite.Worker do
+  use Heaters.Infrastructure.Orchestration.WorkerBehavior, queue: :default
 
   alias Heaters.Clips.Operations
   alias Heaters.Clips.Operations.Artifacts.Sprite
   alias Heaters.Clips.Queries, as: ClipQueries
-  require Logger
+  alias Heaters.Infrastructure.Orchestration.WorkerBehavior
 
   @complete_states [
     "pending_review",
@@ -14,51 +14,8 @@ defmodule Heaters.Workers.Clips.SpriteWorker do
     "review_archived"
   ]
 
-  @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) do
-    module_name = __MODULE__ |> Module.split() |> List.last()
-    Logger.info("#{module_name}: Starting job with args: #{inspect(args)}")
-
-    start_time = System.monotonic_time()
-
-    try do
-      case handle_sprite_work(args) do
-        :ok ->
-          duration_ms =
-            System.convert_time_unit(
-              System.monotonic_time() - start_time,
-              :native,
-              :millisecond
-            )
-
-          Logger.info("#{module_name}: Job completed successfully in #{duration_ms}ms")
-          :ok
-
-        {:error, reason} ->
-          Logger.error("#{module_name}: Job failed: #{inspect(reason)}")
-          {:error, reason}
-      end
-    rescue
-      error ->
-        Logger.error("#{module_name}: Job crashed with exception: #{Exception.message(error)}")
-
-        Logger.error(
-          "#{module_name}: Exception details: #{Exception.format(:error, error, __STACKTRACE__)}"
-        )
-
-        {:error, Exception.message(error)}
-    catch
-      :exit, reason ->
-        Logger.error("#{module_name}: Job exited with reason: #{inspect(reason)}")
-        {:error, "Process exit: #{inspect(reason)}"}
-
-      :throw, value ->
-        Logger.error("#{module_name}: Job threw value: #{inspect(value)}")
-        {:error, "Thrown value: #{inspect(value)}"}
-    end
-  end
-
-  defp handle_sprite_work(%{"clip_id" => clip_id}) do
+  @impl WorkerBehavior
+  def handle_work(%{"clip_id" => clip_id}) do
     Logger.info("SpriteWorker: Starting sprite generation for clip_id: #{clip_id}")
 
     with {:ok, clip} <- ClipQueries.get_clip_with_artifacts(clip_id),
@@ -99,12 +56,10 @@ defmodule Heaters.Workers.Clips.SpriteWorker do
       end
     else
       {:error, :not_found} ->
-        Logger.warning("SpriteWorker: Clip #{clip_id} not found, likely deleted")
-        :ok
+        WorkerBehavior.handle_not_found("Clip", clip_id)
 
       {:error, :already_processed} ->
-        Logger.info("SpriteWorker: Clip #{clip_id} already processed, skipping")
-        :ok
+        WorkerBehavior.handle_already_processed("Clip", clip_id)
 
       {:error, reason} ->
         Logger.error("SpriteWorker: Error in workflow for clip #{clip_id}: #{inspect(reason)}")
@@ -113,25 +68,18 @@ defmodule Heaters.Workers.Clips.SpriteWorker do
   end
 
   # Idempotency check: Skip processing if already done or has sprite artifacts
-  defp check_idempotency(%{ingest_state: state}) when state in @complete_states do
-    {:error, :already_processed}
-  end
-
-  defp check_idempotency(%{ingest_state: "generating_sprite"}), do: {:error, :already_processed}
-  defp check_idempotency(%{ingest_state: "spliced"}), do: :ok
-  defp check_idempotency(%{ingest_state: "sprite_failed"}), do: :ok
-
-  defp check_idempotency(%{clip_artifacts: artifacts} = _clip) do
-    has_sprite? = Enum.any?(artifacts, &(&1.artifact_type == "sprite_sheet"))
-
-    if has_sprite? do
-      {:error, :already_processed}
-    else
+  defp check_idempotency(clip) do
+    with :ok <- WorkerBehavior.check_complete_states(clip, @complete_states),
+         :ok <- check_sprite_specific_states(clip),
+         :ok <- WorkerBehavior.check_artifact_exists(clip, "sprite_sheet") do
       :ok
     end
   end
 
-  defp check_idempotency(%{ingest_state: state}) do
+  defp check_sprite_specific_states(%{ingest_state: "generating_sprite"}), do: {:error, :already_processed}
+  defp check_sprite_specific_states(%{ingest_state: "spliced"}), do: :ok
+  defp check_sprite_specific_states(%{ingest_state: "sprite_failed"}), do: :ok
+  defp check_sprite_specific_states(%{ingest_state: state}) do
     Logger.warning("SpriteWorker: Unexpected clip state '#{state}' for sprite generation")
     {:error, :invalid_state}
   end

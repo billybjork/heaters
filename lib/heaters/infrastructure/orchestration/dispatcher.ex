@@ -1,12 +1,13 @@
-defmodule Heaters.Workers.Dispatcher do
-  use Oban.Worker, queue: :background_jobs, unique: [period: 60]
+defmodule Heaters.Infrastructure.Orchestration.Dispatcher do
+  use Heaters.Infrastructure.Orchestration.WorkerBehavior,
+      queue: :background_jobs,
+      unique: [period: 60]
 
-  require Logger
+  alias Heaters.Infrastructure.Orchestration.PipelineConfig
+  alias Heaters.Infrastructure.Orchestration.WorkerBehavior
 
-  alias Heaters.Workers.PipelineConfig
-
-  @impl Oban.Worker
-  def perform(_job) do
+  @impl WorkerBehavior
+  def handle_work(_args) do
     Logger.info("Dispatcher[start]: Starting perform.")
 
     # Process all pipeline stages using the declarative configuration

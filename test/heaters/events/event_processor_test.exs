@@ -5,7 +5,8 @@ defmodule Heaters.Events.EventProcessorTest do
   alias Heaters.Events.ReviewEvent
   alias Heaters.Clips.Clip
   alias Heaters.SourceVideos.SourceVideo
-  alias Heaters.Workers.Clips.{SplitWorker, MergeWorker}
+  alias Heaters.Clips.Operations.Edits.Split.Worker, as: SplitWorker
+  alias Heaters.Clips.Operations.Edits.Merge.Worker, as: MergeWorker
 
   describe "get_unprocessed_events/0" do
     setup do
@@ -115,7 +116,7 @@ defmodule Heaters.Events.EventProcessorTest do
 
       job = EventProcessor.build_worker_job(event)
 
-      assert %Oban.Job{worker: "Heaters.Workers.Clips.SplitWorker"} = job
+      assert %Oban.Job{worker: "Heaters.Clips.Operations.Edits.Split.Worker"} = job
       assert job.args == %{"clip_id" => clip.id, "split_at_frame" => 450}
     end
 
@@ -131,7 +132,7 @@ defmodule Heaters.Events.EventProcessorTest do
 
       job = EventProcessor.build_worker_job(event)
 
-      assert %Oban.Job{worker: "Heaters.Workers.Clips.MergeWorker"} = job
+      assert %Oban.Job{worker: "Heaters.Clips.Operations.Edits.Merge.Worker"} = job
 
       assert job.args == %{
                "clip_id_source" => clip.id,
@@ -234,7 +235,7 @@ defmodule Heaters.Events.EventProcessorTest do
       assert length(jobs) == 1
 
       job = List.first(jobs)
-      assert job.worker == "Heaters.Workers.Clips.SplitWorker"
+      assert job.worker == "Heaters.Clips.Operations.Edits.Split.Worker"
       assert job.args == %{"clip_id" => clip1.id, "split_at_frame" => 450}
 
       # Event should be marked as processed
@@ -261,7 +262,7 @@ defmodule Heaters.Events.EventProcessorTest do
       assert length(jobs) == 1
 
       job = List.first(jobs)
-      assert job.worker == "Heaters.Workers.Clips.MergeWorker"
+      assert job.worker == "Heaters.Clips.Operations.Edits.Merge.Worker"
 
       assert job.args == %{
                "clip_id_source" => clip2.id,

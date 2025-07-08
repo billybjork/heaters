@@ -1,7 +1,7 @@
-defmodule Heaters.Workers.Videos.SpliceWorkerIntegrationTest do
+defmodule Heaters.Videos.Operations.Splice.WorkerIntegrationTest do
   use Heaters.DataCase, async: true
 
-  alias Heaters.Workers.Videos.SpliceWorker
+  alias Heaters.Videos.Operations.Splice.Worker, as: SpliceWorker
 
   describe "splice worker integration" do
     test "handles native splice workflow" do

@@ -1,0 +1,222 @@
+defmodule Heaters.Infrastructure.Orchestration.WorkerBehavior do
+  require Logger
+
+  @moduledoc """
+  Shared behavior for all Heaters workers to eliminate boilerplate and ensure consistency.
+
+  This behavior provides:
+  - Standardized performance monitoring and logging
+  - Consistent error handling with detailed logging
+  - Common idempotency patterns
+  - Standardized job enqueuing helpers
+
+  ## Usage
+
+      defmodule MyWorker do
+        use Heaters.Infrastructure.Orchestration.WorkerBehavior, queue: :media_processing
+
+        @impl WorkerBehavior
+        def handle_work(%{"clip_id" => clip_id}) do
+          # Your business logic here
+          :ok
+        end
+
+        # Optional: Override for workers that enqueue follow-up jobs
+        @impl WorkerBehavior
+        def enqueue_next_work(_args) do
+          :ok  # Default: no follow-up jobs
+        end
+      end
+  """
+
+  @doc """
+  Callback for handling the actual work logic.
+  Should return :ok, {:ok, result}, or {:error, reason}.
+  """
+  @callback handle_work(map()) :: :ok | {:ok, any()} | {:error, any()}
+
+  @doc """
+  Callback for enqueuing follow-up work after successful completion.
+  Default implementation does nothing.
+  """
+  @callback enqueue_next_work(map()) :: :ok | {:error, any()}
+
+  @optional_callbacks enqueue_next_work: 1
+
+  defmacro __using__(opts) do
+    queue = Keyword.get(opts, :queue, :default)
+    unique_opts = Keyword.get(opts, :unique)
+
+    oban_opts =
+      if unique_opts do
+        [queue: queue, unique: unique_opts]
+      else
+        [queue: queue]
+      end
+
+    quote do
+      use Oban.Worker, unquote(oban_opts)
+
+      @behaviour Heaters.Infrastructure.Orchestration.WorkerBehavior
+      require Logger
+
+      @impl Oban.Worker
+      def perform(%Oban.Job{args: args}) do
+        Heaters.Infrastructure.Orchestration.WorkerBehavior.execute_with_monitoring(__MODULE__, args)
+      end
+
+      @impl Heaters.Infrastructure.Orchestration.WorkerBehavior
+      def enqueue_next_work(_args), do: :ok
+
+      defoverridable enqueue_next_work: 1
+    end
+  end
+
+  @doc """
+  Executes worker logic with standardized monitoring and error handling.
+  """
+  def execute_with_monitoring(worker_module, args) do
+    module_name = worker_module |> Module.split() |> List.last()
+    Logger.info("#{module_name}: Starting job with args: #{inspect(args)}")
+
+    start_time = System.monotonic_time()
+
+    try do
+      with :ok <- worker_module.handle_work(args),
+           :ok <- worker_module.enqueue_next_work(args) do
+        log_success(module_name, start_time)
+        :ok
+      else
+        {:ok, result} when is_map(result) or is_list(result) ->
+          # Some workers return results
+          log_success(module_name, start_time)
+          {:ok, result}
+
+        {:error, reason} ->
+          Logger.error("#{module_name}: Job failed: #{inspect(reason)}")
+          {:error, reason}
+
+        other ->
+          Logger.error("#{module_name}: Job returned unexpected result: #{inspect(other)}")
+          {:error, "Unexpected return value: #{inspect(other)}"}
+      end
+    rescue
+      error ->
+        Logger.error("#{module_name}: Job crashed with exception: #{Exception.message(error)}")
+
+        Logger.error(
+          "#{module_name}: Exception details: #{Exception.format(:error, error, __STACKTRACE__)}"
+        )
+
+        {:error, Exception.message(error)}
+    catch
+      :exit, reason ->
+        Logger.error("#{module_name}: Job exited with reason: #{inspect(reason)}")
+        {:error, "Process exit: #{inspect(reason)}"}
+
+      :throw, value ->
+        Logger.error("#{module_name}: Job threw value: #{inspect(value)}")
+        {:error, "Thrown value: #{inspect(value)}"}
+    end
+  end
+
+  defp log_success(module_name, start_time) do
+    duration_ms =
+      System.convert_time_unit(
+        System.monotonic_time() - start_time,
+        :native,
+        :millisecond
+      )
+
+    Logger.info("#{module_name}: Job completed successfully in #{duration_ms}ms")
+  end
+
+  ## Common Idempotency Helpers
+
+  @doc """
+  Helper for checking if entity is in complete states.
+  """
+  def check_complete_states(entity, complete_states) when is_list(complete_states) do
+    if entity.ingest_state in complete_states do
+      {:error, :already_processed}
+    else
+      :ok
+    end
+  end
+
+  @doc """
+  Helper for checking if clip has artifacts of a specific type.
+  """
+  def check_artifact_exists(clip, artifact_type) when is_binary(artifact_type) do
+    has_artifact? =
+      clip.clip_artifacts
+      |> Enum.any?(&(&1.artifact_type == artifact_type))
+
+    if has_artifact? do
+      {:error, :already_processed}
+    else
+      :ok
+    end
+  end
+
+  @doc """
+  Standard handler for not found entities.
+  """
+  def handle_not_found(entity_type, entity_id) do
+    Logger.warning("#{entity_type} #{entity_id} not found, likely deleted")
+    :ok
+  end
+
+  @doc """
+  Standard handler for already processed entities.
+  """
+  def handle_already_processed(entity_type, entity_id) do
+    Logger.info("#{entity_type} #{entity_id} already processed, skipping")
+    :ok
+  end
+
+  ## Job Enqueuing Helpers
+
+  @doc """
+  Helper for enqueuing multiple jobs with error handling.
+  """
+  def enqueue_jobs(jobs, context_name) when is_list(jobs) do
+    try do
+      case Oban.insert_all(jobs) do
+        inserted_jobs when is_list(inserted_jobs) and length(inserted_jobs) > 0 ->
+          Logger.info("#{context_name}: Enqueued #{length(inserted_jobs)} jobs")
+          :ok
+
+        [] ->
+          Logger.error("#{context_name}: Failed to enqueue jobs - no jobs inserted")
+          {:error, "No jobs were enqueued"}
+
+        %Ecto.Multi{} = multi ->
+          Logger.error(
+            "#{context_name}: Oban.insert_all returned Multi instead of jobs: #{inspect(multi)}"
+          )
+          {:error, "Unexpected Multi result from Oban.insert_all"}
+      end
+    rescue
+      error ->
+        error_message = "Failed to enqueue jobs: #{Exception.message(error)}"
+        Logger.error("#{context_name}: #{error_message}")
+        {:error, error_message}
+    end
+  end
+
+  @doc """
+  Helper for enqueuing a single job with error handling.
+  """
+  def enqueue_single_job(job, context_name) do
+    case Oban.insert(job) do
+      {:ok, _job} ->
+        Logger.info("#{context_name}: Successfully enqueued job")
+        :ok
+
+      {:error, reason} ->
+        Logger.error("#{context_name}: Failed to enqueue job: #{inspect(reason)}")
+        {:error, "Failed to enqueue job: #{inspect(reason)}"}
+    end
+  end
+end

@@ -1,4 +1,4 @@
-defmodule Heaters.Videos.Ingest do
+defmodule Heaters.Videos.Operations.Ingest do
   @moduledoc """
   Context for managing source video ingestion workflow and state transitions.
 

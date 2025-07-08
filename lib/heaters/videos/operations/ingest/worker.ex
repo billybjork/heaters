@@ -1,59 +1,33 @@
-defmodule Heaters.Workers.Videos.IngestWorker do
-  use Oban.Worker, queue: :media_processing
+defmodule Heaters.Videos.Operations.Ingest.Worker do
+  use Heaters.Infrastructure.Orchestration.WorkerBehavior, queue: :media_processing
 
-  alias Heaters.Videos.Ingest
+  alias Heaters.Videos.Operations.Ingest
   alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Infrastructure.PyRunner
+  alias Heaters.Infrastructure.Orchestration.WorkerBehavior
   require Logger
 
   # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
-  @dialyzer {:nowarn_function, [perform: 1]}
+  @dialyzer {:nowarn_function, [handle_work: 1]}
 
-  @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) do
-    module_name = __MODULE__ |> Module.split() |> List.last()
-    Logger.info("#{module_name}: Starting job with args: #{inspect(args)}")
+  @impl WorkerBehavior
+  def handle_work(%{"source_video_id" => source_video_id} = args) do
+    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id),
+         :ok <- check_idempotency(source_video) do
+      handle_ingest_work(args)
+    else
+      {:error, :not_found} ->
+        WorkerBehavior.handle_not_found("Source video", source_video_id)
 
-    start_time = System.monotonic_time()
+      {:error, :already_processed} ->
+        WorkerBehavior.handle_already_processed("Source video", source_video_id)
 
-    try do
-      case handle_ingest_work(args) do
-        :ok ->
-          duration_ms =
-            System.convert_time_unit(
-              System.monotonic_time() - start_time,
-              :native,
-              :millisecond
-            )
-
-          Logger.info("#{module_name}: Job completed successfully in #{duration_ms}ms")
-          :ok
-
-        {:error, reason} ->
-          Logger.error("#{module_name}: Job failed: #{inspect(reason)}")
-          {:error, reason}
-
-        other ->
-          Logger.error("#{module_name}: Job returned unexpected result: #{inspect(other)}")
-          {:error, "Unexpected return value: #{inspect(other)}"}
-      end
-    rescue
-      error ->
-        Logger.error("#{module_name}: Job crashed with exception: #{Exception.message(error)}")
-
+      {:error, reason} ->
         Logger.error(
-          "#{module_name}: Exception details: #{Exception.format(:error, error, __STACKTRACE__)}"
+          "IngestWorker: Error in workflow for source video #{source_video_id}: #{inspect(reason)}"
         )
 
-        {:error, Exception.message(error)}
-    catch
-      :exit, reason ->
-        Logger.error("#{module_name}: Job exited with reason: #{inspect(reason)}")
-        {:error, "Process exit: #{inspect(reason)}"}
-
-      :throw, value ->
-        Logger.error("#{module_name}: Job threw value: #{inspect(value)}")
-        {:error, "Thrown value: #{inspect(value)}"}
+        {:error, reason}
     end
   end
 
@@ -61,9 +35,7 @@ defmodule Heaters.Workers.Videos.IngestWorker do
     Logger.info("IngestWorker: Starting download for source_video_id: #{source_video_id}")
 
     # Use new state management pattern
-    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id),
-         :ok <- check_idempotency(source_video),
-         {:ok, updated_video} <- Ingest.start_downloading(source_video_id) do
+    with {:ok, updated_video} <- Ingest.start_downloading(source_video_id) do
       Logger.info(
         "IngestWorker: Running PyRunner for source_video_id: #{source_video_id}, URL: #{updated_video.original_url}"
       )
@@ -115,18 +87,9 @@ defmodule Heaters.Workers.Videos.IngestWorker do
           end
       end
     else
-      # Handles errors from the `with` statement (e.g., video not found or already processed)
-      {:error, :already_processed} ->
-        Logger.info(
-          "IngestWorker: source_video_id #{source_video_id} already processed, skipping"
-        )
-
-        # Return error to prevent any further processing
-        {:error, :already_processed}
-
       {:error, reason} ->
         Logger.error(
-          "IngestWorker: Error in workflow for source video #{source_video_id}: #{inspect(reason)}"
+          "IngestWorker: Failed to start downloading for source video #{source_video_id}: #{inspect(reason)}"
         )
 
         {:error, reason}

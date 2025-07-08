@@ -19,7 +19,7 @@ Heaters processes videos through a multi-stage pipeline: ingestion → clips →
 - **Semantic Organization**: Clear distinction between user **Edits** (review actions) and automated **Artifacts** (pipeline stages)
 - **Event Sourcing**: Human review actions tracked via `review_events` table for audit and reliability
 - **Structured Results**: Type-safe Result structs with rich metadata and performance timing
-- **Generic Workers**: Standardized Oban worker behavior with idempotent state management
+- **Centralized Worker Behavior**: Standardized Oban worker patterns with shared lifecycle management, error handling, and idempotent state validation
 - **Hybrid Processing**: Native Elixir for performance-critical operations (scene detection), Python for ML/media processing
 - **Robust Error Handling**: Graceful degradation with comprehensive logging and state recovery
 
@@ -105,6 +105,28 @@ All operations return type-safe structs with `@enforce_keys`:
 
 **Benefits**: Compile-time validation, rich metadata, direct field access without defensive `Map.get`.
 
+### Centralized Worker Behavior
+
+All workers use `Infrastructure.Orchestration.WorkerBehavior` which provides:
+
+```elixir
+defmodule MyWorker do
+  use Heaters.Infrastructure.Orchestration.WorkerBehavior, queue: :media_processing
+  
+  @impl WorkerBehavior
+  def handle_work(args) do
+    # Pure business logic - infrastructure handled by behavior
+  end
+end
+```
+
+**Benefits**: 
+- Automatic performance monitoring and structured logging
+- Consistent error handling with comprehensive stack traces
+- Standardized idempotency patterns (`check_complete_states`, `check_artifact_exists`)
+- Common helpers for resource not found and already processed scenarios
+- Zero boilerplate - workers focus purely on business logic
+
 ### Idempotent Worker Patterns
 
 All workers implement robust idempotency patterns:
@@ -117,41 +139,44 @@ All workers implement robust idempotency patterns:
 
 ### Video Ingestion
 1. `Videos.submit/1` creates source video in `new` state
-2. `Videos.IngestWorker` downloads/processes → `downloaded` state  
-3. `Videos.SpliceWorker` runs **native Elixir scene detection** → clips in `spliced` state
+2. `Videos.Operations.Ingest.Worker` downloads/processes → `downloaded` state  
+3. `Videos.Operations.Splice.Worker` runs **native Elixir scene detection** → clips in `spliced` state
 
 ### Review Workflow
-1. `Clips.SpriteWorker` generates sprites using rambo → clips in `pending_review` state
+1. `Clips.Operations.Artifacts.Sprite.Worker` generates sprites using rambo → clips in `pending_review` state
 2. Human reviews and takes actions (approve/archive/merge/split)
 3. Actions logged via event sourcing, new clips automatically flow back through pipeline
 
 ### Post-Approval Processing
-1. `Clips.KeyframeWorker` extracts keyframes → `keyframed` state
-2. `Clips.EmbeddingWorker` generates ML embeddings → `embedded` state (final)
+1. `Clips.Operations.Artifacts.Keyframe.Worker` extracts keyframes → `keyframed` state
+2. `Clips.Embeddings.Worker` generates ML embeddings → `embedded` state (final)
 
 ### Archive Workflow
-1. `Clips.ArchiveWorker` safely deletes S3 objects and database records
+1. `Clips.Review.ArchiveWorker` safely deletes S3 objects and database records
 2. Robust S3 deletion handling for both XML and JSON responses
 3. Proper cleanup of all associated artifacts and metadata
 
 ## Orchestration
 
-**Dispatcher** runs periodically with data-driven step definitions:
+**`Infrastructure.Orchestration.Dispatcher`** runs periodically with data-driven step definitions:
 1. Find work (e.g., `new` videos, `spliced` clips)
 2. Enqueue appropriate workers
 3. Process pending events via `EventProcessor.commit_pending_actions/0`
 
-This pattern reduced orchestration code from 98 to 42 lines through configuration over code.
+**`Infrastructure.Orchestration.PipelineConfig`** provides declarative pipeline configuration, reducing orchestration code from 98 to 42 lines through configuration over code. Workers are now semantically organized in their business contexts while maintaining centralized orchestration.
 
 ## Context Responsibilities
 
 - **`Videos`**: Source video lifecycle from submission through clips creation
+  - **`Videos.Operations.Ingest`**: Video download and processing workflow
   - **`Videos.Operations.Splice`**: Native Elixir scene detection using Evision (OpenCV bindings)
 - **`Clips.Operations`**: Clip transformations and state management (semantic Edits/Artifacts organization)
+  - **`Clips.Operations.Edits`**: User-driven transformations (Split, Merge) that create new clips
+  - **`Clips.Operations.Artifacts`**: Pipeline-driven processing (Sprite, Keyframe) that create supplementary data
 - **`Clips.Review`**: Human review workflow and action coordination  
 - **`Clips.Embeddings`**: ML embedding generation and queries
 - **`Events`**: Event sourcing infrastructure for review actions
-- **`Infrastructure`**: I/O adapters (S3, FFmpeg, Database) with consistent interfaces and robust error handling
+- **`Infrastructure`**: I/O adapters (S3, FFmpeg, Database) and shared worker behaviors with consistent interfaces and robust error handling
 
 ## Recent Reliability Improvements
 
@@ -179,6 +204,25 @@ This pattern reduced orchestration code from 98 to 42 lines through configuratio
 - **Index Optimization**: Improved database performance with proper indexing
 - **Data Integrity**: Enhanced validation and constraint handling
 
+### Worker Organization and Consolidation ✅
+- **Semantic Organization**: Workers moved to business contexts for improved cohesion
+  - Video workers: `videos/operations/{ingest,splice}/worker.ex`
+  - Clip edit workers: `clips/operations/edits/{split,merge}/worker.ex`
+  - Clip artifact workers: `clips/operations/artifacts/{sprite,keyframe}/worker.ex`
+  - Clip review workers: `clips/review/archive_worker.ex`
+  - Embedding workers: `clips/embeddings/worker.ex`
+  - Infrastructure workers: `infrastructure/orchestration/dispatcher.ex`
+  - Infrastructure: `infrastructure/orchestration/{pipeline_config,worker_behavior}.ex`
+- **Shared Worker Behavior**: `Infrastructure.Orchestration.WorkerBehavior` eliminates 50+ lines of boilerplate per worker across all 9 workers
+  - Standardized performance monitoring and logging with automatic timing
+  - Consistent error handling with detailed stack traces and exception recovery
+  - Common idempotency patterns and helper functions (`check_complete_states`, `check_artifact_exists`)
+  - Centralized job lifecycle management with robust error handling
+  - Unified logging patterns with module-specific prefixes and structured output
+- **Improved Maintainability**: Workers now focus purely on business logic rather than infrastructure concerns
+- **Type Safety**: Preserved all Dialyzer suppressions and maintained compile-time validation
+- **Zero Downtime**: Refactoring maintained 100% backward compatibility with existing job queues
+
 ## Key Benefits
 
 1. **Clear Separation**: Media processing vs business logic vs I/O operations
@@ -190,4 +234,6 @@ This pattern reduced orchestration code from 98 to 42 lines through configuratio
 7. **Performance**: Native Elixir scene detection eliminates subprocess overhead and JSON parsing brittleness
 8. **Hybrid Efficiency**: Best of both worlds - Elixir for performance-critical operations, Python for ML/media processing
 9. **Production Ready**: Comprehensive error handling, logging, and recovery mechanisms
-10. **Scalable**: Idempotent workers and robust orchestration patterns 
+10. **Scalable**: Idempotent workers and robust orchestration patterns
+11. **Well-Organized**: Semantic worker organization by business context improves code discoverability and maintenance
+12. **DRY Architecture**: Centralized WorkerBehavior eliminates 450+ lines of boilerplate across 9 workers while maintaining full functionality 

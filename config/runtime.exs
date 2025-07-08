@@ -281,7 +281,7 @@ if config_env() == :prod do
     if "default" in String.split(queues_str, ",", trim: true) do
       [
         Oban.Plugins.Pruner,
-        {Oban.Plugins.Cron, crontab: [{"* * * * *", Heaters.Workers.Dispatcher}]}
+        {Oban.Plugins.Cron, crontab: [{"* * * * *", Heaters.Infrastructure.Orchestration.Dispatcher}]}
       ]
     else
       [Oban.Plugins.Pruner]

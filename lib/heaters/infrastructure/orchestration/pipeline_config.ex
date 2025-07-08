@@ -1,4 +1,4 @@
-defmodule Heaters.Workers.PipelineConfig do
+defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
   @moduledoc """
   Declarative pipeline configuration for the Dispatcher.
 
@@ -21,8 +21,12 @@ defmodule Heaters.Workers.PipelineConfig do
   alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Events.EventProcessor
-  alias Heaters.Workers.Videos.{IngestWorker, SpliceWorker}
-  alias Heaters.Workers.Clips.{SpriteWorker, KeyframeWorker, EmbeddingWorker, ArchiveWorker}
+  alias Heaters.Videos.Operations.Ingest.Worker, as: IngestWorker
+  alias Heaters.Videos.Operations.Splice.Worker, as: SpliceWorker
+  alias Heaters.Clips.Operations.Artifacts.Sprite.Worker, as: SpriteWorker
+  alias Heaters.Clips.Operations.Artifacts.Keyframe.Worker, as: KeyframeWorker
+  alias Heaters.Clips.Embeddings.Worker, as: EmbeddingWorker
+  alias Heaters.Clips.Review.ArchiveWorker
 
   @doc """
   Returns the complete pipeline stage configuration.

@@ -12,7 +12,7 @@ config :heaters, Oban,
     {Oban.Plugins.Cron,
      crontab: [
        # Every 60 seconds, run the Dispatcher worker
-       {"* * * * *", Heaters.Workers.Dispatcher}
+       {"* * * * *", Heaters.Infrastructure.Orchestration.Dispatcher}
      ]}
   ],
   queues: [

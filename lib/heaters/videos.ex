@@ -8,7 +8,7 @@ defmodule Heaters.Videos do
   ## Sub-contexts
 
   - **Intake**: Video submission and initial processing (`Heaters.Videos.Intake`)
-  - **Ingest**: Video ingestion workflow management (`Heaters.Videos.Ingest`)
+  - **Ingest**: Video ingestion workflow management (`Heaters.Videos.Operations.Ingest`)
 
   ## Schema
 

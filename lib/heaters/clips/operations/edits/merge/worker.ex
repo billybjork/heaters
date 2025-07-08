@@ -1,9 +1,9 @@
-defmodule Heaters.Workers.Clips.MergeWorker do
-  use Oban.Worker, queue: :media_processing
+defmodule Heaters.Clips.Operations.Edits.Merge.Worker do
+  use Heaters.Infrastructure.Orchestration.WorkerBehavior, queue: :media_processing
 
   alias Heaters.Clips.Operations.Edits.Merge
   alias Heaters.Clips.Operations.Shared.Types
-  alias Heaters.Workers.Clips.SpriteWorker
+  alias Heaters.Infrastructure.Orchestration.WorkerBehavior
   require Logger
 
   # Dialyzer suppression for false positive pattern match warnings
@@ -22,53 +22,13 @@ defmodule Heaters.Workers.Clips.MergeWorker do
   # - Pattern matching covers all possible return values
   # - Error handling is comprehensive
   # - Function behavior is deterministic and testable
-  @dialyzer {:nowarn_function, [perform: 1, handle_merge_work: 1, handle_merge_result: 3]}
+  @dialyzer {:nowarn_function, [handle_work: 1, handle_merge_work: 1, handle_merge_result: 3]}
 
-  @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) do
-    module_name = __MODULE__ |> Module.split() |> List.last()
-    Logger.info("#{module_name}: Starting job with args: #{inspect(args)}")
-
-    start_time = System.monotonic_time()
-
-    try do
-      with :ok <- handle_merge_work(args),
-           :ok <- enqueue_next_work(args) do
-        duration_ms =
-          System.convert_time_unit(
-            System.monotonic_time() - start_time,
-            :native,
-            :millisecond
-          )
-
-        Logger.info("#{module_name}: Job completed successfully in #{duration_ms}ms")
-        :ok
-      else
-        {:error, reason} ->
-          Logger.error("#{module_name}: Job failed: #{inspect(reason)}")
-          {:error, reason}
-
-        other ->
-          Logger.error("#{module_name}: Job returned unexpected result: #{inspect(other)}")
-          {:error, "Unexpected return value: #{inspect(other)}"}
-      end
-    rescue
-      error ->
-        Logger.error("#{module_name}: Job crashed with exception: #{Exception.message(error)}")
-
-        Logger.error(
-          "#{module_name}: Exception details: #{Exception.format(:error, error, __STACKTRACE__)}"
-        )
-
-        {:error, Exception.message(error)}
-    catch
-      :exit, reason ->
-        Logger.error("#{module_name}: Job exited with reason: #{inspect(reason)}")
-        {:error, "Process exit: #{inspect(reason)}"}
-
-      :throw, value ->
-        Logger.error("#{module_name}: Job threw value: #{inspect(value)}")
-        {:error, "Thrown value: #{inspect(value)}"}
+  @impl WorkerBehavior
+  def handle_work(args) do
+    with :ok <- handle_merge_work(args),
+         :ok <- enqueue_next_work(args) do
+      :ok
     end
   end
 
@@ -133,7 +93,7 @@ defmodule Heaters.Workers.Clips.MergeWorker do
       merged_clip_id when is_integer(merged_clip_id) ->
         # The merge was successful. The new clip is in "spliced" state.
         # We'll enqueue a SpriteWorker job to generate its sprite and put it in the review queue.
-        case SpriteWorker.new(%{clip_id: merged_clip_id}) |> Oban.insert() do
+        case Heaters.Clips.Operations.Artifacts.Sprite.Worker.new(%{clip_id: merged_clip_id}) |> Oban.insert() do
           {:ok, _job} ->
             Logger.info(
               "MergeWorker: Successfully enqueued SpriteWorker for merged clip #{merged_clip_id}"

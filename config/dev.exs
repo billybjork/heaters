@@ -106,7 +106,7 @@ config :heaters, Oban,
   plugins: [
     {Oban.Plugins.Cron,
      crontab: [
-       {"* * * * *", Heaters.Workers.Dispatcher}
+       {"* * * * *", Heaters.Infrastructure.Orchestration.Dispatcher}
      ]}
   ],
   queues: [

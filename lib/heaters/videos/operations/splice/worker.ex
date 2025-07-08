@@ -1,4 +1,4 @@
-defmodule Heaters.Workers.Videos.SpliceWorker do
+defmodule Heaters.Videos.Operations.Splice.Worker do
   @moduledoc """
   Worker for processing source videos into clips using Python-based scene detection.
 
@@ -29,62 +29,24 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
   - **Storage**: S3 for videos/clips and scene detection caching
   """
 
-  use Oban.Worker, queue: :media_processing, unique: [period: 300, fields: [:args]]
+  use Heaters.Infrastructure.Orchestration.WorkerBehavior,
+      queue: :media_processing,
+      unique: [period: 300, fields: [:args]]
 
   alias Heaters.Videos.{SourceVideo, Operations}
   alias Heaters.Videos.Operations.Splice.StateManager
   alias Heaters.Clips.Operations.SpliceClips
   alias Heaters.Videos.Queries, as: VideoQueries
-  alias Heaters.Workers.Clips.SpriteWorker
+  alias Heaters.Infrastructure.Orchestration.WorkerBehavior
   require Logger
 
   @splicing_complete_states ["spliced", "splicing_failed"]
 
-  @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) do
-    module_name = __MODULE__ |> Module.split() |> List.last()
-    Logger.info("#{module_name}: Starting job with args: #{inspect(args)}")
-
-    start_time = System.monotonic_time()
-
-    try do
-      with :ok <- handle_splice_work(args),
-           :ok <- enqueue_next_work(args) do
-        duration_ms =
-          System.convert_time_unit(
-            System.monotonic_time() - start_time,
-            :native,
-            :millisecond
-          )
-
-        Logger.info("#{module_name}: Job completed successfully in #{duration_ms}ms")
-        :ok
-      else
-        {:error, reason} ->
-          Logger.error("#{module_name}: Job failed: #{inspect(reason)}")
-          {:error, reason}
-
-        other ->
-          Logger.error("#{module_name}: Job returned unexpected result: #{inspect(other)}")
-          {:error, "Unexpected return value: #{inspect(other)}"}
-      end
-    rescue
-      error ->
-        Logger.error("#{module_name}: Job crashed with exception: #{Exception.message(error)}")
-
-        Logger.error(
-          "#{module_name}: Exception details: #{Exception.format(:error, error, __STACKTRACE__)}"
-        )
-
-        {:error, Exception.message(error)}
-    catch
-      :exit, reason ->
-        Logger.error("#{module_name}: Job exited with reason: #{inspect(reason)}")
-        {:error, "Process exit: #{inspect(reason)}"}
-
-      :throw, value ->
-        Logger.error("#{module_name}: Job threw value: #{inspect(value)}")
-        {:error, "Thrown value: #{inspect(value)}"}
+  @impl WorkerBehavior
+  def handle_work(args) do
+    with :ok <- handle_splice_work(args),
+         :ok <- enqueue_next_work(args) do
+      :ok
     end
   end
 
@@ -95,8 +57,7 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
       handle_splicing(source_video)
     else
       {:error, :not_found} ->
-        Logger.warning("SpliceWorker: Source video #{source_video_id} not found")
-        :ok
+        WorkerBehavior.handle_not_found("Source video", source_video_id)
     end
   end
 
@@ -206,7 +167,7 @@ defmodule Heaters.Workers.Videos.SpliceWorker do
         jobs =
           clips
           |> Enum.map(fn clip ->
-            SpriteWorker.new(%{clip_id: clip.id})
+            Heaters.Clips.Operations.Artifacts.Sprite.Worker.new(%{clip_id: clip.id})
           end)
 
         try do
