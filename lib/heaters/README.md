@@ -156,14 +156,43 @@ All workers implement robust idempotency patterns:
 2. Robust S3 deletion handling for both XML and JSON responses
 3. Proper cleanup of all associated artifacts and metadata
 
-## Orchestration
+## Orchestration: Fully Declarative Pipeline
 
-**`Infrastructure.Orchestration.Dispatcher`** runs periodically with data-driven step definitions:
-1. Find work (e.g., `new` videos, `spliced` clips)
-2. Enqueue appropriate workers
-3. Process pending events via `EventProcessor.commit_pending_actions/0`
+**`Infrastructure.Orchestration.Dispatcher`** implements a **fully declarative pipeline** using data-driven configuration:
 
-**`Infrastructure.Orchestration.PipelineConfig`** provides declarative pipeline configuration, reducing orchestration code from 98 to 42 lines through configuration over code. Workers are now semantically organized in their business contexts while maintaining centralized orchestration.
+```elixir
+PipelineConfig.stages()
+|> Enum.each(&run_stage/1)
+```
+
+Each stage is pure configuration:
+- **Database Query Stages**: `query` function finds work, `build` function creates jobs
+- **Action Stages**: `call` function executes direct operations (EventProcessor)
+- **Declarative Flow**: All state transitions handled by pipeline, not workers
+
+**`Infrastructure.Orchestration.PipelineConfig`** provides complete workflow as data:
+1. `new videos → download` (IngestWorker)
+2. `downloaded videos → splice` (SpliceWorker) 
+3. `spliced clips → sprites` (SpriteWorker) ← **Handles ALL spliced clips**
+4. `review actions` (EventProcessor.commit_pending_actions)
+5. `approved clips → keyframes` (KeyframeWorker)
+6. `keyframed clips → embeddings` (EmbeddingWorker)
+7. `archived clips → archive` (ArchiveWorker)
+
+### Key Architectural Decision: Single Source of Truth
+
+**Before**: Mixed imperative/declarative approach with workers directly enqueueing other workers
+- SpliceWorker → SpriteWorker (imperative)
+- MergeWorker → SpriteWorker (imperative) 
+- SplitWorker → SpriteWorker (imperative)
+
+**After**: Fully declarative pipeline with single source of truth
+- ALL workers focus purely on domain logic and state transitions
+- Pipeline dispatcher handles ALL enqueueing based on database state
+- "spliced clips → sprites" stage catches clips from splice, merge, AND split operations
+- Zero direct worker-to-worker communication
+
+**Benefits**: Single source of truth, easier testing, clearer workflow visibility, separation of concerns between business logic and orchestration.
 
 ## Context Responsibilities
 
@@ -213,12 +242,16 @@ All workers implement robust idempotency patterns:
   - Embedding workers: `clips/embeddings/worker.ex`
   - Infrastructure workers: `infrastructure/orchestration/dispatcher.ex`
   - Infrastructure: `infrastructure/orchestration/{pipeline_config,worker_behavior}.ex`
-- **Shared Worker Behavior**: `Infrastructure.Orchestration.WorkerBehavior` eliminates 50+ lines of boilerplate per worker across all 9 workers
+- **Shared Worker Behavior**: `Infrastructure.Orchestration.WorkerBehavior` eliminates 450+ lines of boilerplate per worker across all 9 workers
   - Standardized performance monitoring and logging with automatic timing
   - Consistent error handling with detailed stack traces and exception recovery
   - Common idempotency patterns and helper functions (`check_complete_states`, `check_artifact_exists`)
   - Centralized job lifecycle management with robust error handling
   - Unified logging patterns with module-specific prefixes and structured output
+- **Fully Declarative Pipeline**: Workers focus purely on domain logic with zero direct enqueueing
+  - Pipeline dispatcher handles ALL job orchestration based on database state
+  - Clean separation between business logic (workers) and orchestration (pipeline)
+  - Single source of truth for workflow transitions eliminates imperative worker-to-worker communication
 - **Improved Maintainability**: Workers now focus purely on business logic rather than infrastructure concerns
 - **Type Safety**: Preserved all Dialyzer suppressions and maintained compile-time validation
 - **Zero Downtime**: Refactoring maintained 100% backward compatibility with existing job queues
@@ -236,4 +269,5 @@ All workers implement robust idempotency patterns:
 9. **Production Ready**: Comprehensive error handling, logging, and recovery mechanisms
 10. **Scalable**: Idempotent workers and robust orchestration patterns
 11. **Well-Organized**: Semantic worker organization by business context improves code discoverability and maintenance
-12. **DRY Architecture**: Centralized WorkerBehavior eliminates 450+ lines of boilerplate across 9 workers while maintaining full functionality 
+12. **DRY Architecture**: Centralized WorkerBehavior eliminates 450+ lines of boilerplate across 9 workers while maintaining full functionality
+13. **Declarative Orchestration**: Fully declarative pipeline provides single source of truth with clear separation between business logic and workflow orchestration 

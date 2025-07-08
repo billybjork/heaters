@@ -26,10 +26,7 @@ defmodule Heaters.Clips.Operations.Edits.Merge.Worker do
 
   @impl WorkerBehavior
   def handle_work(args) do
-    with :ok <- handle_merge_work(args),
-         :ok <- enqueue_next_work(args) do
-      :ok
-    end
+    handle_merge_work(args)
   end
 
   defp handle_merge_work(
@@ -46,7 +43,6 @@ defmodule Heaters.Clips.Operations.Edits.Merge.Worker do
     case Map.get(args, "__test_mode__") do
       "success" ->
         # Test mode - force success to help Dialyzer type inference
-        Process.put(:merged_clip_id, 999_999)
         Logger.info("MergeWorker: Test mode success")
         :ok
 
@@ -66,8 +62,6 @@ defmodule Heaters.Clips.Operations.Edits.Merge.Worker do
           "MergeWorker: Merge succeeded for clips #{clip_id_target}, #{clip_id_source}. New clip: #{merged_clip_id}"
         )
 
-        # Store the merged clip ID for enqueue_next_work/1 to use
-        Process.put(:merged_clip_id, merged_clip_id)
         :ok
 
       {:ok, %Types.MergeResult{status: status}} ->
@@ -85,29 +79,6 @@ defmodule Heaters.Clips.Operations.Edits.Merge.Worker do
       other ->
         Logger.error("MergeWorker: Merge returned unexpected value: #{inspect(other)}")
         {:error, "Unexpected merge return value: #{inspect(other)}"}
-    end
-  end
-
-  defp enqueue_next_work(_args) do
-    case Process.get(:merged_clip_id) do
-      merged_clip_id when is_integer(merged_clip_id) ->
-        # The merge was successful. The new clip is in "spliced" state.
-        # We'll enqueue a SpriteWorker job to generate its sprite and put it in the review queue.
-        case Heaters.Clips.Operations.Artifacts.Sprite.Worker.new(%{clip_id: merged_clip_id}) |> Oban.insert() do
-          {:ok, _job} ->
-            Logger.info(
-              "MergeWorker: Successfully enqueued SpriteWorker for merged clip #{merged_clip_id}"
-            )
-
-            :ok
-
-          {:error, reason} ->
-            Logger.error("MergeWorker: Failed to enqueue sprite worker: #{inspect(reason)}")
-            {:error, "Failed to enqueue sprite worker: #{inspect(reason)}"}
-        end
-
-      _ ->
-        {:error, "No merged_clip_id found to enqueue sprite worker"}
     end
   end
 end

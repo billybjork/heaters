@@ -12,7 +12,7 @@ defmodule Heaters.Videos.Operations.Splice.Worker do
   2. Run Python scene detection and Elixir clip extraction
   3. Create clip records in database
   4. Transition source video to "spliced" state
-  5. Enqueue sprite workers for each created clip
+  5. Pipeline dispatcher will pick up clips in "spliced" state for sprite generation
 
   ## State Management
 
@@ -30,8 +30,8 @@ defmodule Heaters.Videos.Operations.Splice.Worker do
   """
 
   use Heaters.Infrastructure.Orchestration.WorkerBehavior,
-      queue: :media_processing,
-      unique: [period: 300, fields: [:args]]
+    queue: :media_processing,
+    unique: [period: 300, fields: [:args]]
 
   alias Heaters.Videos.{SourceVideo, Operations}
   alias Heaters.Videos.Operations.Splice.StateManager
@@ -44,10 +44,7 @@ defmodule Heaters.Videos.Operations.Splice.Worker do
 
   @impl WorkerBehavior
   def handle_work(args) do
-    with :ok <- handle_splice_work(args),
-         :ok <- enqueue_next_work(args) do
-      :ok
-    end
+    handle_splice_work(args)
   end
 
   defp handle_splice_work(%{"source_video_id" => source_video_id}) do
@@ -126,11 +123,9 @@ defmodule Heaters.Videos.Operations.Splice.Worker do
       :ok ->
         # Create clips and update source video state
         case SpliceClips.create_clips_from_splice(source_video.id, clips_data) do
-          {:ok, clips} ->
+          {:ok, _clips} ->
             case StateManager.complete_splicing(source_video.id) do
               {:ok, _final_video} ->
-                # Store clips for enqueue_next_work/1 (maintains existing pattern)
-                Process.put(:clips, clips)
                 :ok
 
               {:error, reason} ->
@@ -157,45 +152,6 @@ defmodule Heaters.Videos.Operations.Splice.Worker do
       {:error, db_error} ->
         Logger.error("SpliceWorker: Failed to mark video as failed: #{inspect(db_error)}")
         {:error, reason}
-    end
-  end
-
-  defp enqueue_next_work(_args) do
-    case Process.get(:clips) do
-      clips when is_list(clips) ->
-        # Enqueue sprite workers for all created clips
-        jobs =
-          clips
-          |> Enum.map(fn clip ->
-            Heaters.Clips.Operations.Artifacts.Sprite.Worker.new(%{clip_id: clip.id})
-          end)
-
-        try do
-          case Oban.insert_all(jobs) do
-            inserted_jobs when is_list(inserted_jobs) and length(inserted_jobs) > 0 ->
-              Logger.info("SpliceWorker: Enqueued #{length(inserted_jobs)} sprite workers")
-              :ok
-
-            [] ->
-              Logger.error("SpliceWorker: Failed to enqueue sprite workers - no jobs inserted")
-              {:error, "No sprite jobs were enqueued"}
-
-            %Ecto.Multi{} = multi ->
-              Logger.error(
-                "SpliceWorker: Oban.insert_all returned Multi instead of jobs: #{inspect(multi)}"
-              )
-
-              {:error, "Unexpected Multi result from Oban.insert_all"}
-          end
-        rescue
-          error ->
-            error_message = "Failed to enqueue sprite workers: #{Exception.message(error)}"
-            Logger.error("SpliceWorker: #{error_message}")
-            {:error, error_message}
-        end
-
-      _ ->
-        {:error, "No clips found to enqueue sprite workers"}
     end
   end
 end

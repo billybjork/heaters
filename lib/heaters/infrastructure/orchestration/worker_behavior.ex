@@ -21,11 +21,7 @@ defmodule Heaters.Infrastructure.Orchestration.WorkerBehavior do
           :ok
         end
 
-        # Optional: Override for workers that enqueue follow-up jobs
-        @impl WorkerBehavior
-        def enqueue_next_work(_args) do
-          :ok  # Default: no follow-up jobs
-        end
+
       end
   """
 
@@ -34,14 +30,6 @@ defmodule Heaters.Infrastructure.Orchestration.WorkerBehavior do
   Should return :ok, {:ok, result}, or {:error, reason}.
   """
   @callback handle_work(map()) :: :ok | {:ok, any()} | {:error, any()}
-
-  @doc """
-  Callback for enqueuing follow-up work after successful completion.
-  Default implementation does nothing.
-  """
-  @callback enqueue_next_work(map()) :: :ok | {:error, any()}
-
-  @optional_callbacks enqueue_next_work: 1
 
   defmacro __using__(opts) do
     queue = Keyword.get(opts, :queue, :default)
@@ -62,13 +50,11 @@ defmodule Heaters.Infrastructure.Orchestration.WorkerBehavior do
 
       @impl Oban.Worker
       def perform(%Oban.Job{args: args}) do
-        Heaters.Infrastructure.Orchestration.WorkerBehavior.execute_with_monitoring(__MODULE__, args)
+        Heaters.Infrastructure.Orchestration.WorkerBehavior.execute_with_monitoring(
+          __MODULE__,
+          args
+        )
       end
-
-      @impl Heaters.Infrastructure.Orchestration.WorkerBehavior
-      def enqueue_next_work(_args), do: :ok
-
-      defoverridable enqueue_next_work: 1
     end
   end
 
@@ -82,11 +68,11 @@ defmodule Heaters.Infrastructure.Orchestration.WorkerBehavior do
     start_time = System.monotonic_time()
 
     try do
-      with :ok <- worker_module.handle_work(args),
-           :ok <- worker_module.enqueue_next_work(args) do
-        log_success(module_name, start_time)
-        :ok
-      else
+      case worker_module.handle_work(args) do
+        :ok ->
+          log_success(module_name, start_time)
+          :ok
+
         {:ok, result} when is_map(result) or is_list(result) ->
           # Some workers return results
           log_success(module_name, start_time)
@@ -195,6 +181,7 @@ defmodule Heaters.Infrastructure.Orchestration.WorkerBehavior do
           Logger.error(
             "#{context_name}: Oban.insert_all returned Multi instead of jobs: #{inspect(multi)}"
           )
+
           {:error, "Unexpected Multi result from Oban.insert_all"}
       end
     rescue

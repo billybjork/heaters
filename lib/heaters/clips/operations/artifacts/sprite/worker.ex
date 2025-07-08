@@ -76,9 +76,12 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.Worker do
     end
   end
 
-  defp check_sprite_specific_states(%{ingest_state: "generating_sprite"}), do: {:error, :already_processed}
+  defp check_sprite_specific_states(%{ingest_state: "generating_sprite"}),
+    do: {:error, :already_processed}
+
   defp check_sprite_specific_states(%{ingest_state: "spliced"}), do: :ok
   defp check_sprite_specific_states(%{ingest_state: "sprite_failed"}), do: :ok
+
   defp check_sprite_specific_states(%{ingest_state: state}) do
     Logger.warning("SpriteWorker: Unexpected clip state '#{state}' for sprite generation")
     {:error, :invalid_state}

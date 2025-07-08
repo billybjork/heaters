@@ -67,6 +67,7 @@ defmodule Heaters.Clips.Operations.Artifacts.Keyframe.Worker do
 
   defp check_keyframe_specific_states(%{ingest_state: "review_approved"}), do: :ok
   defp check_keyframe_specific_states(%{ingest_state: "keyframe_failed"}), do: :ok
+
   defp check_keyframe_specific_states(%{ingest_state: state}) do
     Logger.warning("KeyframeWorker: Unexpected clip state '#{state}' for keyframe extraction")
     {:error, :invalid_state}

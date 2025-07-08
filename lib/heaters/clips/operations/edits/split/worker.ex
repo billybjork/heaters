@@ -8,18 +8,13 @@ defmodule Heaters.Clips.Operations.Edits.Split.Worker do
 
   @impl WorkerBehavior
   def handle_work(args) do
-    with :ok <- handle_split_work(args),
-         :ok <- enqueue_next_work(args) do
-      :ok
-    end
+    handle_split_work(args)
   end
 
   defp handle_split_work(%{"clip_id" => clip_id, "split_at_frame" => split_at_frame}) do
     case Split.run_split(clip_id, split_at_frame) do
       {:ok, %Types.SplitResult{status: "success", new_clip_ids: new_clip_ids}}
       when is_list(new_clip_ids) ->
-        # Store the new clip IDs for enqueue_next_work/1 to use
-        Process.put(:new_clip_ids, new_clip_ids)
         :ok
 
       {:ok, %Types.SplitResult{status: status}} ->
@@ -27,32 +22,6 @@ defmodule Heaters.Clips.Operations.Edits.Split.Worker do
 
       {:error, reason} ->
         {:error, reason}
-    end
-  end
-
-  defp enqueue_next_work(%{"clip_id" => _clip_id}) do
-    case Process.get(:new_clip_ids) do
-      new_clip_ids when is_list(new_clip_ids) ->
-        # The split was successful. The original clip has been archived and two
-        # new clips created. We'll enqueue SpriteWorker jobs for both to
-        # generate sprites and put them into the review queue.
-        jobs = Enum.map(new_clip_ids, &Heaters.Clips.Operations.Artifacts.Sprite.Worker.new(%{clip_id: &1}))
-
-        case Oban.insert_all(jobs) do
-          [_ | _] = job_list when is_list(job_list) ->
-            :ok
-
-          [] ->
-            {:error, "No jobs were inserted"}
-
-          %Ecto.Multi{} = _multi ->
-            # When used inside a transaction, Oban.insert_all returns an Ecto.Multi
-            # We treat this as success since the jobs will be inserted when the transaction commits
-            :ok
-        end
-
-      _ ->
-        {:error, "No new_clip_ids found to enqueue sprite workers"}
     end
   end
 end

@@ -1,7 +1,7 @@
 defmodule Heaters.Infrastructure.Orchestration.Dispatcher do
   use Heaters.Infrastructure.Orchestration.WorkerBehavior,
-      queue: :background_jobs,
-      unique: [period: 60]
+    queue: :background_jobs,
+    unique: [period: 60]
 
   alias Heaters.Infrastructure.Orchestration.PipelineConfig
   alias Heaters.Infrastructure.Orchestration.WorkerBehavior

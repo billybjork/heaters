@@ -49,7 +49,8 @@ defmodule Heaters.Clips.Review.ArchiveWorker do
         WorkerBehavior.handle_already_processed("Clip", clip_id)
 
       # Propagate other errors.
-      {:error, reason} -> {:error, reason}
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
