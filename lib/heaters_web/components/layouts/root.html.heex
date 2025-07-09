@@ -13,7 +13,7 @@
   </head>
   <body class="bg-white antialiased">
     <!-- ▸ global toolbar -->
-    <HeatersWeb.NavComponent.nav current_path={@conn.request_path} />
+    <HeatersWeb.Nav.nav current_path={@conn.request_path} />
     
 <!-- ▸ flash messages -->
     <%= if info = Phoenix.Flash.get(@flash, :info) do %>

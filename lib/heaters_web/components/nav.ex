@@ -1,4 +1,4 @@
-defmodule HeatersWeb.NavComponent do
+defmodule HeatersWeb.Nav do
   @moduledoc "Site-wide top toolbar (Review / Query links)."
 
   use Phoenix.Component
