@@ -7,7 +7,7 @@ Heaters processes videos through a multi-stage pipeline: ingestion → clips →
 ### Technology Stack
 - **Backend**: Elixir/Phoenix with LiveView
 - **Database**: PostgreSQL with pgvector extension
-- **Scene Detection**: Native Elixir using Evision (OpenCV bindings)
+- **Scene Detection**: Python OpenCV via PyRunner port communication
 - **ML Processing**: Python with PyTorch, Transformers
 - **Media Processing**: Python with yt-dlp, FFmpeg, Rust (rambo for sprite generation)
 - **Storage**: AWS S3 with idempotent operations and robust error handling
@@ -82,11 +82,11 @@ Infrastructure Adapters (S3, FFmpeg, Python - external I/O)
 
 The system uses a **hybrid approach** combining native Elixir and Python processing:
 
-#### Native Elixir Scene Detection
-- **Technology**: Evision (OpenCV-Elixir bindings) for high-performance scene detection
-- **Benefits**: Eliminates subprocess communication and JSON parsing brittleness
-- **Implementation**: `Videos.Operations.Splice` with streaming frame-by-frame processing
-- **Idempotency**: S3-based clip existence checking prevents reprocessing
+#### Python Scene Detection
+- **Technology**: Python OpenCV via PyRunner port communication for robust scene detection
+- **Benefits**: Leverages mature Python OpenCV ecosystem with reliable scene detection algorithms
+- **Implementation**: `Videos.Operations.Splice` with Python task execution via PyRunner
+- **Idempotency**: S3-based scene detection caching and clip existence checking prevents reprocessing
 
 #### Python ML/Media Processing
 - **Technology**: Python for ML embedding generation and media processing
@@ -149,7 +149,7 @@ All workers implement robust idempotency patterns:
 ### Video Ingestion
 1. `Videos.submit/1` creates source video in `new` state
 2. `Videos.Operations.Ingest.Worker` downloads/processes → `downloaded` state  
-3. `Videos.Operations.Splice.Worker` runs **native Elixir scene detection** → clips in `spliced` state
+3. `Videos.Operations.Splice.Worker` runs **Python scene detection** → clips in `spliced` state
 
 ### Review Workflow
 1. `Clips.Operations.Artifacts.Sprite.Worker` generates sprites using rambo → clips in `pending_review` state
@@ -215,7 +215,7 @@ Each stage is pure configuration:
 
 - **`Videos`**: Source video lifecycle from submission through clips creation
   - **`Videos.Operations.Ingest`**: Video download and processing workflow
-  - **`Videos.Operations.Splice`**: Native Elixir scene detection using Evision (OpenCV bindings)
+  - **`Videos.Operations.Splice`**: Python scene detection using OpenCV via PyRunner port communication
 - **`Clips.Operations`**: Clip transformations and state management (semantic Edits/Artifacts organization)
   - **`Clips.Operations.Edits`**: User-driven transformations (Split, Merge) that create new clips
   - **`Clips.Operations.Artifacts`**: Pipeline-driven processing (Sprite, Keyframe) that create supplementary data
@@ -280,8 +280,8 @@ Each stage is pure configuration:
 4. **Type-Safe**: Structured results with compile-time validation  
 5. **Testable**: Pure functions without I/O dependencies
 6. **Semantic**: Operations organized by business purpose, not implementation details
-7. **Performance**: Native Elixir scene detection eliminates subprocess overhead and JSON parsing brittleness
-8. **Hybrid Efficiency**: Best of both worlds - Elixir for performance-critical operations, Python for ML/media processing
+7. **Performance**: Python scene detection leverages mature OpenCV algorithms with efficient PyRunner integration
+8. **Hybrid Efficiency**: Best of both worlds - Elixir for video processing operations, Python for scene detection/ML processing
 9. **Production Ready**: Comprehensive error handling, logging, and recovery mechanisms
 10. **Scalable**: Idempotent workers and robust orchestration patterns 
 11. **Well-Organized**: Semantic worker organization by business context improves code discoverability and maintenance

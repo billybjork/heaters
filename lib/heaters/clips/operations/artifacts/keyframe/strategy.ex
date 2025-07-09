@@ -9,6 +9,8 @@ defmodule Heaters.Clips.Operations.Artifacts.Keyframe.Strategy do
   @type strategy_config :: %{
           strategy: String.t(),
           count: pos_integer(),
+          percentages: [float()],
+          tags: [String.t()],
           description: String.t()
         }
 
@@ -30,6 +32,8 @@ defmodule Heaters.Clips.Operations.Artifacts.Keyframe.Strategy do
          %{
            strategy: strategy,
            count: 1,
+           percentages: [0.5],
+           tags: ["mid"],
            description: "Single keyframe at video midpoint"
          }}
 
@@ -38,6 +42,8 @@ defmodule Heaters.Clips.Operations.Artifacts.Keyframe.Strategy do
          %{
            strategy: strategy,
            count: 3,
+           percentages: [0.25, 0.5, 0.75],
+           tags: ["25pct", "50pct", "75pct"],
            description: "Multiple keyframes distributed across video"
          }}
     end

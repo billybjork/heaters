@@ -10,6 +10,7 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
   - Video clip creation with standardized encoding settings
   - Sprite sheet generation with configurable parameters
   - Video concatenation with copy codec
+  - Keyframe extraction at specific timestamps or percentages
   - Video metadata extraction via ffprobe
   """
 
@@ -454,4 +455,163 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
   end
 
   defp extract_height(_), do: {:error, "Could not determine video height"}
+
+  @doc """
+  Extracts keyframes from video at specific timestamps.
+
+  Uses FFmpeg to extract individual frames at precise timestamps:
+  ffmpeg -i input.mp4 -ss timestamp -vframes 1 -q:v 2 output.jpg
+
+  ## Parameters
+  - `video_path`: Path to input video file
+  - `output_dir`: Directory to save keyframe images
+  - `timestamps`: List of timestamps in seconds (floats)
+  - `opts`: Optional parameters
+    - `:prefix` - Filename prefix (default: "keyframe")
+    - `:quality` - JPEG quality 1-31, lower is better (default: 2)
+
+  ## Returns
+  - `{:ok, keyframe_data}` with list of keyframe info maps
+  - `{:error, reason}` on failure
+
+  ## Examples
+
+      {:ok, keyframes} = FFmpegRunner.extract_keyframes_by_timestamp(
+        "/tmp/video.mp4",
+        "/tmp/keyframes",
+        [30.0, 60.0, 90.0],
+        prefix: "clip_123"
+      )
+      # Returns: [{:ok, %{path: "/tmp/keyframes/clip_123_30.0.jpg", timestamp: 30.0, ...}}, ...]
+  """
+  @spec extract_keyframes_by_timestamp(String.t(), String.t(), [float()], keyword()) ::
+          {:ok, [map()]} | {:error, any()}
+  def extract_keyframes_by_timestamp(video_path, output_dir, timestamps, opts \\ []) do
+    prefix = Keyword.get(opts, :prefix, "keyframe")
+    quality = Keyword.get(opts, :quality, 2)
+
+    # Ensure output directory exists
+    case File.mkdir_p(output_dir) do
+      :ok ->
+        extract_keyframes_at_timestamps(video_path, output_dir, timestamps, prefix, quality)
+
+      {:error, reason} ->
+        {:error, "Failed to create output directory: #{inspect(reason)}"}
+    end
+  end
+
+  @doc """
+  Extracts keyframes from video at specific percentage positions.
+
+  First gets video duration, then calculates timestamps from percentages.
+
+  ## Parameters
+  - `video_path`: Path to input video file
+  - `output_dir`: Directory to save keyframe images
+  - `percentages`: List of percentages 0.0-1.0 (e.g., [0.25, 0.5, 0.75])
+  - `opts`: Optional parameters (same as extract_keyframes_by_timestamp)
+
+  ## Returns
+  - `{:ok, keyframe_data}` with list of keyframe info maps
+  - `{:error, reason}` on failure
+
+  ## Examples
+
+      {:ok, keyframes} = FFmpegRunner.extract_keyframes_by_percentage(
+        "/tmp/video.mp4",
+        "/tmp/keyframes",
+        [0.25, 0.5, 0.75],
+        prefix: "clip_123"
+      )
+  """
+  @spec extract_keyframes_by_percentage(String.t(), String.t(), [float()], keyword()) ::
+          {:ok, [map()]} | {:error, any()}
+  def extract_keyframes_by_percentage(video_path, output_dir, percentages, opts \\ []) do
+    with {:ok, metadata} <- get_video_metadata(video_path) do
+      duration = Map.get(metadata, :duration, 0.0)
+
+      if duration > 0 do
+        timestamps = Enum.map(percentages, fn pct -> duration * pct end)
+        extract_keyframes_by_timestamp(video_path, output_dir, timestamps, opts)
+      else
+        {:error, "Invalid video duration: #{duration}"}
+      end
+    end
+  end
+
+  ## Private keyframe extraction helpers
+
+  @spec extract_keyframes_at_timestamps(String.t(), String.t(), [float()], String.t(), integer()) ::
+          {:ok, [map()]} | {:error, any()}
+  defp extract_keyframes_at_timestamps(video_path, output_dir, timestamps, prefix, quality) do
+    Logger.info(
+      "FFmpegRunner: Extracting #{length(timestamps)} keyframes from #{video_path}"
+    )
+
+    results =
+      timestamps
+      |> Enum.with_index()
+      |> Enum.map(fn {timestamp, index} ->
+        extract_single_keyframe_at_timestamp(video_path, output_dir, timestamp, prefix, quality, index)
+      end)
+
+    # Check if any extractions failed
+    case Enum.find(results, fn result -> match?({:error, _}, result) end) do
+      nil ->
+        {:ok, Enum.map(results, fn {:ok, keyframe_data} -> keyframe_data end)}
+
+      {:error, reason} ->
+        {:error, "Keyframe extraction failed: #{reason}"}
+    end
+  end
+
+  @spec extract_single_keyframe_at_timestamp(String.t(), String.t(), float(), String.t(), integer(), integer()) ::
+          {:ok, map()} | {:error, any()}
+  defp extract_single_keyframe_at_timestamp(video_path, output_dir, timestamp, prefix, quality, index) do
+    timestamp_str = Float.to_string(timestamp)
+    filename = "#{prefix}_#{timestamp_str}.jpg"
+    output_path = Path.join(output_dir, filename)
+
+    try do
+      command =
+        FFmpex.new_command()
+        |> add_input_file(video_path)
+        |> add_output_file(output_path)
+        |> add_file_option(option_ss(timestamp_str))
+        |> add_file_option(option_vframes("1"))
+        |> add_stream_specifier(stream_type: :video)
+        |> add_stream_option(option_q(to_string(quality)))
+        |> add_global_option(option_y())
+
+      case FFmpex.execute(command) do
+        {:ok, _output} ->
+          case File.stat(output_path) do
+            {:ok, %File.Stat{size: file_size}} when file_size > 0 ->
+              Logger.debug("FFmpegRunner: Extracted keyframe at #{timestamp}s: #{filename}")
+
+              {:ok, %{
+                path: output_path,
+                filename: filename,
+                timestamp: timestamp,
+                file_size: file_size,
+                index: index
+              }}
+
+            {:ok, %File.Stat{size: 0}} ->
+              {:error, "Keyframe file is empty: #{output_path}"}
+
+            {:error, reason} ->
+              {:error, "Keyframe file not created: #{inspect(reason)}"}
+          end
+
+        {:error, reason} ->
+          Logger.error("FFmpegRunner: FFmpeg failed to extract keyframe at #{timestamp}s: #{inspect(reason)}")
+          {:error, "FFmpeg keyframe extraction failed: #{inspect(reason)}"}
+      end
+    rescue
+      e ->
+        Logger.error("FFmpegRunner: Exception extracting keyframe at #{timestamp}s: #{inspect(e)}")
+        {:error, "Exception extracting keyframe: #{inspect(e)}"}
+    end
+  end
 end
