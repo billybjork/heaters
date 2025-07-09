@@ -544,15 +544,20 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
   @spec extract_keyframes_at_timestamps(String.t(), String.t(), [float()], String.t(), integer()) ::
           {:ok, [map()]} | {:error, any()}
   defp extract_keyframes_at_timestamps(video_path, output_dir, timestamps, prefix, quality) do
-    Logger.info(
-      "FFmpegRunner: Extracting #{length(timestamps)} keyframes from #{video_path}"
-    )
+    Logger.info("FFmpegRunner: Extracting #{length(timestamps)} keyframes from #{video_path}")
 
     results =
       timestamps
       |> Enum.with_index()
       |> Enum.map(fn {timestamp, index} ->
-        extract_single_keyframe_at_timestamp(video_path, output_dir, timestamp, prefix, quality, index)
+        extract_single_keyframe_at_timestamp(
+          video_path,
+          output_dir,
+          timestamp,
+          prefix,
+          quality,
+          index
+        )
       end)
 
     # Check if any extractions failed
@@ -565,9 +570,23 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
     end
   end
 
-  @spec extract_single_keyframe_at_timestamp(String.t(), String.t(), float(), String.t(), integer(), integer()) ::
+  @spec extract_single_keyframe_at_timestamp(
+          String.t(),
+          String.t(),
+          float(),
+          String.t(),
+          integer(),
+          integer()
+        ) ::
           {:ok, map()} | {:error, any()}
-  defp extract_single_keyframe_at_timestamp(video_path, output_dir, timestamp, prefix, quality, index) do
+  defp extract_single_keyframe_at_timestamp(
+         video_path,
+         output_dir,
+         timestamp,
+         prefix,
+         quality,
+         index
+       ) do
     timestamp_str = Float.to_string(timestamp)
     filename = "#{prefix}_#{timestamp_str}.jpg"
     output_path = Path.join(output_dir, filename)
@@ -589,13 +608,14 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
             {:ok, %File.Stat{size: file_size}} when file_size > 0 ->
               Logger.debug("FFmpegRunner: Extracted keyframe at #{timestamp}s: #{filename}")
 
-              {:ok, %{
-                path: output_path,
-                filename: filename,
-                timestamp: timestamp,
-                file_size: file_size,
-                index: index
-              }}
+              {:ok,
+               %{
+                 path: output_path,
+                 filename: filename,
+                 timestamp: timestamp,
+                 file_size: file_size,
+                 index: index
+               }}
 
             {:ok, %File.Stat{size: 0}} ->
               {:error, "Keyframe file is empty: #{output_path}"}
@@ -605,12 +625,18 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
           end
 
         {:error, reason} ->
-          Logger.error("FFmpegRunner: FFmpeg failed to extract keyframe at #{timestamp}s: #{inspect(reason)}")
+          Logger.error(
+            "FFmpegRunner: FFmpeg failed to extract keyframe at #{timestamp}s: #{inspect(reason)}"
+          )
+
           {:error, "FFmpeg keyframe extraction failed: #{inspect(reason)}"}
       end
     rescue
       e ->
-        Logger.error("FFmpegRunner: Exception extracting keyframe at #{timestamp}s: #{inspect(e)}")
+        Logger.error(
+          "FFmpegRunner: Exception extracting keyframe at #{timestamp}s: #{inspect(e)}"
+        )
+
         {:error, "Exception extracting keyframe: #{inspect(e)}"}
     end
   end

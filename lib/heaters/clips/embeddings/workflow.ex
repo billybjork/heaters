@@ -139,24 +139,34 @@ defmodule Heaters.Clips.Embeddings.Workflow do
       model_name: Map.fetch!(embedding_data, "model_name"),
       generation_strategy: Map.fetch!(embedding_data, "generation_strategy"),
       embedding: Map.fetch!(embedding_data, "embedding"),
-      metadata: Map.get(embedding_data, "metadata", %{}),
-      inserted_at: DateTime.utc_now(),
-      updated_at: DateTime.utc_now()
+      metadata: Map.get(embedding_data, "metadata", %{})
     }
 
-    case Repo.insert_all(Embedding, [attrs], returning: true) do
-      {1, [embedding | _]} ->
+    %Embedding{}
+    |> Embedding.changeset(attrs)
+    |> Repo.insert()
+    |> case do
+      {:ok, embedding} ->
         Logger.info("Successfully created embedding for clip_id: #{clip_id}")
         {:ok, embedding}
 
-      {0, _} ->
-        Logger.error("Failed to create embedding for clip_id: #{clip_id}")
-        {:error, "No embedding was created"}
+      {:error, changeset} ->
+        Logger.error(
+          "Failed to create embedding for clip_id: #{clip_id}. Changeset errors: #{inspect(changeset.errors)}"
+        )
+
+        {:error, "Validation failed: #{format_changeset_errors(changeset)}"}
     end
   rescue
     e ->
       Logger.error("Error creating embedding for clip_id #{clip_id}: #{Exception.message(e)}")
       {:error, Exception.message(e)}
+  end
+
+  defp format_changeset_errors(changeset) do
+    changeset.errors
+    |> Enum.map(fn {field, {message, _}} -> "#{field}: #{message}" end)
+    |> Enum.join(", ")
   end
 
   defp format_error_message(error_reason) when is_binary(error_reason), do: error_reason

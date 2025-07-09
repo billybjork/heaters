@@ -184,20 +184,33 @@ defmodule Heaters.Clips.Operations do
         build_artifact_attrs(clip_id, artifact_type, artifact_data)
       end)
 
-    case Repo.insert_all(ClipArtifact, artifacts_attrs, returning: true) do
-      {count, artifacts} when count > 0 ->
-        Logger.info(
-          "Operations: Successfully created #{count} #{artifact_type} artifacts for clip_id: #{clip_id}"
-        )
+    # Validate all artifacts before bulk insert
+    validated_changesets = Enum.map(artifacts_attrs, &ClipArtifact.changeset(%ClipArtifact{}, &1))
 
-        {:ok, artifacts}
+    case validate_artifact_changesets(validated_changesets) do
+      :ok ->
+        case Repo.insert_all(ClipArtifact, artifacts_attrs, returning: true) do
+          {count, artifacts} when count > 0 ->
+            Logger.info(
+              "Operations: Successfully created #{count} #{artifact_type} artifacts for clip_id: #{clip_id}"
+            )
 
-      {0, _} ->
+            {:ok, artifacts}
+
+          {0, _} ->
+            Logger.error(
+              "Operations: Failed to create #{artifact_type} artifacts for clip_id: #{clip_id}"
+            )
+
+            {:error, "No artifacts were created"}
+        end
+
+      {:error, errors} ->
         Logger.error(
-          "Operations: Failed to create #{artifact_type} artifacts for clip_id: #{clip_id}"
+          "Operations: Validation failed for #{artifact_type} artifacts for clip_id: #{clip_id}. Errors: #{inspect(errors)}"
         )
 
-        {:error, "No artifacts were created"}
+        {:error, "Validation failed: #{format_artifact_validation_errors(errors)}"}
     end
   rescue
     e ->
@@ -276,6 +289,33 @@ defmodule Heaters.Clips.Operations do
   end
 
   ## Private Helper Functions
+
+  defp validate_artifact_changesets(changesets) do
+    errors =
+      changesets
+      |> Enum.with_index()
+      |> Enum.filter(fn {changeset, _index} -> not changeset.valid? end)
+      |> Enum.map(fn {changeset, index} -> {index, changeset.errors} end)
+
+    if Enum.empty?(errors) do
+      :ok
+    else
+      {:error, errors}
+    end
+  end
+
+  defp format_artifact_validation_errors(errors) do
+    errors
+    |> Enum.map(fn {index, changeset_errors} ->
+      error_messages =
+        changeset_errors
+        |> Enum.map(fn {field, {message, _}} -> "#{field}: #{message}" end)
+        |> Enum.join(", ")
+
+      "Artifact #{index}: #{error_messages}"
+    end)
+    |> Enum.join("; ")
+  end
 
   defp update_clip(%Clip{} = clip, attrs) do
     clip

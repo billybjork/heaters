@@ -91,32 +91,45 @@ defmodule Heaters.Clips.Operations.SpliceClips do
           {:ok, existing_clips}
 
         {existing_count, new_count} when new_count > 0 ->
-          case Repo.insert_all(Clip, new_clips_attrs, returning: true) do
-            {^new_count, new_clips} ->
-              all_clips = existing_clips ++ new_clips
+          # Validate all clips before bulk insert
+          validated_changesets = Enum.map(new_clips_attrs, &Clip.changeset(%Clip{}, &1))
 
-              Logger.info(
-                "SpliceClips: Found #{existing_count} existing clips, created #{new_count} new clips for source_video_id: #{source_video_id}"
-              )
+          case validate_changesets(validated_changesets) do
+            :ok ->
+              case Repo.insert_all(Clip, new_clips_attrs, returning: true) do
+                {^new_count, new_clips} ->
+                  all_clips = existing_clips ++ new_clips
 
-              {:ok, all_clips}
+                  Logger.info(
+                    "SpliceClips: Found #{existing_count} existing clips, created #{new_count} new clips for source_video_id: #{source_video_id}"
+                  )
 
-            {0, _} ->
+                  {:ok, all_clips}
+
+                {0, _} ->
+                  Logger.error(
+                    "SpliceClips: Failed to create new clips for source_video_id: #{source_video_id}"
+                  )
+
+                  {:error, "Failed to create new clips"}
+
+                {created_count, new_clips} ->
+                  # Partial success - some clips created but not all
+                  all_clips = existing_clips ++ new_clips
+
+                  Logger.warning(
+                    "SpliceClips: Expected #{new_count} new clips but created #{created_count} for source_video_id: #{source_video_id}"
+                  )
+
+                  {:ok, all_clips}
+              end
+
+            {:error, errors} ->
               Logger.error(
-                "SpliceClips: Failed to create new clips for source_video_id: #{source_video_id}"
+                "SpliceClips: Validation failed for clips in source_video_id: #{source_video_id}. Errors: #{inspect(errors)}"
               )
 
-              {:error, "Failed to create new clips"}
-
-            {created_count, new_clips} ->
-              # Partial success - some clips created but not all
-              all_clips = existing_clips ++ new_clips
-
-              Logger.warning(
-                "SpliceClips: Expected #{new_count} new clips but created #{created_count} for source_video_id: #{source_video_id}"
-              )
-
-              {:ok, all_clips}
+              {:error, "Validation failed: #{format_validation_errors(errors)}"}
           end
 
         {0, 0} ->
@@ -170,6 +183,33 @@ defmodule Heaters.Clips.Operations.SpliceClips do
   end
 
   # Private helper functions
+
+  defp validate_changesets(changesets) do
+    errors =
+      changesets
+      |> Enum.with_index()
+      |> Enum.filter(fn {changeset, _index} -> not changeset.valid? end)
+      |> Enum.map(fn {changeset, index} -> {index, changeset.errors} end)
+
+    if Enum.empty?(errors) do
+      :ok
+    else
+      {:error, errors}
+    end
+  end
+
+  defp format_validation_errors(errors) do
+    errors
+    |> Enum.map(fn {index, changeset_errors} ->
+      error_messages =
+        changeset_errors
+        |> Enum.map(fn {field, {message, _}} -> "#{field}: #{message}" end)
+        |> Enum.join(", ")
+
+      "Clip #{index}: #{error_messages}"
+    end)
+    |> Enum.join("; ")
+  end
 
   defp build_clip_attrs(source_video_id, clip_data, index) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)

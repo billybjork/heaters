@@ -11,8 +11,11 @@ defmodule Heaters.Videos.Operations.Ingest do
   alias Heaters.Videos.Queries, as: VideoQueries
   require Logger
 
-  # Ecto.Repo.insert_all takes table name as string
-  @source_videos "source_videos"
+  defp format_changeset_errors(changeset) do
+    changeset.errors
+    |> Enum.map(fn {field, {message, _}} -> "#{field}: #{message}" end)
+    |> Enum.join(", ")
+  end
 
   @spec submit(String.t()) :: :ok | {:error, String.t()}
   def submit(url) when is_binary(url) do
@@ -110,49 +113,43 @@ defmodule Heaters.Videos.Operations.Ingest do
         |> String.slice(0, 250)
       end
 
-    now = DateTime.utc_now()
-
-    fields = %{
+    attrs = %{
       title: title,
       ingest_state: "new",
-      original_url: if(is_http?, do: url, else: nil),
-      web_scraped: is_http?,
-      inserted_at: now,
-      updated_at: now
+      original_url: if(is_http?, do: url, else: nil)
     }
 
-    case Repo.insert_all(@source_videos, [fields], returning: [:id]) do
-      {1, [%{id: id} | _]} ->
-        Logger.info("Successfully inserted source_video with ID: #{id} for URL: #{url}")
-        {:ok, id}
-
-      {0, _} ->
-        Logger.error(
-          "DB insert_all returned 0 inserted rows for source_videos with fields: #{inspect(fields)}"
+    %SourceVideo{}
+    |> SourceVideo.changeset(attrs)
+    |> Repo.insert()
+    |> case do
+      {:ok, source_video} ->
+        Logger.info(
+          "Successfully created source_video with ID: #{source_video.id} for URL: #{url}"
         )
 
-        {:error, "DB insert failed: No rows inserted."}
+        {:ok, source_video.id}
 
-      {_, error_info_list} ->
+      {:error, changeset} ->
         Logger.error(
-          "DB insert_all failed for source_videos with fields: #{inspect(fields)}. Error info: #{inspect(error_info_list)}"
+          "Failed to create source_video for URL '#{url}'. Changeset errors: #{inspect(changeset.errors)}"
         )
 
-        {:error, "DB insert failed with errors."}
+        {:error, "Validation failed: #{format_changeset_errors(changeset)}"}
     end
   rescue
     e in Postgrex.Error ->
       query_details = if Map.has_key?(e, :query), do: " query: #{e.query}", else: ""
 
       Logger.error(
-        "Postgrex DB error during source_video insert for URL '#{url}'. Error: #{Exception.message(e)}#{query_details}"
+        "Postgrex DB error during source_video create for URL '#{url}'. Error: #{Exception.message(e)}#{query_details}"
       )
 
       {:error, "DB error: #{Exception.message(e)}"}
 
     e ->
       Logger.error(
-        "Generic error during source_video insert for URL '#{url}'. Error: #{Exception.message(e)} Trace: #{inspect(__STACKTRACE__)}"
+        "Generic error during source_video create for URL '#{url}'. Error: #{Exception.message(e)} Trace: #{inspect(__STACKTRACE__)}"
       )
 
       {:error, "DB error: #{Exception.message(e)}"}

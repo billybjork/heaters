@@ -131,9 +131,18 @@ defmodule Heaters.Infrastructure.Adapters.DatabaseAdapter do
   def create_clips(clips_attrs) when is_list(clips_attrs) do
     alias Heaters.Repo
 
-    case Repo.insert_all(Clip, clips_attrs, returning: true) do
-      {count, clips} when count > 0 -> {:ok, clips}
-      {0, _} -> {:error, "No clips were created"}
+    # Validate all clips before bulk insert
+    validated_changesets = Enum.map(clips_attrs, &Clip.changeset(%Clip{}, &1))
+
+    case validate_clip_changesets(validated_changesets) do
+      :ok ->
+        case Repo.insert_all(Clip, clips_attrs, returning: true) do
+          {count, clips} when count > 0 -> {:ok, clips}
+          {0, _} -> {:error, "No clips were created"}
+        end
+
+      {:error, errors} ->
+        {:error, "Validation failed: #{format_clip_validation_errors(errors)}"}
     end
   rescue
     e -> {:error, Exception.message(e)}
@@ -183,5 +192,34 @@ defmodule Heaters.Infrastructure.Adapters.DatabaseAdapter do
     %Clip{}
     |> Clip.changeset(clip_attrs)
     |> Repo.insert()
+  end
+
+  # Private helper functions
+
+  defp validate_clip_changesets(changesets) do
+    errors =
+      changesets
+      |> Enum.with_index()
+      |> Enum.filter(fn {changeset, _index} -> not changeset.valid? end)
+      |> Enum.map(fn {changeset, index} -> {index, changeset.errors} end)
+
+    if Enum.empty?(errors) do
+      :ok
+    else
+      {:error, errors}
+    end
+  end
+
+  defp format_clip_validation_errors(errors) do
+    errors
+    |> Enum.map(fn {index, changeset_errors} ->
+      error_messages =
+        changeset_errors
+        |> Enum.map(fn {field, {message, _}} -> "#{field}: #{message}" end)
+        |> Enum.join(", ")
+
+      "Clip #{index}: #{error_messages}"
+    end)
+    |> Enum.join("; ")
   end
 end

@@ -124,7 +124,7 @@ defmodule Heaters.Infrastructure.Adapters.FFmpegAdapter do
   def extract_single_keyframe(video_path, output_path, timestamp, opts \\ [])
       when is_binary(video_path) and is_binary(output_path) and is_float(timestamp) do
     output_dir = Path.dirname(output_path)
-    
+
     case FFmpegRunner.extract_keyframes_by_timestamp(video_path, output_dir, [timestamp], opts) do
       {:ok, [keyframe_data]} -> {:ok, keyframe_data}
       {:ok, []} -> {:error, "No keyframe extracted"}
