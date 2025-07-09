@@ -1,10 +1,12 @@
 defmodule Heaters.Infrastructure.Adapters.S3Adapter do
   @moduledoc """
-  S3 adapter providing consistent I/O interface for domain operations.
+  Domain-specific S3 adapter providing clip and artifact operations.
 
-  This adapter wraps the existing Infrastructure.S3 module with standardized
-  error handling and provides a clean interface for domain operations.
-  All functions in this module perform I/O operations.
+  This adapter provides domain-specific S3 operations that add business logic
+  beyond basic file operations. For basic S3 operations (upload_file, download_file,
+  delete_file, head_object), use Heaters.Infrastructure.S3 directly.
+
+  All functions in this module perform I/O operations with domain-specific logic.
   """
 
   alias Heaters.Infrastructure.S3
@@ -145,100 +147,6 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
   end
 
   @doc """
-  Delete files from S3.
-  Useful for cleanup operations.
-  """
-  @spec delete_files([String.t()]) :: {:ok, map()} | {:error, any()}
-  def delete_files(s3_keys) when is_list(s3_keys) do
-    S3.delete_s3_objects(s3_keys)
-  end
-
-  @doc """
-  Check if an object exists in S3 using efficient HEAD operation.
-
-  This replaces the inefficient file_exists?/1 function with a proper
-  HEAD operation that doesn't download the entire file.
-
-  ## Examples
-
-      {:ok, metadata} = S3Adapter.head_object("clips/video.mp4")
-      {:error, :not_found} = S3Adapter.head_object("clips/missing.mp4")
-  """
-  @spec head_object(String.t()) :: {:ok, map()} | {:error, :not_found | any()}
-  def head_object(s3_path) do
-    S3.head_object(s3_path)
-  end
-
-  @doc """
-  Check if a file exists in S3.
-
-  NOTE: This function is deprecated and inefficient as it downloads the entire file.
-  Use head_object/1 instead for better performance.
-  """
-  @spec file_exists?(String.t()) :: boolean()
-  @deprecated "Use head_object/1 instead for better performance"
-  def file_exists?(s3_path) do
-    case head_object(s3_path) do
-      {:ok, _metadata} -> true
-      {:error, _} -> false
-    end
-  end
-
-  @doc """
-  Download a file from S3 to a local path.
-
-  ## Examples
-
-      {:ok, "/tmp/video.mp4"} = S3Adapter.download_file("clips/video.mp4", "/tmp/video.mp4")
-  """
-  @spec download_file(String.t(), String.t()) :: {:ok, String.t()} | {:error, any()}
-  def download_file(s3_path, local_path) do
-    S3.download_file(s3_path, local_path)
-  end
-
-  @doc """
-  Upload a file from local path to S3.
-
-  ## Examples
-
-      :ok = S3Adapter.upload_file("/tmp/video.mp4", "clips/new_video.mp4")
-  """
-  @spec upload_file(String.t(), String.t()) :: :ok | {:error, any()}
-  def upload_file(local_path, s3_key) do
-    case S3.upload_file(local_path, s3_key) do
-      {:ok, _s3_key} -> :ok
-      error -> error
-    end
-  end
-
-  # Legacy upload_file/3 function for compatibility
-  @spec upload_file(String.t(), String.t(), String.t()) :: {:ok, String.t()} | {:error, any()}
-  def upload_file(local_path, s3_key, operation_name) do
-    case S3.upload_file(local_path, s3_key, operation_name: operation_name) do
-      {:ok, ^s3_key} -> {:ok, s3_key}
-      error -> error
-    end
-  end
-
-  @spec delete_file(String.t()) :: {:ok, integer()} | {:error, any()}
-  def delete_file(s3_path) do
-    s3_key = String.trim_leading(s3_path, "/")
-
-    case S3.delete_s3_objects([s3_key]) do
-      {:ok, deleted_count} -> {:ok, deleted_count}
-      error -> error
-    end
-  end
-
-  @spec delete_multiple_files(list(String.t())) :: {:ok, integer()} | {:error, any()}
-  def delete_multiple_files(s3_keys) when is_list(s3_keys) do
-    case S3.delete_s3_objects(s3_keys) do
-      {:ok, count} -> {:ok, count}
-      error -> error
-    end
-  end
-
-  @doc """
   Download JSON data from S3 and parse it.
 
   ## Examples
@@ -249,7 +157,7 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
   @spec download_json(String.t()) :: {:ok, map()} | {:error, :not_found | any()}
   def download_json(s3_key) do
     # First check if the file exists using head_object
-    case head_object(s3_key) do
+    case S3.head_object(s3_key) do
       {:error, :not_found} ->
         {:error, :not_found}
 
@@ -262,7 +170,7 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
           Path.join(System.tmp_dir!(), "s3_json_#{System.unique_integer([:positive])}.json")
 
         try do
-          case download_file(s3_key, temp_file) do
+          case S3.download_file(s3_key, temp_file) do
             {:ok, ^temp_file} ->
               case File.read(temp_file) do
                 {:ok, json_content} ->
@@ -305,7 +213,7 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
         {:ok, json_content} ->
           case File.write(temp_file, json_content) do
             :ok ->
-              case upload_file(temp_file, s3_key) do
+              case S3.upload_file_simple(temp_file, s3_key) do
                 :ok -> :ok
                 error -> error
               end

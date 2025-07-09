@@ -18,7 +18,7 @@ defmodule Heaters.Clips.Operations.Edits.Merge do
   alias Heaters.Clips.Operations.Shared.ResultBuilding
 
   # Infrastructure adapters (I/O operations)
-  alias Heaters.Infrastructure.Adapters.{DatabaseAdapter, S3Adapter}
+  alias Heaters.Infrastructure.{S3, Adapters.DatabaseAdapter, Adapters.S3Adapter}
 
   require Logger
 
@@ -165,7 +165,7 @@ defmodule Heaters.Clips.Operations.Edits.Merge do
   defp upload_merged_clip(merged_video_data, target_clip) do
     s3_key = FileNaming.generate_s3_key(target_clip, merged_video_data.filename)
 
-    case S3Adapter.upload_file(merged_video_data.local_path, s3_key, "Merge") do
+    case S3.upload_file_with_operation(merged_video_data.local_path, s3_key, "Merge") do
       {:ok, ^s3_key} ->
         {:ok, Map.put(merged_video_data, :s3_key, s3_key)}
 
@@ -245,7 +245,7 @@ defmodule Heaters.Clips.Operations.Edits.Merge do
     # Convert to S3 keys and use existing S3 delete function
     s3_keys = Enum.map(s3_paths, &String.trim_leading(&1, "/"))
 
-    case S3Adapter.delete_multiple_files(s3_keys) do
+    case S3.delete_multiple_files(s3_keys) do
       {:ok, count} -> {:ok, count}
       error -> error
     end

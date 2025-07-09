@@ -18,7 +18,7 @@ defmodule Heaters.Clips.Operations.Edits.Split do
   alias Heaters.Clips.Operations.Shared.ResultBuilding
 
   # Infrastructure adapters (I/O operations)
-  alias Heaters.Infrastructure.Adapters.{DatabaseAdapter, S3Adapter}
+  alias Heaters.Infrastructure.{S3, Adapters.DatabaseAdapter, Adapters.S3Adapter}
 
   @doc """
   Splits a clip at the specified frame, creating two separate clips.
@@ -199,7 +199,7 @@ defmodule Heaters.Clips.Operations.Edits.Split do
       |> Enum.reduce_while([], fn {clip_data, index}, acc ->
         s3_key = FileNaming.generate_s3_key(source_video_id, clip_data.filename)
 
-        case S3Adapter.upload_file(clip_data.local_path, s3_key, "Split") do
+        case S3.upload_file_with_operation(clip_data.local_path, s3_key, "Split") do
           {:ok, ^s3_key} ->
             uploaded_clip = Map.put(clip_data, :s3_key, s3_key)
             {:cont, [uploaded_clip | acc]}
@@ -220,7 +220,7 @@ defmodule Heaters.Clips.Operations.Edits.Split do
   defp cleanup_original_file(%Clip{clip_filepath: s3_path}) do
     Logger.info("Split: Cleaning up original source file: #{s3_path}")
 
-    case S3Adapter.delete_file(s3_path) do
+    case S3.delete_file(s3_path) do
       {:ok, deleted_count} ->
         {:ok, %{deleted_count: deleted_count, error_count: 0}}
 

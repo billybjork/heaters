@@ -32,7 +32,7 @@ defmodule Heaters.Videos.Operations.Splice do
 
   alias Heaters.Videos.SourceVideo
   alias Heaters.Videos.Operations.Splice.Filepaths
-  alias Heaters.Infrastructure.{PyRunner, Adapters.S3Adapter}
+  alias Heaters.Infrastructure.{S3, PyRunner, Adapters.S3Adapter}
   alias Heaters.Clips.Operations.Shared.{TempManager, ResultBuilding, Types, FFmpegRunner}
   require Logger
 
@@ -170,7 +170,7 @@ defmodule Heaters.Videos.Operations.Splice do
   defp download_source_video(s3_key, local_path) do
     Logger.info("Port Splice: Downloading source video from S3: #{s3_key}")
 
-    case S3Adapter.download_file(s3_key, local_path) do
+    case S3.download_file(s3_key, local_path) do
       {:ok, ^local_path} ->
         Logger.debug("Port Splice: Successfully downloaded to #{local_path}")
         {:ok, local_path}
@@ -315,7 +315,7 @@ defmodule Heaters.Videos.Operations.Splice do
     Logger.debug("Port Splice: Processing scene #{index + 1}: #{clip_identifier}")
 
     # Check if clip already exists in S3 (idempotency)
-    case S3Adapter.head_object(s3_clip_key) do
+    case S3.head_object(s3_clip_key) do
       {:ok, metadata} ->
         Logger.info(
           "Port Splice: Clip #{clip_identifier} already exists in S3 (#{metadata.content_length} bytes), skipping extraction"
@@ -365,7 +365,7 @@ defmodule Heaters.Videos.Operations.Splice do
              scene.start_time_seconds,
              scene.end_time_seconds
            ),
-         :ok <- S3Adapter.upload_file(local_clip_path, s3_clip_key) do
+         :ok <- S3.upload_file_simple(local_clip_path, s3_clip_key) do
       Logger.info(
         "Port Splice: Successfully created and uploaded clip: #{clip_identifier} (#{file_size} bytes)"
       )
