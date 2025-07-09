@@ -1,4 +1,4 @@
-defmodule Heaters.Clips.Review.ArchiveWorker do
+defmodule Heaters.Clips.Operations.Archive.Worker do
   use Heaters.Infrastructure.Orchestration.WorkerBehavior, queue: :background_jobs
 
   import Ecto.Query, warn: false

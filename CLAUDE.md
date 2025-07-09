@@ -55,7 +55,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Key Contexts**:
 - `Videos` - Source video lifecycle from submission through clips creation
 - `Clips` - Clip transformations and state management
-- `Events` - Event sourcing infrastructure for review actions
 - `Infrastructure` - I/O adapters and shared worker behaviors
 
 ### State Flow Pipeline
@@ -63,8 +62,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Source Video: new → downloading → downloaded → splicing → spliced
                                                     ↓
 Clips: spliced → generating_sprite → pending_review → review_approved → keyframing → keyframed → embedding → embedded
-                                          ↓
-                                   review_archived (terminal)
+                                          ↓                    ↓
+                                   review_skipped    review_archived (terminal)
+                                    (terminal)              ↓
+                                          ↓         archive → cleanup
+                                   merge/split → new clips → generating_sprite
+                                   (60s buffer)
 ```
 
 ### Semantic Operations Organization
@@ -72,6 +75,7 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 **`Clips.Operations`** is organized by operation type:
 - **`operations/edits/`** - User actions (Split, Merge) that create new clips
 - **`operations/artifacts/`** - Pipeline stages (Sprite, Keyframe) that generate supplementary data
+- **`operations/archive/`** - Cleanup operations (Archive) for archived clips
 
 ### Worker Architecture
 
@@ -113,10 +117,20 @@ All operations return type-safe structs with `@enforce_keys`:
 %KeyframeResult{status: "success", keyframe_count: 8, strategy: "uniform"}
 ```
 
-### Event Sourcing Pattern
-Human review actions use CQRS:
-- **Write-side**: `Events.Events` logs actions to `review_events` table
-- **Read-side**: `Events.EventProcessor` processes events and orchestrates jobs
+### Review Action Pattern
+Human review actions execute directly with undo support:
+- **Simple Actions**: `approve`, `skip`, `archive`, `group` execute immediately
+- **Complex Actions**: `merge`, `split` use 60-second Oban buffer for undo
+- **Undo Support**: Cancels pending jobs and resets clip states within buffer window
+
+#### Review Action Details
+- **approve** → `review_approved` state → continues to keyframes → embeddings
+- **skip** → `review_skipped` state (terminal, preserves sprite sheet)
+- **archive** → `review_archived` state → archive worker cleanup
+- **group** → both clips get `grouped_with_clip_id` metadata → `review_approved` state
+- **merge** → 60s buffer → merge worker → new clip in `spliced` state → sprite generation
+- **split** → 60s buffer → split worker → new clips in `spliced` state → sprite generation
+- **undo** → cancels pending jobs, resets states, clears grouping metadata
 
 ## Development Guidelines
 
@@ -185,7 +199,6 @@ Jobs are managed by Oban with these queues:
 ### Domain Logic
 - `lib/heaters/videos/` - Video processing domain
 - `lib/heaters/clips/` - Clip management domain
-- `lib/heaters/events/` - Event sourcing infrastructure
 - `lib/heaters/infrastructure/` - I/O adapters and shared behaviors
 
 ### Web Interface

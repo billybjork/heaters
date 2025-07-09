@@ -21,7 +21,6 @@ defmodule Heaters.Clips.Clip do
           source_video: Heaters.Videos.SourceVideo.t() | Ecto.Association.NotLoaded.t(),
           clip_artifacts:
             [Heaters.Clips.Operations.Artifacts.ClipArtifact.t()] | Ecto.Association.NotLoaded.t(),
-          review_events: [Heaters.Events.ReviewEvent.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t(),
           updated_at: DateTime.t()
         }
@@ -46,7 +45,6 @@ defmodule Heaters.Clips.Clip do
 
     belongs_to(:source_video, Heaters.Videos.SourceVideo)
     has_many(:clip_artifacts, Heaters.Clips.Operations.Artifacts.ClipArtifact)
-    has_many(:review_events, Heaters.Events.ReviewEvent)
 
     timestamps(type: :utc_datetime)
   end

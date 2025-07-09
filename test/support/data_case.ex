@@ -105,26 +105,6 @@ defmodule Heaters.DataCase do
     |> Heaters.Repo.insert!()
   end
 
-  def insert(:clip_event, attrs) do
-    clip = Map.get(attrs, :clip) || insert(:clip)
-    attrs = Map.delete(attrs, :clip)
-
-    default_attrs = %{
-      clip_id: clip.id,
-      action: "test_action",
-      reviewer_id: "test_user",
-      event_data: %{},
-      inserted_at: DateTime.utc_now(),
-      updated_at: DateTime.utc_now()
-    }
-
-    attrs = Map.merge(default_attrs, Enum.into(attrs, %{}))
-
-    %Heaters.Events.ReviewEvent{}
-    |> Heaters.Events.ReviewEvent.changeset(attrs)
-    |> Heaters.Repo.insert!()
-  end
-
   def insert(:clip_artifact, attrs) do
     clip = Map.get(attrs, :clip) || insert(:clip)
     attrs = Map.delete(attrs, :clip)

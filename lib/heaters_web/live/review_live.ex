@@ -336,39 +336,71 @@ defmodule HeatersWeb.ReviewLive do
   # -------------------------------------------------------------------------
 
   @impl true
-  def handle_async({:persist, _}, {:ok, _}, socket), do: {:noreply, socket}
+  def handle_async({:persist, _}, {:ok, {_next_clip, _metadata}}, socket), do: {:noreply, socket}
+  @impl true
+  def handle_async({:persist, clip_id}, {:error, reason}, socket) do
+    require Logger
+    Logger.error("Persist for clip #{clip_id} failed: #{inspect(reason)}")
+    {:noreply, put_flash(socket, :error, "Action failed: #{inspect(reason)}")}
+  end
+
   @impl true
   def handle_async({:persist, clip_id}, {:exit, reason}, socket) do
     require Logger
     Logger.error("Persist for clip #{clip_id} crashed: #{inspect(reason)}")
-    {:noreply, socket}
+    {:noreply, put_flash(socket, :error, "Action crashed: #{inspect(reason)}")}
   end
 
   @impl true
-  def handle_async({:merge_pair, _}, {:ok, _}, socket), do: {:noreply, socket}
+  def handle_async({:merge_pair, _}, {:ok, {_next_clip, _metadata}}, socket),
+    do: {:noreply, socket}
+
+  @impl true
+  def handle_async({:merge_pair, {prev_id, curr_id}}, {:error, reason}, socket) do
+    require Logger
+    Logger.error("Merge #{prev_id}→#{curr_id} failed: #{inspect(reason)}")
+    {:noreply, put_flash(socket, :error, "Merge failed: #{inspect(reason)}")}
+  end
+
   @impl true
   def handle_async({:merge_pair, {prev_id, curr_id}}, {:exit, reason}, socket) do
     require Logger
     Logger.error("Merge #{prev_id}→#{curr_id} crashed: #{inspect(reason)}")
-    {:noreply, socket}
+    {:noreply, put_flash(socket, :error, "Merge crashed: #{inspect(reason)}")}
   end
 
   @impl true
-  def handle_async({:group_pair, _}, {:ok, _}, socket), do: {:noreply, socket}
+  def handle_async({:group_pair, _}, {:ok, {_next_clip, _metadata}}, socket),
+    do: {:noreply, socket}
+
+  @impl true
+  def handle_async({:group_pair, {prev_id, curr_id}}, {:error, reason}, socket) do
+    require Logger
+    Logger.error("Group #{prev_id}→#{curr_id} failed: #{inspect(reason)}")
+    {:noreply, put_flash(socket, :error, "Group failed: #{inspect(reason)}")}
+  end
+
   @impl true
   def handle_async({:group_pair, {prev_id, curr_id}}, {:exit, reason}, socket) do
     require Logger
     Logger.error("Group #{prev_id}→#{curr_id} crashed: #{inspect(reason)}")
-    {:noreply, socket}
+    {:noreply, put_flash(socket, :error, "Group crashed: #{inspect(reason)}")}
   end
 
   @impl true
-  def handle_async({:split, _}, {:ok, _}, socket), do: {:noreply, socket}
+  def handle_async({:split, _}, {:ok, {_next_clip, _metadata}}, socket), do: {:noreply, socket}
+  @impl true
+  def handle_async({:split, clip_id}, {:error, reason}, socket) do
+    require Logger
+    Logger.error("Split for clip #{clip_id} failed: #{inspect(reason)}")
+    {:noreply, put_flash(socket, :error, "Split failed: #{inspect(reason)}")}
+  end
+
   @impl true
   def handle_async({:split, clip_id}, {:exit, reason}, socket) do
     require Logger
     Logger.error("Split for clip #{clip_id} crashed: #{inspect(reason)}")
-    {:noreply, socket}
+    {:noreply, put_flash(socket, :error, "Split crashed: #{inspect(reason)}")}
   end
 
   # -------------------------------------------------------------------------

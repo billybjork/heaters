@@ -2,7 +2,7 @@
 
 ## Overview
 
-Heaters processes videos through a multi-stage pipeline: ingestion → clips → human review → approval → embedding. The system emphasizes functional architecture with "I/O at the edges", event sourcing for human actions, and **hybrid processing** combining native Elixir (scene detection) with Python (ML/media processing) for optimal performance and reliability.
+Heaters processes videos through a multi-stage pipeline: ingestion → clips → human review → approval → embedding. The system emphasizes functional architecture with "I/O at the edges", direct action execution with buffer-time undo, and **hybrid processing** combining native Elixir (scene detection) with Python (ML/media processing) for optimal performance and reliability.
 
 ### Technology Stack
 - **Backend**: Elixir/Phoenix with LiveView
@@ -17,7 +17,7 @@ Heaters processes videos through a multi-stage pipeline: ingestion → clips →
 
 - **Functional Domain Modeling**: "I/O at the edges" with pure business logic separated from I/O operations
 - **Semantic Organization**: Clear distinction between user **Edits** (review actions) and automated **Artifacts** (pipeline stages)
-- **Event Sourcing**: Human review actions tracked via `review_events` table for audit and reliability
+- **Direct Action Execution**: Human review actions execute immediately with 60-second undo buffer for complex operations
 - **Structured Results**: Type-safe Result structs with rich metadata and performance timing
 - **Centralized Worker Behavior**: Standardized Oban worker patterns with shared lifecycle management, error handling, and idempotent state validation
 - **Hybrid Processing**: Native Elixir for performance-critical operations (scene detection), Python for ML/media processing
@@ -29,10 +29,12 @@ Heaters processes videos through a multi-stage pipeline: ingestion → clips →
 Source Video: new → downloading → downloaded → splicing → spliced
                                                     ↓
 Clips: spliced → generating_sprite → pending_review → review_approved → keyframing → keyframed → embedding → embedded
-                                          ↓
-                                   review_archived (terminal)
-                                          ↓
+                                          ↓                    ↓
+                                   review_skipped    review_archived (terminal)
+                                    (terminal)              ↓
+                                          ↓         archive → cleanup
                                    merge/split → new clips → generating_sprite
+                                   (60s buffer)
 ```
 
 ## Key Design Decisions
@@ -45,15 +47,18 @@ The `Clips.Operations` context is organized by **operation type**, not file type
   - `Merge`, `Split` operations (write to `clips` table)
 - **`operations/artifacts/`**: Pipeline stages that generate supplementary data  
   - `Sprite`, `Keyframe`, `ClipArtifact` operations (write to `clip_artifacts` table)
+- **`operations/archive/`**: Cleanup operations for archived clips
+  - `Archive` worker (S3 deletion and database cleanup)
 
 This reflects the fundamental difference between human review actions and automated processing stages.
 
-### Event Sourcing for Review Actions
+### Direct Action Execution with Buffer Time
 
-Human review actions use CQRS pattern:
-- **Write-side**: `Events.Events` logs all actions to `review_events` table
-- **Read-side**: `Events.EventProcessor` processes events and orchestrates follow-up jobs
-- **Benefits**: Audit trail, reliable job queuing, ability to replay/undo actions
+Human review actions execute immediately with undo support:
+- **Simple Actions**: `approve`, `skip`, `archive`, `group` execute immediately
+- **Complex Actions**: `merge`, `split` use 60-second buffer via Oban scheduling
+- **Undo Support**: Cancels pending jobs and resets clip states within buffer window
+- **Benefits**: Immediate feedback, reliable Oban job management, flexible undo
 
 ### Functional Architecture with "I/O at the Edges"
 
@@ -148,15 +153,20 @@ All workers implement robust idempotency patterns:
 
 ### Review Workflow
 1. `Clips.Operations.Artifacts.Sprite.Worker` generates sprites using rambo → clips in `pending_review` state
-2. Human reviews and takes actions (approve/archive/merge/split)
-3. Actions logged via event sourcing, new clips automatically flow back through pipeline
+2. Human reviews and takes actions:
+   - **approve** → `review_approved` (continues to keyframes)
+   - **skip** → `review_skipped` (terminal, preserves sprite)
+   - **archive** → `review_archived` (cleanup via archive worker)
+   - **group** → both clips → `review_approved` with `grouped_with_clip_id` metadata
+   - **merge/split** → 60-second buffer → worker creates new clips → `spliced` state
+3. Actions execute directly with Oban reliability, new clips flow back through pipeline
 
 ### Post-Approval Processing
 1. `Clips.Operations.Artifacts.Keyframe.Worker` extracts keyframes → `keyframed` state
 2. `Clips.Embeddings.Worker` generates ML embeddings → `embedded` state (final)
 
 ### Archive Workflow
-1. `Clips.Review.ArchiveWorker` safely deletes S3 objects and database records
+1. `Clips.Operations.Archive.Worker` safely deletes S3 objects and database records
 2. Robust S3 deletion handling for both XML and JSON responses
 3. Proper cleanup of all associated artifacts and metadata
 
@@ -178,10 +188,13 @@ Each stage is pure configuration:
 1. `new videos → download` (IngestWorker)
 2. `downloaded videos → splice` (SpliceWorker) 
 3. `spliced clips → sprites` (SpriteWorker) ← **Handles ALL spliced clips**
-4. `review actions` (EventProcessor.commit_pending_actions)
-5. `approved clips → keyframes` (KeyframeWorker)
-6. `keyframed clips → embeddings` (EmbeddingWorker)
-7. `archived clips → archive` (ArchiveWorker)
+4. `approved clips → keyframes` (KeyframeWorker)
+5. `keyframed clips → embeddings` (EmbeddingWorker)
+6. `archived clips → archive` (ArchiveWorker)
+
+**Review Actions** are handled directly in the UI with immediate execution:
+- Simple actions (approve/skip/archive/group) update states immediately
+- Complex actions (merge/split) use 60-second Oban scheduling for undo support
 
 ### Key Architectural Decision: Single Source of Truth
 
@@ -208,7 +221,6 @@ Each stage is pure configuration:
   - **`Clips.Operations.Artifacts`**: Pipeline-driven processing (Sprite, Keyframe) that create supplementary data
 - **`Clips.Review`**: Human review workflow and action coordination  
 - **`Clips.Embeddings`**: ML embedding generation and queries
-- **`Events`**: Event sourcing infrastructure for review actions
 - **`Infrastructure`**: I/O adapters (S3, FFmpeg, Database) and shared worker behaviors with consistent interfaces and robust error handling
 
 ## Recent Reliability Improvements
@@ -242,7 +254,7 @@ Each stage is pure configuration:
   - Video workers: `videos/operations/{ingest,splice}/worker.ex`
   - Clip edit workers: `clips/operations/edits/{split,merge}/worker.ex`
   - Clip artifact workers: `clips/operations/artifacts/{sprite,keyframe}/worker.ex`
-  - Clip review workers: `clips/review/archive_worker.ex`
+  - Clip archive workers: `clips/operations/archive/worker.ex`
   - Embedding workers: `clips/embeddings/worker.ex`
   - Infrastructure workers: `infrastructure/orchestration/dispatcher.ex`
   - Infrastructure: `infrastructure/orchestration/{pipeline_config,worker_behavior}.ex`
@@ -264,7 +276,7 @@ Each stage is pure configuration:
 
 1. **Clear Separation**: Media processing vs business logic vs I/O operations
 2. **Maintainable**: Functional architecture with pure domain logic
-3. **Reliable**: Event sourcing, structured error handling, and robust state management
+3. **Reliable**: Direct action execution with Oban reliability, structured error handling, and robust state management
 4. **Type-Safe**: Structured results with compile-time validation  
 5. **Testable**: Pure functions without I/O dependencies
 6. **Semantic**: Operations organized by business purpose, not implementation details

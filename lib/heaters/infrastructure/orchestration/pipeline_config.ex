@@ -15,18 +15,27 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
   The `label` field provides human-readable descriptions for logging.
 
   Pipeline Flow:
-  new → download → splice → sprites → review → keyframes → embeddings → archive
+  new → download → splice → sprites → keyframes → embeddings → archive
+
+  Review Action States:
+  - review_approved → keyframes (continues through pipeline)
+  - review_skipped → terminal state (preserved with sprite sheet)
+  - review_archived → archive (cleanup)
+  - merge/split actions → create new clips in spliced state
+  - group actions → both clips advance to review_approved
+
+  Note: Review actions are handled directly in the UI with 60-second undo buffer
+  for merge/split operations.
   """
 
   alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Clips.Queries, as: ClipQueries
-  alias Heaters.Events.EventProcessor
   alias Heaters.Videos.Operations.Ingest.Worker, as: IngestWorker
   alias Heaters.Videos.Operations.Splice.Worker, as: SpliceWorker
   alias Heaters.Clips.Operations.Artifacts.Sprite.Worker, as: SpriteWorker
   alias Heaters.Clips.Operations.Artifacts.Keyframe.Worker, as: KeyframeWorker
   alias Heaters.Clips.Embeddings.Worker, as: EmbeddingWorker
-  alias Heaters.Clips.Review.ArchiveWorker
+  alias Heaters.Clips.Operations.Archive.Worker, as: ArchiveWorker
 
   @doc """
   Returns the complete pipeline stage configuration.
@@ -54,10 +63,6 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
         label: "spliced clips → sprites",
         query: fn -> ClipQueries.get_clips_by_state("spliced") end,
         build: fn clip -> SpriteWorker.new(%{clip_id: clip.id}) end
-      },
-      %{
-        label: "review actions",
-        call: fn -> EventProcessor.commit_pending_actions() end
       },
       %{
         label: "approved clips → keyframes",
