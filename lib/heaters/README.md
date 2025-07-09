@@ -8,6 +8,7 @@ Heaters processes videos through a multi-stage pipeline: ingestion → clips →
 - **Backend**: Elixir/Phoenix with LiveView
 - **Database**: PostgreSQL with pgvector extension
 - **Scene Detection**: Python OpenCV via PyRunner port communication
+- **Keyframe Extraction**: Native Elixir FFmpeg implementation
 - **ML Processing**: Python with PyTorch, Transformers
 - **Media Processing**: Python with yt-dlp, FFmpeg, Rust (rambo for sprite generation)
 - **Storage**: AWS S3 with idempotent operations and robust error handling
@@ -87,6 +88,12 @@ The system uses a **hybrid approach** combining native Elixir and Python process
 - **Benefits**: Leverages mature Python OpenCV ecosystem with reliable scene detection algorithms
 - **Implementation**: `Videos.Operations.Splice` with Python task execution via PyRunner
 - **Idempotency**: S3-based scene detection caching and clip existence checking prevents reprocessing
+
+#### Native Elixir Keyframe Extraction
+- **Technology**: Native Elixir FFmpeg implementation for high-performance keyframe extraction
+- **Benefits**: Eliminates subprocess overhead and JSON parsing for better performance
+- **Implementation**: `Clips.Operations.Artifacts.Keyframe` with direct FFmpeg calls via `Infrastructure.FFmpegAdapter`
+- **Configuration**: Supports percentage-based and tag-based keyframe extraction strategies
 
 #### Python ML/Media Processing
 - **Technology**: Python for ML embedding generation and media processing

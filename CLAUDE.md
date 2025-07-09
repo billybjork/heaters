@@ -39,7 +39,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Backend**: Elixir/Phoenix ~> 1.7.10 with LiveView ~> 1.0
 - **Database**: PostgreSQL with pgvector extension for vector embeddings
 - **Background Jobs**: Oban with PostgreSQL backend
-- **Media Processing**: Hybrid approach - Native Elixir (Evision/OpenCV) + Python (ML/FFmpeg)
+- **Media Processing**: Hybrid approach - Native Elixir (FFmpeg keyframes) + Python (ML/scene detection)
 - **Storage**: AWS S3 with ExAws
 - **Frontend**: Phoenix LiveView with vanilla JavaScript/CSS
 
@@ -92,7 +92,7 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 
 ### Hybrid Processing Strategy
 
-**Native Elixir Scene Detection**: Uses Evision (OpenCV-Elixir bindings) for high-performance video processing without subprocess overhead
+**Native Elixir Keyframe Extraction**: Uses native FFmpeg implementation for high-performance keyframe extraction without subprocess overhead
 
 **Python ML/Media Processing**: Leverages mature Python ecosystem for ML embeddings and specialized media tasks
 
