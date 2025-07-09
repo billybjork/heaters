@@ -47,6 +47,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Functional Domain Modeling**: "I/O at the edges" pattern with pure business logic separated from infrastructure
 
+**I/O Layer Architecture**:
+- **Operations modules**: Database operations (Repo calls), state transitions, business workflow coordination
+- **Infrastructure adapters**: External I/O isolation (S3, FFmpeg, Python subprocess calls)
+- **Pure domain logic**: No I/O operations - pure functions for business rules and validation
+
 **Key Contexts**:
 - `Videos` - Source video lifecycle from submission through clips creation
 - `Clips` - Clip transformations and state management
@@ -118,6 +123,8 @@ Human review actions use CQRS:
 ### Code Style
 - Follow existing functional architecture patterns
 - Use "I/O at the edges" - keep business logic pure
+- **Database I/O**: Appropriate in operations modules (Repo calls for state management)
+- **External I/O**: Isolate in infrastructure adapters (S3, FFmpeg, Python calls)
 - Implement idempotent worker patterns
 - Return structured Result types with `@enforce_keys`
 - Use centralized WorkerBehavior for all background jobs

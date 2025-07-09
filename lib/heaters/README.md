@@ -62,10 +62,14 @@ Operations follow Domain Modeling Made Functional principles:
 ```
 Pure Domain Logic (testable, no I/O)
     ↓
-I/O Orchestration (Operations modules)
+I/O Orchestration (Operations modules - database operations, state coordination)
     ↓  
-Infrastructure Adapters (S3, FFmpeg, Database)
+Infrastructure Adapters (S3, FFmpeg, Python - external I/O)
 ```
+
+**I/O Layer Responsibilities**:
+- **Operations modules**: Database operations (Repo calls), state transitions, business workflow coordination
+- **Infrastructure adapters**: External I/O isolation (S3, FFmpeg, Python subprocess calls)
 
 **Benefits**: Testable business logic, predictable functions, clear separation of concerns.
 
