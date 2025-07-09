@@ -5,6 +5,7 @@ defmodule Heaters.Clips.Operations.Edits.Merge.FileNaming do
   """
 
   alias Heaters.Utils
+  alias Heaters.Clips.Operations.Shared.FileNaming
 
   @doc """
   Generates filename for a merged clip.
@@ -57,11 +58,7 @@ defmodule Heaters.Clips.Operations.Edits.Merge.FileNaming do
   """
   @spec generate_s3_key(map(), String.t()) :: String.t()
   def generate_s3_key(target_clip, filename) do
-    output_s3_prefix =
-      Path.dirname(target_clip.clip_filepath)
-      |> String.trim_leading("/")
-
-    "#{output_s3_prefix}/#{filename}"
+    FileNaming.build_merge_s3_key(target_clip, filename)
   end
 
   @doc """
@@ -76,7 +73,7 @@ defmodule Heaters.Clips.Operations.Edits.Merge.FileNaming do
   """
   @spec generate_local_filename(map(), String.t()) :: String.t()
   def generate_local_filename(clip, prefix) do
-    "#{prefix}_#{Path.basename(clip.clip_filepath)}"
+    FileNaming.generate_local_filename(clip, prefix)
   end
 
   @doc """
@@ -111,16 +108,16 @@ defmodule Heaters.Clips.Operations.Edits.Merge.FileNaming do
   """
   @spec generate_processing_metadata(map(), map(), String.t(), integer()) :: map()
   def generate_processing_metadata(target_clip, source_clip, clip_identifier, file_size) do
-    base_metadata = target_clip.processing_metadata || %{}
-
-    Map.merge(base_metadata, %{
+    metadata = %{
+      base_metadata: target_clip.processing_metadata || %{},
       merged_from_clips: [target_clip.id, source_clip.id],
       new_identifier: clip_identifier,
-      merge_timestamp: DateTime.utc_now(),
       file_size: file_size,
       target_clip_duration: target_clip.end_time_seconds - target_clip.start_time_seconds,
       source_clip_duration: source_clip.end_time_seconds - source_clip.start_time_seconds
-    })
+    }
+
+    FileNaming.generate_processing_metadata(:merge, metadata)
   end
 
   @doc """
@@ -135,22 +132,7 @@ defmodule Heaters.Clips.Operations.Edits.Merge.FileNaming do
   """
   @spec parse_merge_filename(String.t()) :: {:ok, {integer(), String.t()}} | {:error, String.t()}
   def parse_merge_filename(filename) do
-    # Remove .mp4 extension and try to extract merge information
-    base_name = String.replace(filename, ~r/\.mp4$/, "")
-
-    case Regex.run(~r/^merged_(\d+)_(.+)$/, base_name) do
-      [_full_match, target_clip_id_str, source_suffix] ->
-        try do
-          target_clip_id = String.to_integer(target_clip_id_str)
-          {:ok, {target_clip_id, source_suffix}}
-        rescue
-          ArgumentError ->
-            {:error, "Invalid target clip ID in filename: #{filename}"}
-        end
-
-      nil ->
-        {:error, "Filename does not match merge clip pattern: #{filename}"}
-    end
+    FileNaming.parse_merge_filename(filename)
   end
 
   ## Private helper functions

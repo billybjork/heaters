@@ -8,7 +8,7 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.Calculations do
   explicit inputs and return predictable outputs without any I/O operations.
   """
 
-  alias Heaters.Clips.Operations.Shared.VideoMetadata
+  alias Heaters.Clips.Operations.Artifacts.Sprite.VideoMetadata
 
   # Default sprite parameters matching the current Transform.Sprite module
   @default_tile_width 480

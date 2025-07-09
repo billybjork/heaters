@@ -1,9 +1,10 @@
-defmodule Heaters.Clips.Operations.Shared.VideoMetadata do
+defmodule Heaters.Clips.Operations.Artifacts.Sprite.VideoMetadata do
   @moduledoc """
-  Pure video metadata operations for domain calculations.
+  Pure video metadata operations for sprite generation.
 
   This module contains pure business logic for working with video metadata
-  such as duration, FPS, and dimensions. No side effects or I/O operations.
+  such as duration, FPS, and dimensions for sprite generation operations.
+  No side effects or I/O operations.
   """
 
   @doc """

@@ -5,6 +5,7 @@ defmodule Heaters.Clips.Operations.Edits.Merge.Validation do
   """
 
   alias Heaters.Clips.Operations.Shared.ClipValidation
+  alias Heaters.Clips.Operations.Shared.ErrorFormatting
 
   @doc """
   Validates if clips are ready for merge operations.
@@ -65,19 +66,23 @@ defmodule Heaters.Clips.Operations.Edits.Merge.Validation do
   def validate_clip_ids(target_clip_id, source_clip_id) do
     cond do
       not is_integer(target_clip_id) ->
-        {:error, "Target clip ID must be an integer, got: #{inspect(target_clip_id)}"}
+        {:error,
+         ErrorFormatting.format_domain_error(:invalid_clip_id_type, {"target", target_clip_id})}
 
       not is_integer(source_clip_id) ->
-        {:error, "Source clip ID must be an integer, got: #{inspect(source_clip_id)}"}
+        {:error,
+         ErrorFormatting.format_domain_error(:invalid_clip_id_type, {"source", source_clip_id})}
 
       target_clip_id <= 0 ->
-        {:error, "Target clip ID must be positive, got: #{target_clip_id}"}
+        {:error,
+         ErrorFormatting.format_domain_error(:invalid_clip_id_value, {"target", target_clip_id})}
 
       source_clip_id <= 0 ->
-        {:error, "Source clip ID must be positive, got: #{source_clip_id}"}
+        {:error,
+         ErrorFormatting.format_domain_error(:invalid_clip_id_value, {"source", source_clip_id})}
 
       target_clip_id == source_clip_id ->
-        {:error, "Target and source clip IDs cannot be the same: #{target_clip_id}"}
+        {:error, ErrorFormatting.format_domain_error(:identical_clip_ids, target_clip_id)}
 
       true ->
         :ok
@@ -101,7 +106,10 @@ defmodule Heaters.Clips.Operations.Edits.Merge.Validation do
       :ok
     else
       {:error,
-       "Clips must belong to the same source video. Target: #{target_clip.source_video_id}, Source: #{source_clip.source_video_id}"}
+       ErrorFormatting.format_domain_error(
+         :clips_different_source_videos,
+         {target_clip.source_video_id, source_clip.source_video_id}
+       )}
     end
   end
 
@@ -121,7 +129,8 @@ defmodule Heaters.Clips.Operations.Edits.Merge.Validation do
     if target_clip.id != source_clip.id do
       :ok
     else
-      {:error, "Cannot merge a clip with itself (ID: #{target_clip.id})"}
+      {:error,
+       ErrorFormatting.format_domain_error(:clips_not_different, {target_clip.id, target_clip.id})}
     end
   end
 
@@ -147,25 +156,24 @@ defmodule Heaters.Clips.Operations.Edits.Merge.Validation do
   ## Private helper functions
 
   @spec validate_clip_ready_for_merge(map(), String.t()) :: :ok | {:error, String.t()}
-  defp validate_clip_ready_for_merge(%{ingest_state: state} = _clip, clip_type) do
+  defp validate_clip_ready_for_merge(%{ingest_state: state} = _clip, _clip_type) do
     case ClipValidation.validate_clip_state_for_merge(state) do
       :ok ->
         :ok
 
       {:error, :invalid_state_for_merge} ->
-        {:error,
-         "#{String.capitalize(clip_type)} clip state '#{state}' is not ready for merge operations. Required states: pending_review"}
+        {:error, ErrorFormatting.format_domain_error(:invalid_state_for_merge, state)}
     end
   end
 
   @spec validate_clip_has_video_file(map(), String.t()) :: :ok | {:error, String.t()}
-  defp validate_clip_has_video_file(%{clip_filepath: filepath}, _clip_type)
-       when is_binary(filepath) and filepath != "" do
-    :ok
-  end
+  defp validate_clip_has_video_file(clip, clip_type) do
+    case ClipValidation.validate_clip_has_video_file(clip) do
+      :ok ->
+        :ok
 
-  defp validate_clip_has_video_file(_clip, clip_type) do
-    {:error,
-     "#{String.capitalize(clip_type)} clip does not have a video file for merge operation"}
+      {:error, :clip_missing_video_file} ->
+        {:error, ErrorFormatting.format_domain_error(:clip_missing_video_file, clip_type)}
+    end
   end
 end

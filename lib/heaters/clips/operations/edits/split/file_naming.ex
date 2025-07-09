@@ -6,6 +6,7 @@ defmodule Heaters.Clips.Operations.Edits.Split.FileNaming do
 
   alias Heaters.Utils
   alias Heaters.Clips.Operations.Edits.Split.Calculations
+  alias Heaters.Clips.Operations.Shared.FileNaming
 
   @doc """
   Generates filename for a split clip segment.
@@ -57,8 +58,7 @@ defmodule Heaters.Clips.Operations.Edits.Split.FileNaming do
   """
   @spec generate_s3_key(String.t(), String.t()) :: String.t()
   def generate_s3_key(title, filename) do
-    sanitized_title = Utils.sanitize_filename(title)
-    "clips/#{sanitized_title}/splits/#{filename}"
+    FileNaming.build_split_s3_key(title, filename)
   end
 
   @doc """
@@ -100,13 +100,14 @@ defmodule Heaters.Clips.Operations.Edits.Split.FileNaming do
   """
   @spec generate_processing_metadata(Calculations.clip_segment(), integer(), integer()) :: map()
   def generate_processing_metadata(clip_segment, original_clip_id, file_size) do
-    %{
-      created_from_split: true,
+    metadata = %{
       original_clip_id: original_clip_id,
       file_size: file_size,
       duration_seconds: clip_segment.duration_seconds,
       segment_type: Atom.to_string(clip_segment.segment_type)
     }
+
+    FileNaming.generate_processing_metadata(:split, metadata)
   end
 
   @doc """
@@ -121,23 +122,7 @@ defmodule Heaters.Clips.Operations.Edits.Split.FileNaming do
   """
   @spec parse_split_filename(String.t()) :: {:ok, {integer(), integer()}} | {:error, String.t()}
   def parse_split_filename(filename) do
-    # Remove .mp4 extension and try to extract frame numbers
-    base_name = String.replace(filename, ~r/\.mp4$/, "")
-
-    case Regex.run(~r/_(\d+)_(\d+)$/, base_name) do
-      [_full_match, start_frame_str, end_frame_str] ->
-        try do
-          start_frame = String.to_integer(start_frame_str)
-          end_frame = String.to_integer(end_frame_str)
-          {:ok, {start_frame, end_frame}}
-        rescue
-          ArgumentError ->
-            {:error, "Invalid frame numbers in filename: #{filename}"}
-        end
-
-      nil ->
-        {:error, "Filename does not match split clip pattern: #{filename}"}
-    end
+    FileNaming.parse_frame_numbers(filename)
   end
 
   @doc """
@@ -151,7 +136,7 @@ defmodule Heaters.Clips.Operations.Edits.Split.FileNaming do
   """
   @spec generate_upload_prefix(String.t()) :: String.t()
   def generate_upload_prefix(title) do
-    sanitized_title = Utils.sanitize_filename(title)
+    sanitized_title = FileNaming.sanitize_filename(title)
     "clips/#{sanitized_title}/splits"
   end
 end

@@ -1,8 +1,8 @@
-defmodule Heaters.Clips.Operations.Shared.VideoMetadataTest do
+defmodule Heaters.Clips.Operations.Artifacts.Sprite.VideoMetadataTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
-  alias Heaters.Clips.Operations.Shared.VideoMetadata
+  alias Heaters.Clips.Operations.Artifacts.Sprite.VideoMetadata
 
   describe "calculate_effective_fps/2" do
     test "returns video fps when sprite fps is nil" do

@@ -58,8 +58,48 @@ defmodule Heaters.Clips.Operations.Shared.ErrorFormatting do
     "Invalid split frame number: #{frame_num}"
   end
 
+  def format_domain_error(:split_frame_out_of_bounds, {split_frame, start_frame, end_frame}) do
+    "Split frame #{split_frame} is outside clip range (#{start_frame}-#{end_frame})"
+  end
+
+  def format_domain_error(:invalid_split_frame_type, frame_value) do
+    "Split frame must be an integer, got: #{inspect(frame_value)}"
+  end
+
+  def format_domain_error(:clip_missing_video_file, clip_id) do
+    "Clip #{clip_id} does not have an associated video file"
+  end
+
+  def format_domain_error(:clip_missing_source_video, clip_id) do
+    "Clip #{clip_id} does not have an associated source video"
+  end
+
   def format_domain_error(:invalid_merge_clips, details) do
     "Invalid clips for merging: #{inspect(details)}"
+  end
+
+  def format_domain_error(:invalid_clip_id_type, {clip_type, clip_id}) do
+    "#{String.capitalize(clip_type)} clip ID must be an integer, got: #{inspect(clip_id)}"
+  end
+
+  def format_domain_error(:invalid_clip_id_value, {clip_type, clip_id}) do
+    "#{String.capitalize(clip_type)} clip ID must be positive, got: #{clip_id}"
+  end
+
+  def format_domain_error(:identical_clip_ids, clip_id) do
+    "Target and source clip IDs cannot be the same: #{clip_id}"
+  end
+
+  def format_domain_error(:clips_different_source_videos, {target_video_id, source_video_id}) do
+    "Clips must belong to the same source video. Target: #{target_video_id}, Source: #{source_video_id}"
+  end
+
+  def format_domain_error(:clips_not_different, {target_clip_id, source_clip_id}) do
+    "Cannot merge a clip with itself. Target: #{target_clip_id}, Source: #{source_clip_id}"
+  end
+
+  def format_domain_error(:clips_missing_video_files, missing_clips) do
+    "The following clips are missing video files: #{Enum.join(missing_clips, ", ")}"
   end
 
   def format_domain_error(error_type, details) do
@@ -86,5 +126,38 @@ defmodule Heaters.Clips.Operations.Shared.ErrorFormatting do
       |> Enum.join("; ")
 
     "Multiple errors: #{error_messages}"
+  end
+
+  @doc """
+  Format validation context with operation-specific messaging.
+
+  ## Examples
+
+      iex> ErrorFormatting.format_validation_context(:split, :readiness_check)
+      "Split operation readiness validation failed"
+
+      iex> ErrorFormatting.format_validation_context(:merge, :requirement_check)
+      "Merge operation requirement validation failed"
+  """
+  @spec format_validation_context(atom(), atom()) :: String.t()
+  def format_validation_context(operation, context) do
+    operation_name = String.capitalize(Atom.to_string(operation))
+
+    case context do
+      :readiness_check ->
+        "#{operation_name} operation readiness validation failed"
+
+      :requirement_check ->
+        "#{operation_name} operation requirement validation failed"
+
+      :frame_bounds_check ->
+        "#{operation_name} operation frame bounds validation failed"
+
+      :clip_compatibility_check ->
+        "#{operation_name} operation clip compatibility validation failed"
+
+      _ ->
+        "#{operation_name} operation validation failed"
+    end
   end
 end

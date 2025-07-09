@@ -69,6 +69,77 @@ defmodule Heaters.Clips.Operations.Shared.FileNaming do
   end
 
   @doc """
+  Build S3 key for split clips.
+
+  ## Examples
+
+      iex> FileNaming.build_split_s3_key("My Video", "clip_123_456.mp4")
+      "clips/My_Video/splits/clip_123_456.mp4"
+  """
+  @spec build_split_s3_key(String.t(), String.t()) :: String.t()
+  def build_split_s3_key(title, filename) when is_binary(title) and is_binary(filename) do
+    sanitized_title = sanitize_filename(title)
+    "clips/#{sanitized_title}/splits/#{filename}"
+  end
+
+  @doc """
+  Build S3 key for merge clips using existing S3 path structure.
+
+  ## Examples
+
+      iex> target_clip = %{clip_filepath: "/clips/My_Video/splits/original.mp4"}
+      iex> FileNaming.build_merge_s3_key(target_clip, "merged_123_456.mp4")
+      "clips/My_Video/splits/merged_123_456.mp4"
+  """
+  @spec build_merge_s3_key(map(), String.t()) :: String.t()
+  def build_merge_s3_key(target_clip, filename)
+      when is_map(target_clip) and is_binary(filename) do
+    output_s3_prefix =
+      Path.dirname(target_clip.clip_filepath)
+      |> String.trim_leading("/")
+
+    "#{output_s3_prefix}/#{filename}"
+  end
+
+  @doc """
+  Generate processing metadata for operations.
+
+  ## Examples
+
+      iex> FileNaming.generate_processing_metadata(:split, %{original_clip_id: 123, file_size: 1024})
+      %{created_from_split: true, original_clip_id: 123, file_size: 1024}
+  """
+  @spec generate_processing_metadata(atom(), map()) :: map()
+  def generate_processing_metadata(operation_type, metadata)
+      when is_atom(operation_type) and is_map(metadata) do
+    case operation_type do
+      :split ->
+        %{
+          created_from_split: true,
+          original_clip_id: metadata.original_clip_id,
+          file_size: metadata.file_size,
+          duration_seconds: metadata.duration_seconds,
+          segment_type: metadata.segment_type
+        }
+
+      :merge ->
+        base_metadata = metadata.base_metadata || %{}
+
+        Map.merge(base_metadata, %{
+          merged_from_clips: metadata.merged_from_clips,
+          new_identifier: metadata.new_identifier,
+          merge_timestamp: DateTime.utc_now(),
+          file_size: metadata.file_size,
+          target_clip_duration: metadata.target_clip_duration,
+          source_clip_duration: metadata.source_clip_duration
+        })
+
+      _ ->
+        metadata
+    end
+  end
+
+  @doc """
   Generate a complete filename with parameters and timestamp.
 
   ## Examples
@@ -163,6 +234,81 @@ defmodule Heaters.Clips.Operations.Shared.FileNaming do
       [_, operation_type] -> {:ok, operation_type}
       nil -> {:error, :unknown_pattern}
     end
+  end
+
+  @doc """
+  Parse frame numbers from split filename.
+
+  ## Examples
+
+      iex> FileNaming.parse_frame_numbers("Berlin_Skies_Snow_123_456.mp4")
+      {:ok, {123, 456}}
+
+      iex> FileNaming.parse_frame_numbers("invalid_file.mp4")
+      {:error, "Filename does not match split clip pattern: invalid_file.mp4"}
+  """
+  @spec parse_frame_numbers(String.t()) :: {:ok, {integer(), integer()}} | {:error, String.t()}
+  def parse_frame_numbers(filename) when is_binary(filename) do
+    base_name = String.replace(filename, ~r/\.mp4$/, "")
+
+    case Regex.run(~r/_(\d+)_(\d+)$/, base_name) do
+      [_full_match, start_frame_str, end_frame_str] ->
+        try do
+          start_frame = String.to_integer(start_frame_str)
+          end_frame = String.to_integer(end_frame_str)
+          {:ok, {start_frame, end_frame}}
+        rescue
+          ArgumentError ->
+            {:error, "Invalid frame numbers in filename: #{filename}"}
+        end
+
+      nil ->
+        {:error, "Filename does not match split clip pattern: #{filename}"}
+    end
+  end
+
+  @doc """
+  Parse merge filename to extract clip information.
+
+  ## Examples
+
+      iex> FileNaming.parse_merge_filename("merged_123_clip_456.mp4")
+      {:ok, {123, "clip_456"}}
+
+      iex> FileNaming.parse_merge_filename("invalid_file.mp4")
+      {:error, "Filename does not match merge clip pattern: invalid_file.mp4"}
+  """
+  @spec parse_merge_filename(String.t()) :: {:ok, {integer(), String.t()}} | {:error, String.t()}
+  def parse_merge_filename(filename) when is_binary(filename) do
+    base_name = String.replace(filename, ~r/\.mp4$/, "")
+
+    case Regex.run(~r/^merged_(\d+)_(.+)$/, base_name) do
+      [_full_match, target_clip_id_str, source_suffix] ->
+        try do
+          target_clip_id = String.to_integer(target_clip_id_str)
+          {:ok, {target_clip_id, source_suffix}}
+        rescue
+          ArgumentError ->
+            {:error, "Invalid target clip ID in filename: #{filename}"}
+        end
+
+      nil ->
+        {:error, "Filename does not match merge clip pattern: #{filename}"}
+    end
+  end
+
+  @doc """
+  Generate local download filename with prefix.
+
+  ## Examples
+
+      iex> clip = %{clip_filepath: "/clips/video/file.mp4"}
+      iex> FileNaming.generate_local_filename(clip, "target")
+      "target_file.mp4"
+  """
+  @spec generate_local_filename(map(), String.t()) :: String.t()
+  def generate_local_filename(clip, prefix) when is_map(clip) and is_binary(prefix) do
+    "#{prefix}_#{Path.basename(clip.clip_filepath)}"
   end
 
   # Private helper functions

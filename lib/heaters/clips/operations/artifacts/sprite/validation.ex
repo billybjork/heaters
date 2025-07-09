@@ -7,7 +7,8 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.Validation do
   clip state validation and sprite parameter validation. All functions are pure.
   """
 
-  alias Heaters.Clips.Operations.Shared.{ClipValidation, VideoMetadata}
+  alias Heaters.Clips.Operations.Shared.ClipValidation
+  alias Heaters.Clips.Operations.Artifacts.Sprite.VideoMetadata
   alias Heaters.Clips.Operations.Artifacts.Sprite.Calculations
 
   @doc """

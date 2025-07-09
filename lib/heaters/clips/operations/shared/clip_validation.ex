@@ -62,4 +62,54 @@ defmodule Heaters.Clips.Operations.Shared.ClipValidation do
   def valid_states_for_operation(:keyframe), do: @valid_keyframe_states
   def valid_states_for_operation(:split), do: @valid_split_states
   def valid_states_for_operation(:merge), do: @valid_merge_states
+
+  @doc """
+  Validate that a clip has an associated video file.
+
+  Shared validation function used across split, merge, and keyframe operations.
+
+  ## Examples
+
+      iex> clip = %{clip_filepath: "/path/to/video.mp4"}
+      iex> ClipValidation.validate_clip_has_video_file(clip)
+      :ok
+      
+      iex> clip = %{clip_filepath: nil}
+      iex> ClipValidation.validate_clip_has_video_file(clip)
+      {:error, :clip_missing_video_file}
+  """
+  @spec validate_clip_has_video_file(map()) :: :ok | {:error, atom()}
+  def validate_clip_has_video_file(%{clip_filepath: filepath})
+      when is_binary(filepath) and filepath != "" do
+    :ok
+  end
+
+  def validate_clip_has_video_file(_clip) do
+    {:error, :clip_missing_video_file}
+  end
+
+  @doc """
+  Validate that a clip has an associated source video.
+
+  Shared validation function used across split operations.
+
+  ## Examples
+
+      iex> clip = %{source_video: %{id: 123}}
+      iex> ClipValidation.validate_clip_has_source_video(clip)
+      :ok
+      
+      iex> clip = %{source_video: nil}
+      iex> ClipValidation.validate_clip_has_source_video(clip)
+      {:error, :clip_missing_source_video}
+  """
+  @spec validate_clip_has_source_video(map()) :: :ok | {:error, atom()}
+  def validate_clip_has_source_video(%{source_video: source_video})
+      when not is_nil(source_video) do
+    :ok
+  end
+
+  def validate_clip_has_source_video(_clip) do
+    {:error, :clip_missing_source_video}
+  end
 end

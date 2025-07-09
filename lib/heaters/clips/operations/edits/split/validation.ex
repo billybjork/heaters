@@ -5,6 +5,7 @@ defmodule Heaters.Clips.Operations.Edits.Split.Validation do
   """
 
   alias Heaters.Clips.Operations.Shared.ClipValidation
+  alias Heaters.Clips.Operations.Shared.ErrorFormatting
 
   @doc """
   Validates if a clip is ready for split operations.
@@ -23,8 +24,7 @@ defmodule Heaters.Clips.Operations.Edits.Split.Validation do
         :ok
 
       {:error, :invalid_state_for_split} ->
-        {:error,
-         "Clip state '#{state}' is not ready for split operations. Required states: pending_review"}
+        {:error, ErrorFormatting.format_domain_error(:invalid_state_for_split, state)}
     end
   end
 
@@ -70,26 +70,12 @@ defmodule Heaters.Clips.Operations.Edits.Split.Validation do
       :ok
     else
       {:error,
-       "Split frame #{split_at_frame} is outside clip range (#{start_frame}-#{end_frame})"}
+       ErrorFormatting.format_domain_error(
+         :split_frame_out_of_bounds,
+         {split_at_frame, start_frame, end_frame}
+       )}
     end
   end
-
-  @doc """
-  Validates that a clip has an associated source video.
-
-  ## Parameters
-  - `clip`: Clip struct with source_video association
-
-  ## Returns
-  - `:ok` if clip has source video
-  - `{:error, String.t()}` if no source video
-  """
-  @spec validate_clip_has_source_video(map()) :: :ok | {:error, String.t()}
-  def validate_clip_has_source_video(%{source_video: nil}) do
-    {:error, "Clip has no associated source video"}
-  end
-
-  def validate_clip_has_source_video(%{source_video: _source_video}), do: :ok
 
   @doc """
   Validates that the split frame parameter is a positive integer.
@@ -108,7 +94,7 @@ defmodule Heaters.Clips.Operations.Edits.Split.Validation do
   end
 
   def validate_split_frame_is_integer(invalid_frame) do
-    {:error, "Split frame must be a positive integer, got: #{inspect(invalid_frame)}"}
+    {:error, ErrorFormatting.format_domain_error(:invalid_split_frame_type, invalid_frame)}
   end
 
   @doc """
@@ -128,12 +114,24 @@ defmodule Heaters.Clips.Operations.Edits.Split.Validation do
   ## Private helper functions
 
   @spec validate_clip_has_video_file(map()) :: :ok | {:error, String.t()}
-  defp validate_clip_has_video_file(%{clip_filepath: filepath})
-       when is_binary(filepath) and filepath != "" do
-    :ok
+  defp validate_clip_has_video_file(clip) do
+    case ClipValidation.validate_clip_has_video_file(clip) do
+      :ok ->
+        :ok
+
+      {:error, :clip_missing_video_file} ->
+        {:error, ErrorFormatting.format_domain_error(:clip_missing_video_file, "unknown")}
+    end
   end
 
-  defp validate_clip_has_video_file(_clip) do
-    {:error, "Clip does not have a video file for split operation"}
+  @spec validate_clip_has_source_video(map()) :: :ok | {:error, String.t()}
+  defp validate_clip_has_source_video(clip) do
+    case ClipValidation.validate_clip_has_source_video(clip) do
+      :ok ->
+        :ok
+
+      {:error, :clip_missing_source_video} ->
+        {:error, ErrorFormatting.format_domain_error(:clip_missing_source_video, "unknown")}
+    end
   end
 end
