@@ -100,6 +100,8 @@ The system uses a **hybrid approach** combining native Elixir and Python process
 - **Benefits**: Leverages mature ML ecosystems and specialized media libraries
 - **Interface**: Pure functions with structured JSON responses, no database access
 - **Rust Integration**: Uses `rambo` binary for efficient sprite generation
+- **Modular Design**: Complex tasks split into focused modules for maintainability (e.g., `media_processing.py`, `download_handler.py`, `s3_handler.py`)
+- **Progress Reporting**: Real-time FFmpeg transcoding progress via PyRunner integration
 
 ```python
 # Python tasks remain pure media processing functions

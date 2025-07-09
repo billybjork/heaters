@@ -153,6 +153,8 @@ Human review actions execute directly with undo support:
 - No direct database access from Python code
 - Use `Infrastructure.PyRunner` for Python task execution
 - Python dependencies managed in `py/requirements.txt`
+- **Modular Structure**: Complex tasks like `ingest` are split into focused modules (`media_processing.py`, `download_handler.py`, `s3_handler.py`) for better maintainability
+- **Progress Reporting**: FFmpeg operations provide real-time progress logging via PyRunner
 
 ### Testing Approach
 - Tests create isolated test database with migrations
