@@ -2,61 +2,12 @@
  * Sprite-sheet utilities for Clip Review
  * ──────────────────────────────────────────────────────────────────────────
  * • SpritePlayerController  – full scrubbable viewer in the main panel
- * • SplitManager            – global split-mode state machine
- * • ThumbHoverPlayer        – lightweight hover-autoplay for sibling thumbs
+ * • SpritePlayer            – core sprite playback functionality
  *
  * No server round-trips: everything runs in the browser.
  */
 
-/* ────────────────────────────────────────────────────────────────────────── */
-/*  Split-mode state machine – global per page                              */
-/* ────────────────────────────────────────────────────────────────────────── */
-
-export const SplitManager = {
-  splitMode: false,
-  activePlayer: null,
-  btnEl: null,
-
-  /** Enter split mode: pause playback, highlight UI. */
-  enter(player, btn) {
-    this.splitMode = true;
-    this.activePlayer = player;
-    this.btnEl = btn;
-
-    player.pause("split-enter");
-    btn?.classList.add("split-armed");
-    player.viewerEl.classList.add("split-armed");
-  },
-
-  /** Exit without committing. */
-  exit() {
-    if (!this.splitMode) return;
-    this.btnEl?.classList.remove("split-armed");
-    this.activePlayer.viewerEl.classList.remove("split-armed");
-    this.activePlayer.play("split-exit");
-
-    this.splitMode = false;
-    this.activePlayer = null;
-    this.btnEl = null;
-  },
-
-  /** Commit the chosen frame – pushes a `"select"` event and resets state. */
-  commit(pushFn) {
-    if (!this.splitMode || !this.activePlayer) return;
-    pushFn("select", {
-      action: "split",
-      frame: this.activePlayer.currentFrame
-    });
-    this.exit();
-  },
-
-  /** Nudge frame cursor left / right while armed. */
-  nudge(delta) {
-    if (!this.splitMode || !this.activePlayer) return;
-    const next = this.activePlayer.currentFrame + delta;
-    this.activePlayer.updateFrame(next, true);
-  }
-};
+import { SplitManager } from "./split-manager";
 
 /* ────────────────────────────────────────────────────────────────────────── */
 /*  Phoenix Hook – full sprite player                                       */
@@ -157,74 +108,6 @@ export const SpritePlayerController = {
   }
 };
 
-/* ────────────────────────────────────────────────────────────────────────── */
-/*  Phoenix Hook – hover-autoplay thumbnail                                 */
-/* ────────────────────────────────────────────────────────────────────────── */
-
-export const ThumbHoverPlayer = {
-  mounted() {
-    const cfg = JSON.parse(this.el.dataset.player);
-
-    /* geometry – scale every thumb down to 160 px wide, preserving aspect ratio */
-    const THUMB_W = 160;
-    this.cols = cfg.cols;
-    this.rows = cfg.rows;
-    const scale = THUMB_W / cfg.tile_width;
-    this.w = THUMB_W;
-    this.h = Math.round(cfg.tile_height_calculated * scale);
-
-    this.total = cfg.total_sprite_frames;
-    /* playback speed = same fps as the big player (capped at 60) */
-    this.fps = Math.min(60, cfg.clip_fps || 24);
-
-    this.frame = 0;
-    this.timer = null;
-
-    /* style element */
-    Object.assign(this.el.style, {
-      width: `${this.w}px`,
-      height: `${this.h}px`,
-      backgroundImage: `url("${cfg.spriteUrl}")`,
-      backgroundRepeat: "no-repeat",
-      backgroundSize: `${this.w * this.cols}px auto`,
-      backgroundPosition: "0 0",
-      cursor: "pointer"
-    });
-
-    /* now wire up hover playback */
-    this.el.addEventListener("mouseenter", () => this.play());
-    this.el.addEventListener("mouseleave", () => this.stop());
-  },
-
-  play() {
-    if (this.timer) return;
-    const interval = 1000 / this.fps;
-    this.timer = setInterval(() => this.step(), interval);
-  },
-
-  stop() {
-    clearInterval(this.timer);
-    this.timer = null;
-    this.frame = 0;
-    this.updateBackground();
-  },
-
-  step() {
-    this.frame = (this.frame + 1) % this.total;
-    this.updateBackground();
-  },
-
-  updateBackground() {
-    const col = this.frame % this.cols;
-    // ← divide by number of *columns* to get the correct row index
-    const row = Math.floor(this.frame / this.cols);
-    this.el.style.backgroundPosition = `-${col * this.w}px -${row * this.h}px`;
-  },
-
-  destroyed() {
-    this.stop();
-  }
-};
 
 /* ────────────────────────────────────────────────────────────────────────── */
 /*  Minimal sprite-sheet "video" player (used by main panel)                */

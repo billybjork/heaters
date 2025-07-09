@@ -2,8 +2,8 @@ import { Socket } from "phoenix"
 import { LiveSocket } from "phoenix_live_view"
 
 import { ReviewHotkeys } from "./review-hotkeys"
-import { SpritePlayerController, ThumbHoverPlayer } from "./sprite-player"
-import { HoverPlay } from "./hover-play";
+import { SpritePlayerController } from "./sprite-player"
+import { HoverPlay, ThumbHoverPlayer } from "./hover-play";
 
 // Pull the CSRF token from the page
 let csrfToken = document
