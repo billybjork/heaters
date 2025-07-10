@@ -33,7 +33,8 @@ config :heaters,
   generators: [timestamp_type: :utc_datetime]
 
 # Tell Ecto/Postgres about our custom types (for the `vector` column)
-config :heaters, Heaters.Repo, types: Heaters.PostgresTypes
+# Temporarily disabled - causing compilation issues
+# config :heaters, Heaters.Repo, types: Heaters.PostgresTypes
 
 # Configures the endpoint
 config :heaters, HeatersWeb.Endpoint,

@@ -21,7 +21,7 @@
 //  * Press ⇧+Space to toggle ID-mode (shows sibling grid + ID box).
 //  * While in ID-mode, ⇧+←/→ paginate the sibling grid (unless in split-mode).
 
-import { SplitManager } from "./sprite-player";
+import { SplitManager } from "./split-manager";
 
 export const ReviewHotkeys = {
   mounted() {
