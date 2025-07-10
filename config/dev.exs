@@ -42,7 +42,9 @@ case System.get_env("DEV_DATABASE_URL") do
       # Performance optimizations for development
       timeout: 15_000,
       queue_target: 5000,
-      queue_interval: 1000
+      queue_interval: 1000,
+      # Disable query logging for cleaner logs
+      log: false
 
   dev_database_url ->
     # Use DEV_DATABASE_URL from .env (preferred method)
@@ -54,7 +56,9 @@ case System.get_env("DEV_DATABASE_URL") do
       # Performance optimizations for development
       timeout: 15_000,
       queue_target: 5000,
-      queue_interval: 1000
+      queue_interval: 1000,
+      # Disable query logging for cleaner logs
+      log: false
 end
 
 # ───────────────────────────────────────────
@@ -84,6 +88,9 @@ config :heaters, HeatersWeb.Endpoint,
 
 # Do not include metadata nor timestamps in development logs
 config :logger, :console, format: "[$level] $message\n"
+
+# Ecto query logging is disabled in the database sections above for cleaner logs
+# To re-enable query logging, change `log: false` to `log: :debug` in both database configs
 
 # Set a higher stacktrace during development. Avoid configuring such
 # in production as building large stacktraces may be expensive.
