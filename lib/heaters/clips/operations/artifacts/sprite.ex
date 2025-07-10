@@ -48,10 +48,12 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite do
 
     TempManager.with_temp_directory("sprite", fn temp_dir ->
       with {:ok, clip} <- fetch_clip_data(clip_id),
-           final_params <- merge_sprite_parameters(sprite_params),
-           :ok <- validate_sprite_requirements(clip, final_params),
+           initial_params <- merge_sprite_parameters(sprite_params),
+           :ok <- validate_sprite_requirements(clip, initial_params),
            {:ok, video_path} <- download_video_file(clip, temp_dir),
            {:ok, video_metadata} <- extract_video_metadata(video_path),
+           _ <- Logger.debug("Sprite: About to merge adaptive parameters for duration: #{video_metadata.duration}"),
+           final_params <- merge_sprite_parameters_adaptive(video_metadata, sprite_params),
            :ok <- validate_video_metadata(video_metadata, final_params),
            {:ok, sprite_spec} <- calculate_sprite_specifications(video_metadata, final_params),
            filename <- generate_sprite_filename(clip_id, sprite_spec),
@@ -109,6 +111,12 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite do
   defp merge_sprite_parameters(input_params) do
     Logger.debug("Sprite: Merging sprite parameters: #{inspect(input_params)}")
     Calculations.merge_sprite_params(input_params)
+  end
+
+  @spec merge_sprite_parameters_adaptive(map(), map()) :: map()
+  defp merge_sprite_parameters_adaptive(video_metadata, input_params) do
+    Logger.debug("Sprite: Merging sprite parameters with adaptive columns: #{inspect(input_params)}")
+    Calculations.merge_sprite_params_adaptive(video_metadata, input_params)
   end
 
   @spec validate_sprite_requirements(map(), map()) :: :ok | {:error, atom()}
