@@ -192,12 +192,13 @@ defmodule Heaters.Clips.Operations.Edits.Split do
   end
 
   @spec upload_split_clips(list(map()), Clip.t()) :: {:ok, list(map())} | {:error, any()}
-  defp upload_split_clips(created_clips, %Clip{source_video_id: source_video_id}) do
+  defp upload_split_clips(created_clips, %Clip{} = clip) do
+    source_title = get_source_title(clip)
     uploaded_clips =
       created_clips
       |> Enum.with_index()
       |> Enum.reduce_while([], fn {clip_data, index}, acc ->
-        s3_key = FileNaming.generate_s3_key(source_video_id, clip_data.filename)
+        s3_key = FileNaming.generate_s3_key(source_title, clip_data.filename)
 
         case S3.upload_file_with_operation(clip_data.local_path, s3_key, "Split") do
           {:ok, ^s3_key} ->
@@ -233,7 +234,7 @@ defmodule Heaters.Clips.Operations.Edits.Split do
 
   @spec create_clip_records(list(map()), Clip.t()) :: {:ok, list(Clip.t())} | {:error, any()}
   defp create_clip_records(uploaded_clips, original_clip) do
-    now = DateTime.utc_now()
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
 
     clips_attrs =
       Enum.map(uploaded_clips, fn clip_data ->
@@ -325,5 +326,14 @@ defmodule Heaters.Clips.Operations.Edits.Split do
   @spec calculate_duration(integer()) :: integer()
   defp calculate_duration(start_time) do
     System.convert_time_unit(System.monotonic_time() - start_time, :native, :millisecond)
+  end
+
+  @spec get_source_title(Clip.t()) :: String.t()
+  defp get_source_title(%Clip{source_video: %{title: title}}) when not is_nil(title) do
+    title
+  end
+
+  defp get_source_title(%Clip{source_video_id: source_video_id}) do
+    "source_#{source_video_id}"
   end
 end

@@ -147,7 +147,9 @@ defmodule HeatersWeb.SpritePlayer do
       "clip_fps" => fps,
       "clip_total_frames" => clip_total_frames,
       "spriteUrl" => if(art, do: cdn_url(art.s3_key), else: cdn_url(nil)),
-      "isValid" => art != nil
+      "isValid" => art != nil,
+      "start_frame" => clip.start_frame,
+      "end_frame" => clip.end_frame
     }
   end
 

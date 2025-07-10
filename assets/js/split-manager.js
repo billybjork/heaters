@@ -36,9 +36,15 @@ export const SplitManager = {
   /** Commit the chosen frame – pushes a `"select"` event and resets state. */
   commit(pushFn) {
     if (!this.splitMode || !this.activePlayer) return;
+    
+    // Convert clip-relative frame to absolute video frame
+    const relativeFrame = this.activePlayer.currentFrame;
+    const startFrame = this.activePlayer.meta.start_frame || 0;
+    const absoluteFrame = relativeFrame + startFrame - 1;
+    
     pushFn("select", {
       action: "split",
-      frame: this.activePlayer.currentFrame
+      frame: absoluteFrame
     });
     this.exit();
   },
