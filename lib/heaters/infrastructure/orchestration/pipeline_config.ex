@@ -75,8 +75,8 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
         build: fn clip ->
           EmbeddingWorker.new(%{
             clip_id: clip.id,
-            model_name: "clip-vit-base-patch32",
-            generation_strategy: "multi"
+            model_name: "openai/clip-vit-base-patch32",
+            generation_strategy: "keyframe_multi_avg"
           })
         end
       },

@@ -10,7 +10,6 @@ defmodule Heaters.Clips.Operations.Artifacts.Keyframe.Worker do
     "keyframed",
     "keyframe_failed",
     "embedded",
-    "review_approved",
     "review_archived"
   ]
 

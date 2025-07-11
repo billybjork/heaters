@@ -29,27 +29,32 @@ defmodule Heaters.Clips.Embeddings.Worker do
     end
   end
 
-  defp handle_embedding_work(%{"clip_id" => clip_id}) do
+  defp handle_embedding_work(%{"clip_id" => clip_id} = args) do
     Logger.info("EmbeddingWorker: Starting embedding generation for clip_id: #{clip_id}")
 
-    with {:ok, updated_clip} <- Embeddings.start_embedding(clip_id) do
+    with {:ok, updated_clip} <- Embeddings.start_embedding(clip_id),
+         {:ok, clip_with_artifacts} <- Heaters.Clips.get_clip_with_artifacts(clip_id) do
       Logger.info("EmbeddingWorker: Running PyRunner for clip_id: #{clip_id}")
 
-      # Build artifact prefix dynamically using the Operations utility
-      artifact_prefix = Heaters.Clips.Operations.build_artifact_prefix(updated_clip, "embeddings")
+      # Extract keyframe S3 keys from clip artifacts
+      keyframe_s3_keys = 
+        clip_with_artifacts.clip_artifacts
+        |> Enum.filter(&(&1.artifact_type == "keyframe"))
+        |> Enum.map(&(&1.s3_key))
+
+      # Get model name and generation strategy from job args
+      model_name = Map.get(args, "model_name", "openai/clip-vit-base-patch32")
+      generation_strategy = Map.get(args, "generation_strategy", "keyframe_multi_avg")
 
       # Python task receives explicit parameters for embedding generation
       py_args = %{
         clip_id: clip_id,
-        artifact_prefix: artifact_prefix,
-        keyframes_file: "#{artifact_prefix}/keyframes.json",
-        embedding_config:
-          %{
-            # Add any embedding-specific configuration here
-          }
+        keyframe_s3_keys: keyframe_s3_keys,
+        model_name: model_name,
+        generation_strategy: generation_strategy
       }
 
-      case PyRunner.run("embedding", py_args) do
+      case PyRunner.run("embed", py_args) do
         {:ok, result} ->
           Logger.info("EmbeddingWorker: PyRunner succeeded for clip_id: #{clip_id}")
 
@@ -114,8 +119,8 @@ defmodule Heaters.Clips.Embeddings.Worker do
 
   defp check_embedding_exists(clip) do
     # Check if embedding already exists for this specific model and strategy
-    model_name = "clip-vit-base-patch32"
-    generation_strategy = "average"
+    model_name = "openai/clip-vit-base-patch32"
+    generation_strategy = "keyframe_multi_avg"
 
     case Embeddings.has_embedding?(clip.id, model_name, generation_strategy) do
       # No embedding exists, clip is ready

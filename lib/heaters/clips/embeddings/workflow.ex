@@ -123,6 +123,9 @@ defmodule Heaters.Clips.Embeddings.Workflow do
       {"review_approved", "embedding"} ->
         :ok
 
+      {"keyframed", "embedding"} ->
+        :ok
+
       {"embedding_failed", "embedding"} ->
         :ok
 

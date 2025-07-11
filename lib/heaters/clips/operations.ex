@@ -329,8 +329,8 @@ defmodule Heaters.Clips.Operations do
     %{
       clip_id: clip_id,
       artifact_type: artifact_type,
-      s3_key: Map.fetch!(artifact_data, :s3_key),
-      metadata: Map.get(artifact_data, :metadata, %{}),
+      s3_key: Map.fetch!(artifact_data, "s3_key"),
+      metadata: Map.get(artifact_data, "metadata", %{}),
       inserted_at: now,
       updated_at: now
     }
