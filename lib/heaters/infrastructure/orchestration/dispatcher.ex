@@ -5,6 +5,7 @@ defmodule Heaters.Infrastructure.Orchestration.Dispatcher do
 
   alias Heaters.Infrastructure.Orchestration.PipelineConfig
   alias Heaters.Infrastructure.Orchestration.WorkerBehavior
+  alias Ecto.Multi
 
   @impl WorkerBehavior
   def handle_work(_args) do
@@ -32,11 +33,30 @@ defmodule Heaters.Infrastructure.Orchestration.Dispatcher do
       Logger.info("Dispatcher[step #{step_num}]: Enqueuing jobs for #{label}.")
 
       jobs = Enum.map(items, build_fn)
-      Oban.insert_all(jobs, on_conflict: :raise)
 
-      Logger.info(
-        "Dispatcher[step #{step_num}]: Finished enqueuing #{Enum.count(jobs)} jobs for #{label}."
-      )
+      # Use :nothing instead of :raise to gracefully handle duplicate jobs
+      # This works with unique constraints to prevent duplicate processing
+      result = Oban.insert_all(jobs, on_conflict: :nothing)
+
+      case result do
+        # Handle list format [jobs] when some jobs were inserted
+        inserted_jobs when is_list(inserted_jobs) and length(inserted_jobs) > 0 ->
+          Logger.info(
+            "Dispatcher[step #{step_num}]: Enqueued #{length(inserted_jobs)} new jobs for #{label}."
+          )
+
+        # Handle empty list when no jobs were inserted (all duplicates)
+        [] ->
+          Logger.info(
+            "Dispatcher[step #{step_num}]: No new jobs needed for #{label} (all jobs already exist)."
+          )
+
+        # Handle Ecto.Multi format (shouldn't happen but dialyzer sees it as possible)
+        %Multi{} = _multi ->
+          Logger.warning(
+            "Dispatcher[step #{step_num}]: Unexpected Ecto.Multi result from Oban.insert_all for #{label}."
+          )
+      end
     end
   end
 

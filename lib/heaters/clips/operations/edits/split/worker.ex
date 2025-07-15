@@ -1,5 +1,8 @@
 defmodule Heaters.Clips.Operations.Edits.Split.Worker do
-  use Heaters.Infrastructure.Orchestration.WorkerBehavior, queue: :media_processing
+  use Heaters.Infrastructure.Orchestration.WorkerBehavior,
+    queue: :media_processing,
+    # 15 minutes, prevent duplicate split jobs
+    unique: [period: 900, fields: [:args]]
 
   alias Heaters.Clips.Operations.Edits.Split
   alias Heaters.Clips.Operations.Shared.Types

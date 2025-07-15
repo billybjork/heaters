@@ -117,12 +117,11 @@ config :heaters, Oban,
      ]}
   ],
   queues: [
-    default: 10,
-    ingest: 5,
-    media_processing: 8,
-    events: 20,
-    media: 5,
-    embeddings: 5,
+    # Reduced from 10
+    default: 3,
+    # Reduced from 8 - only 1 concurrent video processing
+    media_processing: 1,
+    # Keep dispatcher and light operations
     background_jobs: 2
   ]
 

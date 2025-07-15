@@ -45,7 +45,15 @@ services:
       DEV_DATABASE_URL: ${DEV_DATABASE_URL}
       S3_DEV_BUCKET_NAME: ${S3_DEV_BUCKET_NAME}
       CLOUDFRONT_DEV_DOMAIN: ${CLOUDFRONT_DEV_DOMAIN}
-
+    # Resource limits to prevent OOM kills during video processing
+    # To monitor: docker stats heaters-app-dev
+    # To check logs: docker logs heaters-app-dev -f
+    deploy:
+      resources:
+        limits:
+          memory: 4G        # Adjust based on your system RAM
+        reservations:
+          memory: 2G
     volumes:
       - ./:/app
       

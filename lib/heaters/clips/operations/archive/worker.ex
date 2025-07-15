@@ -1,5 +1,8 @@
 defmodule Heaters.Clips.Operations.Archive.Worker do
-  use Heaters.Infrastructure.Orchestration.WorkerBehavior, queue: :background_jobs
+  use Heaters.Infrastructure.Orchestration.WorkerBehavior,
+    queue: :background_jobs,
+    # 5 minutes, prevent duplicate archive jobs
+    unique: [period: 300, fields: [:args]]
 
   import Ecto.Query, warn: false
   alias Heaters.Clips.Queries, as: ClipQueries

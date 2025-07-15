@@ -1,5 +1,8 @@
 defmodule Heaters.Clips.Embeddings.Worker do
-  use Heaters.Infrastructure.Orchestration.WorkerBehavior, queue: :default
+  use Heaters.Infrastructure.Orchestration.WorkerBehavior,
+    queue: :default,
+    # 10 minutes, prevent duplicate embedding jobs
+    unique: [period: 600, fields: [:args]]
 
   alias Heaters.Clips.Embeddings
   alias Heaters.Infrastructure.PyRunner

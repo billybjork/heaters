@@ -1,5 +1,8 @@
 defmodule Heaters.Clips.Operations.Edits.Merge.Worker do
-  use Heaters.Infrastructure.Orchestration.WorkerBehavior, queue: :media_processing
+  use Heaters.Infrastructure.Orchestration.WorkerBehavior,
+    queue: :media_processing,
+    # 15 minutes, prevent duplicate merge jobs
+    unique: [period: 900, fields: [:args]]
 
   alias Heaters.Clips.Operations.Edits.Merge
   alias Heaters.Clips.Operations.Shared.Types

@@ -1,10 +1,14 @@
 defmodule Heaters.Clips.Operations.Artifacts.Sprite.Worker do
-  use Heaters.Infrastructure.Orchestration.WorkerBehavior, queue: :default
+  use Heaters.Infrastructure.Orchestration.WorkerBehavior,
+    queue: :default,
+    # 10 minutes, prevent duplicate sprite jobs
+    unique: [period: 600, fields: [:args]]
 
+  alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Clips.Operations
   alias Heaters.Clips.Operations.Artifacts.Sprite
-  alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Infrastructure.Orchestration.WorkerBehavior
+  require Logger
 
   @complete_states [
     "pending_review",

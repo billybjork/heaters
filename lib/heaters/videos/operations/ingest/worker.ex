@@ -1,9 +1,12 @@
 defmodule Heaters.Videos.Operations.Ingest.Worker do
-  use Heaters.Infrastructure.Orchestration.WorkerBehavior, queue: :media_processing
+  use Heaters.Infrastructure.Orchestration.WorkerBehavior,
+    queue: :media_processing,
+    # 30 minutes, prevent duplicate jobs for same video
+    unique: [period: 1800, fields: [:args]]
 
-  alias Heaters.Videos.Operations.Ingest
   alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Infrastructure.PyRunner
+  alias Heaters.Videos.Operations.Ingest
   alias Heaters.Infrastructure.Orchestration.WorkerBehavior
   require Logger
 
@@ -12,22 +15,17 @@ defmodule Heaters.Videos.Operations.Ingest.Worker do
 
   @impl WorkerBehavior
   def handle_work(%{"source_video_id" => source_video_id} = args) do
-    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id),
-         :ok <- check_idempotency(source_video) do
-      handle_ingest_work(args)
+    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
+      case check_idempotency(source_video) do
+        :ok ->
+          handle_ingest_work(args)
+
+        {:error, :already_processed} ->
+          WorkerBehavior.handle_already_processed("Source video", source_video_id)
+      end
     else
       {:error, :not_found} ->
         WorkerBehavior.handle_not_found("Source video", source_video_id)
-
-      {:error, :already_processed} ->
-        WorkerBehavior.handle_already_processed("Source video", source_video_id)
-
-      {:error, reason} ->
-        Logger.error(
-          "IngestWorker: Error in workflow for source video #{source_video_id}: #{inspect(reason)}"
-        )
-
-        {:error, reason}
     end
   end
 
