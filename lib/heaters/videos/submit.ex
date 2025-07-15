@@ -1,12 +1,12 @@
-defmodule Heaters.Videos.Intake do
+defmodule Heaters.Videos.Submit do
   @moduledoc """
-  Context for managing source video intake (submission) workflow.
+  Context for managing source video submit (submission) workflow.
 
   This module handles the initial submission of source videos, creating database records
   for URLs or file paths that will later be processed by the ingestion pipeline
   (downloading, transcoding, etc.).
 
-  Note: "Intake" refers to accepting submissions, while "ingestion" refers to the
+  Note: "Submit" refers to accepting submissions, while "ingestion" refers to the
   actual downloading and processing done by the Python pipeline.
   """
 

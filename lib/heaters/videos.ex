@@ -7,7 +7,7 @@ defmodule Heaters.Videos do
 
   ## Sub-contexts
 
-  - **Intake**: Video submission and initial processing (`Heaters.Videos.Intake`)
+  - **Submit**: Video submission and initial processing (`Heaters.Videos.Submit`)
   - **Ingest**: Video ingestion workflow management (`Heaters.Videos.Operations.Ingest`)
 
   ## Schema
@@ -16,7 +16,7 @@ defmodule Heaters.Videos do
 
   ## Examples
 
-      # Intake operations
+      # Submit operations
       Videos.submit("https://example.com/video.mp4")
       Videos.update_source_video(source_video, %{title: "New Title"})
 
@@ -26,11 +26,11 @@ defmodule Heaters.Videos do
   """
 
   # Delegated functions for common operations
-  alias Heaters.Videos.Intake
+  alias Heaters.Videos.Submit
 
-  # Intake operations
-  defdelegate submit(url), to: Intake
-  defdelegate update_source_video(source_video, attrs), to: Intake
+  # Submit operations
+  defdelegate submit(url), to: Submit
+  defdelegate update_source_video(source_video, attrs), to: Submit
 
   # Query operations
   alias Heaters.Videos.Queries

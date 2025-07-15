@@ -19,9 +19,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-# Ensure output is flushed immediately
-sys.stdout.reconfigure(line_buffering=True)
-
 def main():
     """
     This is the single entrypoint for all Python tasks called by Elixir.
@@ -31,7 +28,7 @@ def main():
     sys.stdout.flush()
     
     parser = argparse.ArgumentParser(description="A CLI to run various Python tasks")
-    parser.add_argument("task_name", help="The name of the task module to run (e.g., 'intake', 'splice').")
+    parser.add_argument("task_name", help="The name of the task module to run (e.g., 'submit', 'splice').")
     
     # Support both command line JSON and file-based JSON
     group = parser.add_mutually_exclusive_group(required=True)
@@ -64,7 +61,7 @@ def main():
 
     try:
         # Dynamically import the task module from the `py.tasks` package
-        # e.g., if task_name is 'intake', this imports py.tasks.intake
+        # e.g., if task_name is 'submit', this imports py.tasks.submit
         task_module = importlib.import_module(f"py.tasks.{task_module_name}")
     except ImportError as e:
         logging.error(f"Error: Could not find or import task module 'py.tasks.{task_module_name}'.")
