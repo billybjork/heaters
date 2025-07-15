@@ -36,22 +36,6 @@ defmodule Heaters.Infrastructure.Adapters.PyRunnerAdapter do
     end
   end
 
-  @doc """
-  Runs a keyframe extraction task.
-
-  ## Parameters
-  - `python_args`: Arguments prepared by Domain.Keyframe.PythonArgs
-  - `opts`: Run options
-
-  ## Returns
-  - `{:ok, python_result()}` on success with keyframe artifacts
-  - `{:error, String.t()}` on failure
-  """
-  @spec run_keyframe_extraction(map(), run_options()) ::
-          {:ok, python_result()} | {:error, String.t()}
-  def run_keyframe_extraction(python_args, opts \\ []) do
-    run_python_task("keyframe", python_args, opts)
-  end
 
   @doc """
   Checks if the Python runner environment is properly configured.
