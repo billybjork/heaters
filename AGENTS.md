@@ -10,6 +10,7 @@ Unified agent guidance for working with this codebase. See `lib/heaters/README.m
 | **Database** | PostgreSQL + `pgvector` extension |
 | **Frontend** | Phoenix LiveView, vanilla JS, CSS |
 | **Build** | `esbuild` for JavaScript bundling |
+| **Job Queue** | Oban for background processing |
 | **Deployment** | Docker‑containerized release |
 
 ## Development Commands
@@ -49,6 +50,8 @@ Unified agent guidance for working with this codebase. See `lib/heaters/README.m
 - **Structured Results**: Always return type-safe structs with `@enforce_keys`
 - **Worker Pattern**: Use `Infrastructure.Orchestration.WorkerBehavior` for all background jobs
 - **Semantic Organization**: `operations/edits/` (user actions) vs `operations/artifacts/` (pipeline stages)
+- **Job Orchestration**: All background processing orchestrated through Oban job queue
+- **Frontend Minimalism**: Leverage LiveView capabilities; minimize JavaScript usage
 
 ## Code Implementation Guidelines
 
@@ -60,6 +63,8 @@ Unified agent guidance for working with this codebase. See `lib/heaters/README.m
 
 ## Python Integration
 
+- **Minimize Python usage**: Keep Python code minimal and focused on specific tasks
+- **Keep logic in Elixir**: Business logic should remain in Elixir wherever possible
 - Python tasks are pure functions returning structured JSON
 - No direct database access from Python
 - Use `Infrastructure.PyRunner` for execution
@@ -67,9 +72,16 @@ Unified agent guidance for working with this codebase. See `lib/heaters/README.m
 
 ## Testing
 
+- **Run tests after changes**: Execute `mix test` after making changes
+- **Update test relevance**: Check if tests are still relevant and update if needed
 - Use `test/support/data_case.ex` for database tests
 - Use `test/support/conn_case.ex` for controller tests
 - Mock external services (S3, Python tasks)
+
+## Environment Setup
+
+- **Development vs Production**: Separate PostgreSQL instances and S3 buckets for dev/prod environments
+- **Configuration**: Environment-specific settings handled through standard Phoenix configuration patterns
 
 ## Typical Workflow
 
@@ -77,4 +89,6 @@ Unified agent guidance for working with this codebase. See `lib/heaters/README.m
 2. **Validate** the implied approach; suggest improvements if warranted.
 3. **Implement** via minimal diff or new file.
 4. **Run** formatter & `mix check`; fix issues.
-5. **Deliver** code with explanation & next‑steps.
+5. **Test** the implementation with `mix test`.
+6. **Update documentation**: Update README or relevant docs if changes require it.
+7. **Deliver** code with explanation & next‑steps.
