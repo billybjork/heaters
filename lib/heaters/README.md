@@ -229,7 +229,7 @@ Each stage is pure configuration:
 **`Infrastructure.Orchestration.PipelineConfig`** provides complete workflow as data:
 1. `new videos → download` (IngestWorker)
 2. `downloaded videos → splice` (SpliceWorker) 
-3. `spliced clips → sprites` (SpriteWorker) ← **Handles ALL spliced clips**
+3. `spliced clips → sprites` (SpriteWorker) ← **Handles ALL spliced clips (original, merged, and split)**
 4. `approved clips → keyframes` (KeyframeWorker)
 5. `keyframed clips → embeddings` (EmbeddingWorker)
 6. `archived clips → archive` (ArchiveWorker)
@@ -248,7 +248,8 @@ Each stage is pure configuration:
 **After**: Fully declarative pipeline with single source of truth
 - ALL workers focus purely on domain logic and state transitions
 - Pipeline dispatcher handles ALL enqueueing based on database state
-- "spliced clips → sprites" stage catches clips from splice, merge, AND split operations
+- "spliced clips → sprites" stage automatically catches clips from splice, merge, AND split operations
+- **Critical**: ALL clips (original, merged, split) get sprite sheets generated before review
 - Zero direct worker-to-worker communication
 
 **Benefits**: Single source of truth, easier testing, clearer workflow visibility, separation of concerns between business logic and orchestration.

@@ -38,7 +38,15 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
   - merge/split actions → create new clips in spliced state (60-second undo buffer)
   - group actions → both clips advance to review_approved
 
-  The pipeline automatically picks up clips created by merge/split operations for sprite generation.
+  ## Sprite Generation for All Clips
+  
+  The pipeline ensures ALL clips get sprite sheets generated, regardless of origin:
+  - **Original clips**: From video splice operations
+  - **Merged clips**: From merge operations (60-second undo buffer)
+  - **Split clips**: From split operations (60-second undo buffer)
+  
+  The "clips needing sprites" stage automatically processes any clip in "spliced" state,
+  ensuring no clip enters review without a sprite sheet.
   """
 
   alias Heaters.Videos.Queries, as: VideoQueries
@@ -73,7 +81,7 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
         build: fn video -> SpliceWorker.new(%{source_video_id: video.id}) end
       },
       %{
-        label: "clips needing sprites → sprites",
+        label: "clips needing sprites → sprites (ALL clips: original, merged, split)",
         query: fn -> ClipQueries.get_clips_needing_sprites() end,
         build: fn clip -> SpriteWorker.new(%{clip_id: clip.id}) end
       },
