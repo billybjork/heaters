@@ -58,3 +58,9 @@ __pycache__/
 .env
 .env.*
 .envrcnode_modules/
+
+# ───────────────────────────────
+# Agent configuration (symlinked)
+# ───────────────────────────────
+CLAUDE.md
+.cursor/rules/general.mdc
