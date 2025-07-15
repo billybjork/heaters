@@ -34,8 +34,8 @@ defmodule Heaters.Videos.Operations.Ingest.Worker do
   defp handle_ingest_work(%{"source_video_id" => source_video_id}) do
     Logger.info("IngestWorker: Starting download for source_video_id: #{source_video_id}")
 
-    # Use new state management pattern
-    with {:ok, updated_video} <- Ingest.start_downloading(source_video_id) do
+    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id),
+         {:ok, updated_video} <- ensure_downloading_state(source_video) do
       Logger.info(
         "IngestWorker: Running PyRunner for source_video_id: #{source_video_id}, URL: #{updated_video.original_url}"
       )
@@ -89,15 +89,34 @@ defmodule Heaters.Videos.Operations.Ingest.Worker do
     else
       {:error, reason} ->
         Logger.error(
-          "IngestWorker: Failed to start downloading for source video #{source_video_id}: #{inspect(reason)}"
+          "IngestWorker: Failed to prepare for download for source video #{source_video_id}: #{inspect(reason)}"
         )
 
         {:error, reason}
     end
   end
 
+  # Helper function to ensure video is in downloading state, handling resumable processing
+  defp ensure_downloading_state(source_video) do
+    case source_video.ingest_state do
+      "downloading" ->
+        Logger.info(
+          "IngestWorker: Video #{source_video.id} already in downloading state, resuming"
+        )
+
+        {:ok, source_video}
+
+      _ ->
+        # Transition to downloading state for new/failed videos
+        Ingest.start_downloading(source_video.id)
+    end
+  end
+
   # Idempotency Check: Ensures we don't re-process completed work.
+  # Now supports resumable processing of interrupted jobs.
   defp check_idempotency(%{ingest_state: "new"}), do: :ok
+  # Allow resuming interrupted jobs
+  defp check_idempotency(%{ingest_state: "downloading"}), do: :ok
   defp check_idempotency(%{ingest_state: "download_failed"}), do: :ok
   defp check_idempotency(_), do: {:error, :already_processed}
 

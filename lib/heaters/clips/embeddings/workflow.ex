@@ -129,6 +129,10 @@ defmodule Heaters.Clips.Embeddings.Workflow do
       {"embedding_failed", "embedding"} ->
         :ok
 
+      {"embedding", "embedding"} ->
+        # Allow resuming interrupted embedding generation
+        :ok
+
       # Invalid transitions
       _ ->
         Logger.warning("Invalid state transition from '#{current_state}' to '#{target_state}'")

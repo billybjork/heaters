@@ -52,7 +52,10 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite do
            :ok <- validate_sprite_requirements(clip, initial_params),
            {:ok, video_path} <- download_video_file(clip, temp_dir),
            {:ok, video_metadata} <- extract_video_metadata(video_path),
-           _ <- Logger.debug("Sprite: About to merge adaptive parameters for duration: #{video_metadata.duration}"),
+           _ <-
+             Logger.debug(
+               "Sprite: About to merge adaptive parameters for duration: #{video_metadata.duration}"
+             ),
            final_params <- merge_sprite_parameters_adaptive(video_metadata, sprite_params),
            :ok <- validate_video_metadata(video_metadata, final_params),
            {:ok, sprite_spec} <- calculate_sprite_specifications(video_metadata, final_params),
@@ -115,7 +118,10 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite do
 
   @spec merge_sprite_parameters_adaptive(map(), map()) :: map()
   defp merge_sprite_parameters_adaptive(video_metadata, input_params) do
-    Logger.debug("Sprite: Merging sprite parameters with adaptive columns: #{inspect(input_params)}")
+    Logger.debug(
+      "Sprite: Merging sprite parameters with adaptive columns: #{inspect(input_params)}"
+    )
+
     Calculations.merge_sprite_params_adaptive(video_metadata, input_params)
   end
 

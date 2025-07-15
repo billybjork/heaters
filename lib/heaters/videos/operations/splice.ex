@@ -45,7 +45,7 @@ defmodule Heaters.Videos.Operations.Splice do
   ## Parameters
   - `source_video`: SourceVideo struct
   - `opts`: Scene detection options
-    - `:threshold` - Scene cut threshold (0.0-1.0, default: 0.3)
+    - `:threshold` - Scene cut threshold (0.0-1.0, default: 0.6)
     - `:method` - Detection method ("correl", "chisqr", "intersect", "bhattacharyya", default: "correl")
     - `:min_duration_seconds` - Minimum scene duration (default: 1.0)
     - `:force_redetect` - Skip cache and force re-detection (default: false)
@@ -181,12 +181,11 @@ defmodule Heaters.Videos.Operations.Splice do
     end
   end
 
-  defp run_python_scene_detection(source_video, local_video_path, opts) do
+  defp run_python_scene_detection(_source_video, local_video_path, opts) do
     # Prepare arguments for Python task
     python_args = %{
       source_video_path: local_video_path,
-      source_video_id: source_video.id,
-      threshold: Keyword.get(opts, :threshold, 0.3),
+      threshold: Keyword.get(opts, :threshold, 0.6),
       method: Keyword.get(opts, :method, "correl") |> to_string(),
       min_duration_seconds: Keyword.get(opts, :min_duration_seconds, 1.0)
     }

@@ -28,14 +28,27 @@ Heaters processes videos through a multi-stage pipeline: ingestion → clips →
 
 ```
 Source Video: new → downloading → downloaded → splicing → spliced
-                                                    ↓
+                      ↓              ↓           ↓
+               download_failed  (resumable)  splicing_failed
+                      ↑                          ↑
+                      └──────────┬───────────────┘
+                                 ↓
+                          (resumable processing)
+
 Clips: spliced → generating_sprite → pending_review → review_approved → keyframing → keyframed → embedding → embedded
-                                          ↓                    ↓
-                                   review_skipped    review_archived (terminal)
-                                    (terminal)              ↓
-                                          ↓         archive → cleanup
-                                   merge/split → new clips → generating_sprite
-                                   (60s buffer)
+          ↓              ↓                ↓                 ↓              ↓           ↓           ↓
+    sprite_failed  (resumable)   review_skipped    review_archived   keyframe_failed  (resumable) embedding_failed
+          ↑                           ↓                 ↓              ↑                              ↑
+          └─────┬─────────────────────┼─────────────────┼──────────────┘                              │
+                ↓                     ↓                 ↓                                              │
+        (resumable processing)  (terminal state)   archive → cleanup                                   │
+                                     ↑                                                                │
+                                     │                                                                │
+                              merge/split → new clips → spliced                                       │
+                              (60s buffer)                ↓                                          │
+                                     ↑                    └─────────────┬──────────────────────────────┘
+                                     └──────────────────────────────────┘
+                                                    (resumable processing)
 ```
 
 ## Key Design Decisions
@@ -153,6 +166,26 @@ All workers implement robust idempotency patterns:
 - **Resource Cleanup**: Ensure proper cleanup of temporary files and S3 objects
 - **Error Recovery**: Comprehensive error handling with detailed logging
 
+### Resumable Processing Architecture
+
+The system provides comprehensive resumable processing to handle container restarts and interruptions:
+
+- **Container Restart Resilience**: If containers shut down mid-processing, work resumes automatically when restarted
+- **No Manual Intervention**: Interrupted jobs are detected and resumed without operator action
+- **State-Based Recovery**: Each worker can handle items in intermediate states (downloading, splicing, generating_sprite, etc.)
+- **Temporary File Cleanup**: Orphaned temporary files from previous runs are cleaned up on application startup
+- **Progress Preservation**: Partial work is not lost and doesn't need to be repeated
+
+**Resumable States by Stage**:
+- **Ingest**: `new`, `downloading`, `download_failed`
+- **Splice**: `downloaded`, `splicing`, `splicing_failed`
+- **Sprite**: `spliced`, `generating_sprite`, `sprite_failed`
+- **Keyframe**: `review_approved`, `keyframing`, `keyframe_failed`
+- **Embedding**: `keyframed`, `embedding`, `embedding_failed`
+- **Archive**: `review_archived`
+
+This architecture ensures maximum reliability in production environments where container restarts are common.
+
 ## Workflow Examples
 
 ### Video Ingestion
@@ -232,10 +265,16 @@ Each stage is pure configuration:
 - **`Clips.Embeddings`**: ML embedding generation and queries
 - **`Infrastructure`**: I/O adapters (S3, FFmpeg, Database) and shared worker behaviors with consistent interfaces and robust error handling
 
-## Recent Reliability Improvements
+## Production Reliability Features
+
+### Resumable Processing and Container Resilience
+- **Automatic Resume**: All pipeline stages support resumable processing after container restarts
+- **State-Based Recovery**: Workers detect and handle intermediate states (downloading, splicing, generating_sprite, etc.)
+- **Temporary File Management**: Automatic cleanup of orphaned temporary files from previous runs on startup
+- **Progress Preservation**: Partial work is preserved and continued rather than restarted
 
 ### Sprite Generation Reliability
-- **Rust Integration**: Added `rambo` binary for efficient sprite generation
+- **Rust Integration**: Efficient sprite generation using `rambo` binary
 - **Docker Support**: Multi-stage Dockerfile with Rust toolchain for rambo compilation
 - **Error Handling**: Comprehensive error handling for sprite generation failures
 - **State Management**: Proper state transitions with idempotent worker patterns
@@ -247,52 +286,26 @@ Each stage is pure configuration:
 - **Idempotent Operations**: Safe retry mechanisms for failed S3 operations
 
 ### State Transition Management
-- **Idempotent Workers**: All workers check current state before processing
+- **Idempotent Workers**: All workers check current state before processing to prevent duplicate work
 - **Concurrent Safety**: Prevents multiple workers from processing the same clip
 - **Error Recovery**: Comprehensive error handling with detailed logging
 - **Database Consistency**: Proper datetime handling and schema validation
 
-### Database Schema Improvements
+### Database Schema Robustness
 - **Timestamp Standardization**: Consistent datetime handling across all tables
-- **Event Table Renaming**: `clip_events` → `review_events` for semantic clarity
-- **Index Optimization**: Improved database performance with proper indexing
+- **Event Table Organization**: Semantic table naming for clarity
+- **Index Optimization**: Database performance optimized with proper indexing
 - **Data Integrity**: Enhanced validation and constraint handling
-
-### Worker Organization and Consolidation ✅
-- **Semantic Organization**: Workers moved to business contexts for improved cohesion
-  - Video workers: `videos/operations/{ingest,splice}/worker.ex`
-  - Clip edit workers: `clips/operations/edits/{split,merge}/worker.ex`
-  - Clip artifact workers: `clips/operations/artifacts/{sprite,keyframe}/worker.ex`
-  - Clip archive workers: `clips/operations/archive/worker.ex`
-  - Embedding workers: `clips/embeddings/worker.ex`
-  - Infrastructure workers: `infrastructure/orchestration/dispatcher.ex`
-  - Infrastructure: `infrastructure/orchestration/{pipeline_config,worker_behavior}.ex`
-- **Shared Worker Behavior**: `Infrastructure.Orchestration.WorkerBehavior` eliminates 450+ lines of boilerplate per worker across all 9 workers
-  - Standardized performance monitoring and logging with automatic timing
-  - Consistent error handling with detailed stack traces and exception recovery
-  - Common idempotency patterns and helper functions (`check_complete_states`, `check_artifact_exists`)
-  - Centralized job lifecycle management with robust error handling
-  - Unified logging patterns with module-specific prefixes and structured output
-- **Fully Declarative Pipeline**: Workers focus purely on domain logic with zero direct enqueueing
-  - Pipeline dispatcher handles ALL job orchestration based on database state
-  - Clean separation between business logic (workers) and orchestration (pipeline)
-  - Single source of truth for workflow transitions eliminates imperative worker-to-worker communication
-- **Improved Maintainability**: Workers now focus purely on business logic rather than infrastructure concerns
-- **Type Safety**: Preserved all Dialyzer suppressions and maintained compile-time validation
-- **Zero Downtime**: Refactoring maintained 100% backward compatibility with existing job queues
 
 ## Key Benefits
 
-1. **Clear Separation**: Media processing vs business logic vs I/O operations
-2. **Maintainable**: Functional architecture with pure domain logic
-3. **Reliable**: Direct action execution with Oban reliability, structured error handling, and robust state management
-4. **Type-Safe**: Structured results with compile-time validation  
-5. **Testable**: Pure functions without I/O dependencies
-6. **Semantic**: Operations organized by business purpose, not implementation details
-7. **Performance**: Python scene detection leverages mature OpenCV algorithms with efficient PyRunner integration
-8. **Hybrid Efficiency**: Best of both worlds - Elixir for video processing operations, Python for scene detection/ML processing
-9. **Production Ready**: Comprehensive error handling, logging, and recovery mechanisms
-10. **Scalable**: Idempotent workers and robust orchestration patterns 
-11. **Well-Organized**: Semantic worker organization by business context improves code discoverability and maintenance
-12. **DRY Architecture**: Centralized WorkerBehavior eliminates 450+ lines of boilerplate across 9 workers while maintaining full functionality
-13. **Declarative Orchestration**: Fully declarative pipeline provides single source of truth with clear separation between business logic and workflow orchestration 
+1. **Production Reliable**: Resumable processing handles container restarts gracefully with automatic recovery
+2. **Clear Architecture**: Functional domain modeling with "I/O at the edges" and semantic organization
+3. **Type-Safe**: Structured result types with compile-time validation and rich metadata
+4. **Hybrid Efficient**: Native Elixir for video operations, Python for ML/scene detection - optimal performance
+5. **Zero Boilerplate**: Centralized WorkerBehavior eliminates repetitive code while maintaining full functionality
+6. **Declarative Pipeline**: Single source of truth for workflow orchestration with clear separation of concerns
+7. **Idempotent Operations**: All workers implement robust idempotency patterns for safe retries
+8. **Comprehensive Testing**: Pure functions enable thorough testing without I/O dependencies
+9. **Semantic Organization**: Operations organized by business purpose for improved maintainability
+10. **Scalable Design**: Robust orchestration patterns support production workloads with container resilience 

@@ -5,9 +5,43 @@ defmodule Heaters.Clips.Operations.Shared.TempManager do
   This module provides consistent temporary directory creation, cleanup, and
   management patterns across all transformation operations, eliminating
   duplicate implementations.
+
+  ## Startup Cleanup
+
+  Call `cleanup_orphaned_temp_files/0` during application startup to remove
+  temporary files from previous runs that may have been interrupted.
   """
 
   require Logger
+
+  @doc """
+  Clean up orphaned temporary files from previous runs.
+
+  Searches for and removes temporary directories that match our naming pattern
+  but were left behind from previous runs. This should be called during
+  application startup to ensure a clean state.
+
+  ## Returns
+  - `{:ok, cleanup_count}` on success with number of directories cleaned
+  - `{:error, reason}` on failure
+
+  ## Examples
+
+      {:ok, cleanup_count} = TempManager.cleanup_orphaned_temp_files()
+      Logger.info("Cleaned up orphaned temp directories: " <> Integer.to_string(cleanup_count))
+  """
+  @spec cleanup_orphaned_temp_files() :: {:ok, non_neg_integer()} | {:error, any()}
+  def cleanup_orphaned_temp_files() do
+    case System.tmp_dir() do
+      nil ->
+        Logger.warning("TempManager: Could not access system temp directory for orphan cleanup")
+        {:error, "Could not access system temp directory"}
+
+      temp_root ->
+        Logger.info("TempManager: Starting orphaned temp file cleanup in #{temp_root}")
+        cleanup_matching_directories(temp_root)
+    end
+  end
 
   @doc """
   Create a temporary directory for transformation operations.
@@ -190,6 +224,50 @@ defmodule Heaters.Clips.Operations.Shared.TempManager do
       end
     else
       {:error, "Directory does not exist: #{temp_dir}"}
+    end
+  end
+
+  # Private helper functions
+
+  @spec cleanup_matching_directories(String.t()) :: {:ok, non_neg_integer()} | {:error, any()}
+  defp cleanup_matching_directories(temp_root) do
+    try do
+      # Our temp directories follow the pattern: heaters_<prefix>_<unique_integer>
+      heaters_dirs =
+        File.ls!(temp_root)
+        |> Enum.filter(&String.starts_with?(&1, "heaters_"))
+        |> Enum.filter(&File.dir?(Path.join(temp_root, &1)))
+
+      cleaned_count =
+        heaters_dirs
+        |> Enum.map(&Path.join(temp_root, &1))
+        |> Enum.reduce(0, fn dir_path, acc ->
+          case cleanup_temp_directory(dir_path) do
+            :ok ->
+              Logger.debug("TempManager: Cleaned orphaned directory: #{dir_path}")
+              acc + 1
+
+            {:error, reason} ->
+              Logger.warning(
+                "TempManager: Failed to clean orphaned directory #{dir_path}: #{reason}"
+              )
+
+              acc
+          end
+        end)
+
+      if cleaned_count > 0 do
+        Logger.info("TempManager: Cleaned up #{cleaned_count} orphaned temp directories")
+      else
+        Logger.debug("TempManager: No orphaned temp directories found")
+      end
+
+      {:ok, cleaned_count}
+    rescue
+      e ->
+        error_msg = "Failed to cleanup orphaned temp directories: #{Exception.message(e)}"
+        Logger.error("TempManager: #{error_msg}")
+        {:error, error_msg}
     end
   end
 end

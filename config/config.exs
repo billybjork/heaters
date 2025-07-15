@@ -17,14 +17,10 @@ config :heaters, Oban,
   ],
   queues: [
     default: 10,
-    # For video processing
-    ingest: 3,
-    # Added missing queue for most workers
+    # For video processing, clip processing, and edit operations
     media_processing: 5,
-    # Added missing queue for dispatcher/archive
-    background_jobs: 2,
-    # Renamed from 'embed' to match worker usage
-    embeddings: 2
+    # For dispatcher and archive operations
+    background_jobs: 2
   ]
 
 # General application configuration

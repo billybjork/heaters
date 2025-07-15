@@ -15,17 +15,30 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
   The `label` field provides human-readable descriptions for logging.
 
   Pipeline Flow:
-  new → download → splice → sprites → keyframes → embeddings → archive
+  videos needing ingest → videos needing splice → sprites → keyframes → embeddings → archive
 
-  Review Action States:
+  ## Resumable Processing
+
+  The pipeline supports resumable processing of interrupted jobs across all stages:
+  - **Ingest Stage**: Processes videos in "new", "downloading", or "download_failed" states
+  - **Splice Stage**: Processes videos in "downloaded", "splicing", or "splicing_failed" states
+  - **Sprite Stage**: Processes clips in "spliced", "generating_sprite", or "sprite_failed" states
+  - **Keyframe Stage**: Processes clips in "review_approved", "keyframing", or "keyframe_failed" states
+  - **Embedding Stage**: Processes clips in "keyframed", "embedding", or "embedding_failed" states
+
+  When containers shut down mid-processing, work resumes automatically without manual intervention
+  or data loss. This provides production-grade reliability for video processing workloads.
+
+  ## Review Action States
+
+  Review actions are handled directly in the UI with immediate execution:
   - review_approved → keyframes (continues through pipeline)
   - review_skipped → terminal state (preserved with sprite sheet)
   - review_archived → archive (cleanup)
-  - merge/split actions → create new clips in spliced state
+  - merge/split actions → create new clips in spliced state (60-second undo buffer)
   - group actions → both clips advance to review_approved
 
-  Note: Review actions are handled directly in the UI with 60-second undo buffer
-  for merge/split operations.
+  The pipeline automatically picks up clips created by merge/split operations for sprite generation.
   """
 
   alias Heaters.Videos.Queries, as: VideoQueries
@@ -50,28 +63,28 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
   def stages do
     [
       %{
-        label: "new videos → download",
-        query: fn -> VideoQueries.get_videos_by_state("new") end,
+        label: "videos needing ingest → download",
+        query: fn -> VideoQueries.get_videos_needing_ingest() end,
         build: fn video -> IngestWorker.new(%{source_video_id: video.id}) end
       },
       %{
-        label: "downloaded videos → splice",
-        query: fn -> VideoQueries.get_videos_by_state("downloaded") end,
+        label: "videos needing splice → splice",
+        query: fn -> VideoQueries.get_videos_needing_splice() end,
         build: fn video -> SpliceWorker.new(%{source_video_id: video.id}) end
       },
       %{
-        label: "spliced clips → sprites",
-        query: fn -> ClipQueries.get_clips_by_state("spliced") end,
+        label: "clips needing sprites → sprites",
+        query: fn -> ClipQueries.get_clips_needing_sprites() end,
         build: fn clip -> SpriteWorker.new(%{clip_id: clip.id}) end
       },
       %{
-        label: "approved clips → keyframes",
-        query: fn -> ClipQueries.get_clips_by_state("review_approved") end,
+        label: "clips needing keyframes → keyframes",
+        query: fn -> ClipQueries.get_clips_needing_keyframes() end,
         build: fn clip -> KeyframeWorker.new(%{clip_id: clip.id, strategy: "multi"}) end
       },
       %{
-        label: "keyframed clips → embeddings",
-        query: fn -> ClipQueries.get_clips_by_state("keyframed") end,
+        label: "clips needing embeddings → embeddings",
+        query: fn -> ClipQueries.get_clips_needing_embeddings() end,
         build: fn clip ->
           EmbeddingWorker.new(%{
             clip_id: clip.id,

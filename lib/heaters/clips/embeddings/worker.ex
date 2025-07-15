@@ -32,15 +32,16 @@ defmodule Heaters.Clips.Embeddings.Worker do
   defp handle_embedding_work(%{"clip_id" => clip_id} = args) do
     Logger.info("EmbeddingWorker: Starting embedding generation for clip_id: #{clip_id}")
 
-    with {:ok, updated_clip} <- Embeddings.start_embedding(clip_id),
+    with {:ok, clip} <- Heaters.Clips.get_clip(clip_id),
+         {:ok, updated_clip} <- ensure_embedding_state(clip_id, clip),
          {:ok, clip_with_artifacts} <- Heaters.Clips.get_clip_with_artifacts(clip_id) do
       Logger.info("EmbeddingWorker: Running PyRunner for clip_id: #{clip_id}")
 
       # Extract keyframe S3 keys from clip artifacts
-      keyframe_s3_keys = 
+      keyframe_s3_keys =
         clip_with_artifacts.clip_artifacts
         |> Enum.filter(&(&1.artifact_type == "keyframe"))
-        |> Enum.map(&(&1.s3_key))
+        |> Enum.map(& &1.s3_key)
 
       # Get model name and generation strategy from job args
       model_name = Map.get(args, "model_name", "openai/clip-vit-base-patch32")
@@ -106,6 +107,19 @@ defmodule Heaters.Clips.Embeddings.Worker do
       {:error, reason} ->
         Logger.error("EmbeddingWorker: Error in workflow for clip #{clip_id}: #{inspect(reason)}")
         {:error, reason}
+    end
+  end
+
+  # Helper function to ensure clip is in embedding state, handling resumable processing
+  defp ensure_embedding_state(clip_id, clip) do
+    case clip.ingest_state do
+      "embedding" ->
+        Logger.info("EmbeddingWorker: Clip #{clip_id} already in embedding state, resuming")
+        {:ok, clip}
+
+      _ ->
+        # Transition to embedding state for other valid states
+        Embeddings.start_embedding(clip_id)
     end
   end
 

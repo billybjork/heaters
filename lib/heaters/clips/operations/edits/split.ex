@@ -194,6 +194,7 @@ defmodule Heaters.Clips.Operations.Edits.Split do
   @spec upload_split_clips(list(map()), Clip.t()) :: {:ok, list(map())} | {:error, any()}
   defp upload_split_clips(created_clips, %Clip{} = clip) do
     source_title = get_source_title(clip)
+
     uploaded_clips =
       created_clips
       |> Enum.with_index()

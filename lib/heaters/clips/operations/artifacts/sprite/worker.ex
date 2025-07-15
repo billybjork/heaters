@@ -20,7 +20,7 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.Worker do
 
     with {:ok, clip} <- ClipQueries.get_clip_with_artifacts(clip_id),
          :ok <- check_idempotency(clip),
-         {:ok, updated_clip} <- Operations.start_sprite_generation(clip_id) do
+         {:ok, updated_clip} <- ensure_sprite_generating_state(clip_id, clip) do
       Logger.info("SpriteWorker: Running Elixir sprite generation for clip_id: #{clip_id}")
 
       # Use the native Elixir sprite generation module
@@ -67,6 +67,19 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.Worker do
     end
   end
 
+  # Helper function to ensure clip is in generating_sprite state, handling resumable processing
+  defp ensure_sprite_generating_state(clip_id, clip) do
+    case clip.ingest_state do
+      "generating_sprite" ->
+        Logger.info("SpriteWorker: Clip #{clip_id} already in generating_sprite state, resuming")
+        {:ok, clip}
+
+      _ ->
+        # Transition to generating_sprite state for other valid states
+        Operations.start_sprite_generation(clip_id)
+    end
+  end
+
   # Idempotency check: Skip processing if already done or has sprite artifacts
   defp check_idempotency(clip) do
     with :ok <- WorkerBehavior.check_complete_states(clip, @complete_states),
@@ -76,8 +89,10 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.Worker do
     end
   end
 
+  # Updated to support resumable processing
   defp check_sprite_specific_states(%{ingest_state: "generating_sprite"}),
-    do: {:error, :already_processed}
+    # Allow resuming interrupted sprite generation
+    do: :ok
 
   defp check_sprite_specific_states(%{ingest_state: "spliced"}), do: :ok
   defp check_sprite_specific_states(%{ingest_state: "sprite_failed"}), do: :ok

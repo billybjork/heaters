@@ -59,23 +59,25 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.Calculations do
 
   @doc """
   Merge sprite parameters with adaptive column count based on video duration.
-  
+
   ## Examples
-  
+
       iex> video_meta = %{duration: 15.0}
       iex> Calculations.merge_sprite_params_adaptive(video_meta, %{})
       %{tile_width: 480, tile_height: -1, fps: 24, cols: 8}
   """
   @spec merge_sprite_params_adaptive(map(), map()) :: sprite_params()
-  def merge_sprite_params_adaptive(video_metadata, input_params) when is_map(video_metadata) and is_map(input_params) do
+  def merge_sprite_params_adaptive(video_metadata, input_params)
+      when is_map(video_metadata) and is_map(input_params) do
     duration = Map.get(video_metadata, :duration, 0.0)
     adaptive_cols = calculate_adaptive_cols(duration)
-    
+
     defaults = %{
       tile_width: @default_tile_width,
       tile_height: @default_tile_height,
       fps: @default_sprite_fps,
-      cols: adaptive_cols  # Use adaptive cols instead of fixed default
+      # Use adaptive cols instead of fixed default
+      cols: adaptive_cols
     }
 
     Map.merge(defaults, input_params)
@@ -83,11 +85,11 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.Calculations do
 
   @doc """
   Calculate adaptive column count based on clip duration to prevent excessively tall sprite sheets.
-  
+
   Longer clips get more columns to keep the sprite sheet height manageable for FFmpeg.
-  
+
   ## Examples
-  
+
       iex> Calculations.calculate_adaptive_cols(10.0)
       5
       
@@ -100,10 +102,14 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.Calculations do
   @spec calculate_adaptive_cols(float()) :: integer()
   def calculate_adaptive_cols(duration) when is_float(duration) do
     cond do
-      duration <= 10.0 -> 5   # Short clips: 5 columns (traditional)
-      duration <= 20.0 -> 8   # Medium clips: 8 columns 
-      duration <= 30.0 -> 10  # Long clips: 10 columns
-      true -> 12              # Very long clips: 12 columns
+      # Short clips: 5 columns (traditional)
+      duration <= 10.0 -> 5
+      # Medium clips: 8 columns 
+      duration <= 20.0 -> 8
+      # Long clips: 10 columns
+      duration <= 30.0 -> 10
+      # Very long clips: 12 columns
+      true -> 12
     end
   end
 

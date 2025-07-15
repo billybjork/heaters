@@ -36,7 +36,6 @@ defmodule Heaters.Infrastructure.Adapters.PyRunnerAdapter do
     end
   end
 
-
   @doc """
   Checks if the Python runner environment is properly configured.
 

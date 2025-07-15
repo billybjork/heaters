@@ -16,6 +16,39 @@ defmodule Heaters.Clips.Queries do
   end
 
   @doc """
+  Get all clips that need sprite generation (spliced, generating_sprite, or sprite_failed).
+  This enables resumable processing of interrupted jobs.
+  """
+  def get_clips_needing_sprites() do
+    states = ["spliced", "generating_sprite", "sprite_failed"]
+
+    from(c in Clip, where: c.ingest_state in ^states)
+    |> Repo.all()
+  end
+
+  @doc """
+  Get all clips that need keyframe extraction (review_approved, keyframing, or keyframe_failed).
+  This enables resumable processing of interrupted jobs.
+  """
+  def get_clips_needing_keyframes() do
+    states = ["review_approved", "keyframing", "keyframe_failed"]
+
+    from(c in Clip, where: c.ingest_state in ^states)
+    |> Repo.all()
+  end
+
+  @doc """
+  Get all clips that need embedding generation (keyframed, embedding, or embedding_failed).
+  This enables resumable processing of interrupted jobs.
+  """
+  def get_clips_needing_embeddings() do
+    states = ["keyframed", "embedding", "embedding_failed"]
+
+    from(c in Clip, where: c.ingest_state in ^states)
+    |> Repo.all()
+  end
+
+  @doc """
   Get a clip by ID.
   Returns {:ok, clip} if found, {:error, :not_found} otherwise.
   """

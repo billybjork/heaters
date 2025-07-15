@@ -342,6 +342,8 @@ defmodule Heaters.Clips.Operations do
   defp validate_sprite_transition(current_state) do
     case current_state do
       "spliced" -> :ok
+      # Allow resuming interrupted sprite generation
+      "generating_sprite" -> :ok
       "sprite_failed" -> :ok
       _ -> {:error, :invalid_state_transition}
     end
