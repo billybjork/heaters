@@ -61,11 +61,17 @@ defmodule Heaters.Clips.Operations.Artifacts.Keyframe.Worker do
   # Idempotency check: Skip processing if already done or has keyframe artifacts
   defp check_idempotency(clip) do
     with :ok <- WorkerBehavior.check_complete_states(clip, @complete_states),
-         :ok <- WorkerBehavior.check_artifact_exists(clip, "keyframe"),
+         :ok <- check_artifact_exists_unless_retry(clip),
          :ok <- check_keyframe_specific_states(clip) do
       :ok
     end
   end
+
+  # For retry states, skip artifact check to allow reprocessing
+  defp check_artifact_exists_unless_retry(%{ingest_state: "keyframe_failed"}), do: :ok
+
+  defp check_artifact_exists_unless_retry(clip),
+    do: WorkerBehavior.check_artifact_exists(clip, "keyframe")
 
   defp check_keyframe_specific_states(%{ingest_state: "review_approved"}), do: :ok
   defp check_keyframe_specific_states(%{ingest_state: "keyframe_failed"}), do: :ok

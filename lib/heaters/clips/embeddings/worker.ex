@@ -9,7 +9,7 @@ defmodule Heaters.Clips.Embeddings.Worker do
   alias Heaters.Infrastructure.Orchestration.WorkerBehavior
   require Logger
 
-  @complete_states ["embedded", "embedding_failed"]
+  @complete_states ["embedded"]
 
   # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, [handle_work: 1]}
@@ -129,10 +129,14 @@ defmodule Heaters.Clips.Embeddings.Worker do
   # Idempotency check: Skip processing if already done or has embedding for this model/strategy
   defp check_idempotency(clip) do
     with :ok <- WorkerBehavior.check_complete_states(clip, @complete_states),
-         :ok <- check_embedding_exists(clip) do
+         :ok <- check_embedding_exists_unless_retry(clip) do
       :ok
     end
   end
+
+  # For retry states, skip embedding check to allow reprocessing
+  defp check_embedding_exists_unless_retry(%{ingest_state: "embedding_failed"}), do: :ok
+  defp check_embedding_exists_unless_retry(clip), do: check_embedding_exists(clip)
 
   defp check_embedding_exists(clip) do
     # Check if embedding already exists for this specific model and strategy

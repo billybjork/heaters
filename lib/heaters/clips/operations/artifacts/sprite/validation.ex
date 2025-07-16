@@ -10,6 +10,7 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.Validation do
   alias Heaters.Clips.Operations.Shared.ClipValidation
   alias Heaters.Clips.Operations.Artifacts.Sprite.VideoMetadata
   alias Heaters.Clips.Operations.Artifacts.Sprite.Calculations
+  alias Heaters.Clips.Operations.Shared.Constants
 
   @doc """
   Validate that a clip and parameters are suitable for sprite generation.
@@ -94,14 +95,18 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.Validation do
       iex> Validation.validate_video_metadata_for_sprite(metadata)
       :ok
 
-      iex> metadata = %{duration: 0.5, fps: 30.0}
+      iex> metadata = %{duration: 0.05, fps: 30.0}
       iex> Validation.validate_video_metadata_for_sprite(metadata)
       {:error, :video_too_short}
   """
   @spec validate_video_metadata_for_sprite(map()) :: :ok | {:error, atom()}
   def validate_video_metadata_for_sprite(metadata) when is_map(metadata) do
     with :ok <- VideoMetadata.validate_metadata(metadata),
-         true <- VideoMetadata.sufficient_duration?(metadata.duration, 1.0) do
+         true <-
+           VideoMetadata.sufficient_duration?(
+             metadata.duration,
+             Constants.min_clip_duration_seconds()
+           ) do
       :ok
     else
       {:error, _reason} -> {:error, :invalid_video_metadata}

@@ -194,6 +194,145 @@ defmodule Heaters.Infrastructure.Adapters.DatabaseAdapter do
     |> Repo.insert()
   end
 
+  @doc """
+  Check if clips exist with the given identifiers.
+
+  ## Parameters
+  - `identifiers`: List of clip_identifier values to check
+
+  ## Returns
+  - `{:ok, count}` where count is the number of existing clips found
+  - `{:error, reason}` on database error
+
+  ## Examples
+
+      {:ok, 2} = DatabaseAdapter.check_clips_exist_by_identifiers(["clip_1_100", "clip_101_200"])
+      {:ok, 0} = DatabaseAdapter.check_clips_exist_by_identifiers(["nonexistent_clip"])
+  """
+  @spec check_clips_exist_by_identifiers([String.t()]) :: {:ok, integer()} | {:error, any()}
+  def check_clips_exist_by_identifiers(identifiers) when is_list(identifiers) do
+    alias Heaters.Repo
+    import Ecto.Query
+
+    try do
+      count =
+        from(c in Clip, where: c.clip_identifier in ^identifiers)
+        |> Repo.aggregate(:count)
+
+      {:ok, count}
+    rescue
+      e -> {:error, Exception.message(e)}
+    end
+  end
+
+  @doc """
+  Create multiple clips with conflict handling for duplicate clip_filepath values.
+
+  Uses INSERT...ON CONFLICT DO NOTHING to gracefully handle duplicate entries.
+
+  ## Parameters
+  - `clips_attrs`: List of clip attribute maps
+
+  ## Returns
+  - `{:ok, clips}` with list of created clips (may be empty if all were duplicates)
+  - `{:error, reason}` on database error
+
+  ## Examples
+
+      clips_attrs = [%{source_video_id: 1, clip_filepath: "clip1.mp4"}, ...]
+      {:ok, clips} = DatabaseAdapter.create_clips_with_conflict_handling(clips_attrs)
+  """
+  @spec create_clips_with_conflict_handling([map()]) :: {:ok, [Clip.t()]} | {:error, any()}
+  def create_clips_with_conflict_handling(clips_attrs) when is_list(clips_attrs) do
+    alias Heaters.Repo
+
+    # Validate all clips before bulk insert
+    validated_changesets = Enum.map(clips_attrs, &Clip.changeset(%Clip{}, &1))
+
+    case validate_clip_changesets(validated_changesets) do
+      :ok ->
+        try do
+          # Use ON CONFLICT DO NOTHING to handle duplicate clip_filepath gracefully
+          {_count, clips} = Repo.insert_all(
+            Clip,
+            clips_attrs,
+            returning: true,
+            on_conflict: :nothing,
+            conflict_target: :clip_filepath
+          )
+
+          {:ok, clips}
+        rescue
+          e -> {:error, Exception.message(e)}
+        end
+
+      {:error, errors} ->
+        {:error, "Validation failed: #{format_clip_validation_errors(errors)}"}
+    end
+  end
+
+  @doc """
+  Get clips by their identifiers.
+
+  ## Parameters
+  - `identifiers`: List of clip_identifier values to fetch
+
+  ## Returns
+  - `{:ok, clips}` with list of found clips
+  - `{:error, reason}` on database error
+
+  ## Examples
+
+      {:ok, clips} = DatabaseAdapter.get_clips_by_identifiers(["clip_1_100", "clip_101_200"])
+  """
+  @spec get_clips_by_identifiers([String.t()]) :: {:ok, [Clip.t()]} | {:error, any()}
+  def get_clips_by_identifiers(identifiers) when is_list(identifiers) do
+    alias Heaters.Repo
+    import Ecto.Query
+
+    try do
+      clips =
+        from(c in Clip, where: c.clip_identifier in ^identifiers)
+        |> Repo.all()
+
+      {:ok, clips}
+    rescue
+      e -> {:error, Exception.message(e)}
+    end
+  end
+
+  @doc """
+  Fetch clips by their identifiers.
+
+  Used to retrieve existing clips when conflict handling indicates they already exist.
+
+  ## Parameters
+  - `identifiers`: List of clip_identifier values to fetch
+
+  ## Returns
+  - `{:ok, clips}` with list of found clips
+  - `{:error, reason}` on database error
+
+  ## Examples
+
+      {:ok, clips} = DatabaseAdapter.fetch_clips_by_identifiers(["clip_1_100", "clip_101_200"])
+  """
+  @spec fetch_clips_by_identifiers([String.t()]) :: {:ok, [Clip.t()]} | {:error, any()}
+  def fetch_clips_by_identifiers(identifiers) when is_list(identifiers) do
+    alias Heaters.Repo
+    import Ecto.Query
+
+    try do
+      clips =
+        from(c in Clip, where: c.clip_identifier in ^identifiers)
+        |> Repo.all()
+
+      {:ok, clips}
+    rescue
+      e -> {:error, Exception.message(e)}
+    end
+  end
+
   # Private helper functions
 
   defp validate_clip_changesets(changesets) do

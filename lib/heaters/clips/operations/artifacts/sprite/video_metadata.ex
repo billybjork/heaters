@@ -130,10 +130,10 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.VideoMetadata do
 
   ## Examples
 
-      iex> VideoMetadata.sufficient_duration?(5.0, 1.0)
+      iex> VideoMetadata.sufficient_duration?(0.2, 0.1)
       true
 
-      iex> VideoMetadata.sufficient_duration?(0.5, 1.0)
+      iex> VideoMetadata.sufficient_duration?(0.05, 0.1)
       false
   """
   @spec sufficient_duration?(float(), float()) :: boolean()

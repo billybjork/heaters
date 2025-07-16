@@ -40,7 +40,7 @@ defmodule Heaters.Videos.Operations.Splice.Worker do
   alias Heaters.Infrastructure.Orchestration.WorkerBehavior
   require Logger
 
-  @splicing_complete_states ["spliced", "splicing_failed"]
+  @splicing_complete_states ["spliced"]
 
   @impl WorkerBehavior
   def handle_work(args) do
@@ -75,6 +75,25 @@ defmodule Heaters.Videos.Operations.Splice.Worker do
     run_splice_task(source_video)
   end
 
+  defp handle_splicing(%SourceVideo{ingest_state: "splicing_failed"} = source_video) do
+    Logger.info(
+      "SpliceWorker: Source video #{source_video.id} in 'splicing_failed' state, retrying splice"
+    )
+
+    # Transition to splicing state for retry
+    case StateManager.start_splicing(source_video.id) do
+      {:ok, updated_video} ->
+        run_splice_task(updated_video)
+
+      {:error, reason} ->
+        Logger.error(
+          "SpliceWorker: Failed to transition to splicing state for retry: #{inspect(reason)}"
+        )
+
+        {:error, reason}
+    end
+  end
+
   defp handle_splicing(source_video) do
     # Use new StateManager for splice-specific state transitions
     case StateManager.start_splicing(source_video.id) do
@@ -93,7 +112,7 @@ defmodule Heaters.Videos.Operations.Splice.Worker do
     )
 
     splice_opts = [
-      threshold: 0.3,
+      threshold: 0.6,
       method: :correl,
       min_duration_seconds: 1.0
     ]

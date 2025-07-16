@@ -80,7 +80,14 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite do
               _ -> %{ingest_state: "unknown"}
             end
 
-          error_context = get_error_context(domain_error, clip_for_error)
+          # Try to get video metadata for error context if available
+          error_context_data =
+            case extract_video_metadata_for_error(clip_for_error, temp_dir) do
+              {:ok, vm} -> Map.put(clip_for_error, :video_metadata, vm)
+              _ -> clip_for_error
+            end
+
+          error_context = get_error_context(domain_error, error_context_data)
           error_message = ErrorFormatting.format_domain_error(domain_error, error_context)
           Logger.error("Sprite: Domain error for clip_id: #{clip_id}, error: #{error_message}")
           {:error, error_message}
@@ -228,7 +235,21 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite do
   end
 
   @spec get_error_context(atom(), map()) :: any()
+  defp get_error_context(:video_too_short, %{video_metadata: video_metadata}) do
+    Map.get(video_metadata, :duration, "unknown")
+  end
+
   defp get_error_context(_, _), do: "unknown"
+
+  defp extract_video_metadata_for_error(clip, temp_dir) do
+    case download_video_file(clip, temp_dir) do
+      {:ok, video_path} ->
+        extract_video_metadata(video_path)
+
+      _ ->
+        {:error, :video_download_failed}
+    end
+  end
 
   @spec build_sprite_metadata(map(), map(), map()) :: map()
   defp build_sprite_metadata(sprite_spec, video_metadata, clip) do

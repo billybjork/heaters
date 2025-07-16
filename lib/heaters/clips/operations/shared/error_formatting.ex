@@ -16,8 +16,8 @@ defmodule Heaters.Clips.Operations.Shared.ErrorFormatting do
       iex> ErrorFormatting.format_domain_error(:invalid_state_for_sprite, "pending_review")
       "Clip state 'pending_review' is not valid for sprite generation. Valid states: [\"spliced\"]"
 
-      iex> ErrorFormatting.format_domain_error(:video_too_short, 0.5)
-      "Video too short for processing: 0.5s"
+      iex> ErrorFormatting.format_domain_error(:video_too_short, 0.05)
+      "Video too short for processing: 0.05s"
   """
   @spec format_domain_error(atom(), any()) :: String.t()
   def format_domain_error(:invalid_state_for_sprite, state) do
@@ -113,10 +113,10 @@ defmodule Heaters.Clips.Operations.Shared.ErrorFormatting do
 
       iex> errors = [
       ...>   {:invalid_state_for_sprite, "pending_review"},
-      ...>   {:video_too_short, 0.5}
+      ...>   {:video_too_short, 0.05}
       ...> ]
       iex> ErrorFormatting.format_multiple_errors(errors)
-      "Multiple errors: Clip state 'pending_review' is not valid for sprite generation. Valid states: [\"spliced\"]; Video too short for processing: 0.5s"
+              "Multiple errors: Clip state 'pending_review' is not valid for sprite generation. Valid states: [\"spliced\"]; Video too short for processing: 0.05s"
   """
   @spec format_multiple_errors([{atom(), any()}]) :: String.t()
   def format_multiple_errors(errors) when is_list(errors) do

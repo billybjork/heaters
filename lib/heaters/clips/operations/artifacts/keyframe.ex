@@ -234,9 +234,9 @@ defmodule Heaters.Clips.Operations.Artifacts.Keyframe do
           :ok ->
             {:ok,
              %{
-               "artifact_type" => "keyframe",
-               "s3_key" => s3_key,
-               "metadata" => %{
+               artifact_type: "keyframe",
+               s3_key: s3_key,
+               metadata: %{
                  "tag" => keyframe["tag"],
                  "timestamp_sec" => keyframe["timestamp_sec"],
                  "file_size" => keyframe["file_size"],

@@ -4,7 +4,6 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
 
   This module consolidates FFmpeg command construction and execution patterns
   used across video splitting, sprite generation, merging, and metadata extraction.
-  Eliminates ~140 lines of duplicated FFmpeg handling code.
 
   Key functions:
   - Video clip creation with standardized encoding settings
@@ -37,11 +36,14 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
   Creates a video clip with standardized encoding settings.
 
   Replicates the FFmpeg command used in split operations:
-  ffmpeg -i input -ss start_time -to end_time
+  ffmpeg -ss start_time -i input -t duration
     -map 0:v:0? -map 0:a:0?
-    -c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p
+    -c:v libx264 -preset fast -crf 25 -pix_fmt yuv420p
     -c:a aac -b:a 128k
     -movflags +faststart -y output
+
+  Note: The -ss option is applied to the input file for efficient seeking,
+  especially important for clips that start mid-video.
 
   ## Parameters
   - `input_path`: Path to input video file
@@ -65,11 +67,18 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
         "FFmpegRunner: Creating video clip with FFmpex - start_time=#{start_time}, duration=#{duration}"
       )
 
+      # Additional validation for very short clips
+      if duration < 1.0 do
+        Logger.debug(
+          "FFmpegRunner: Creating short clip (#{duration}s) - using optimized settings"
+        )
+      end
+
       command =
         FFmpex.new_command()
         |> add_input_file(input_path)
-        |> add_output_file(output_path)
         |> add_file_option(option_ss(start_time_str))
+        |> add_output_file(output_path)
         |> add_file_option(option_t(duration_str))
         |> add_file_option(option_map("0:v:0?"))
         |> add_file_option(option_map("0:a:0?"))
@@ -460,7 +469,9 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
   Extracts keyframes from video at specific timestamps.
 
   Uses FFmpeg to extract individual frames at precise timestamps:
-  ffmpeg -i input.mp4 -ss timestamp -vframes 1 -q:v 2 output.jpg
+  ffmpeg -ss timestamp -i input.mp4 -vframes 1 -q:v 2 output.jpg
+
+  Note: The -ss option is applied to the input file for efficient seeking.
 
   ## Parameters
   - `video_path`: Path to input video file
@@ -595,8 +606,8 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
       command =
         FFmpex.new_command()
         |> add_input_file(video_path)
-        |> add_output_file(output_path)
         |> add_file_option(option_ss(timestamp_str))
+        |> add_output_file(output_path)
         |> add_file_option(option_vframes("1"))
         |> add_stream_specifier(stream_type: :video)
         |> add_stream_option(option_q(to_string(quality)))

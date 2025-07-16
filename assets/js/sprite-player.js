@@ -127,6 +127,8 @@ class SpritePlayer {
     this.meta = meta;
 
     /* runtime state */
+    // Frame indexing: Frontend uses 1-indexed frames (1 to clip_total_frames-1)
+    // Backend uses 0-indexed absolute frames from source video
     this.currentFrame = 1; // avoid padding pixel in frame 0
     this.isPlaying = false;
     this.playbackInterval = null;

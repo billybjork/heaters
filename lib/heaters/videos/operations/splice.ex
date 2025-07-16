@@ -244,7 +244,7 @@ defmodule Heaters.Videos.Operations.Splice do
 
   defp parse_detection_params(detection_params) do
     %{
-      threshold: Map.get(detection_params, "threshold", 0.3),
+      threshold: Map.get(detection_params, "threshold", 0.6),
       method: Map.get(detection_params, "method", "correl") |> String.to_atom(),
       min_duration_seconds: Map.get(detection_params, "min_duration_seconds", 1.0)
     }

@@ -88,10 +88,16 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.Worker do
   defp check_idempotency(clip) do
     with :ok <- WorkerBehavior.check_complete_states(clip, @complete_states),
          :ok <- check_sprite_specific_states(clip),
-         :ok <- WorkerBehavior.check_artifact_exists(clip, "sprite_sheet") do
+         :ok <- check_artifact_exists_unless_retry(clip) do
       :ok
     end
   end
+
+  # For retry states, skip artifact check to allow reprocessing
+  defp check_artifact_exists_unless_retry(%{ingest_state: "sprite_failed"}), do: :ok
+
+  defp check_artifact_exists_unless_retry(clip),
+    do: WorkerBehavior.check_artifact_exists(clip, "sprite_sheet")
 
   # Updated to support resumable processing
   defp check_sprite_specific_states(%{ingest_state: "generating_sprite"}),

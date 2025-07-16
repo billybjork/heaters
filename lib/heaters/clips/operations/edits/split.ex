@@ -5,6 +5,34 @@ defmodule Heaters.Clips.Operations.Edits.Split do
   Splits video clips at specified frame boundaries, creating two separate clips
   when the resulting segments meet minimum duration requirements.
 
+  ## Pure Clip-Relative Approach
+
+  This module implements a pure clip-relative approach for simplicity and efficiency:
+
+  1. **Frontend**: Uses 1-indexed clip-relative frames (1 to total_frames-1)
+  2. **Backend Validation**: Validates against clip duration using consistent FPS calculation
+  3. **FFmpeg Operations**: Works directly with clip files using clip-relative timestamps
+  4. **No Source Downloads**: Avoids downloading multi-gigabyte source videos
+
+  Frame-to-time conversion is done using clip-relative coordinates:
+  - `clip_relative_time = (split_frame - 1) / fps`
+  - Split validation: `1 < split_frame < clip_total_frames`
+
+  ## Frame Indexing Consistency Fix
+
+  The system now ensures consistent frame calculations between frontend and backend:
+  - **FPS Source Priority**: sprite metadata fps → source video fps → processing metadata fps → 30.0 fallback
+  - **Calculation Method**: Uses `Float.ceil(duration * fps)` to match sprite sheet logic exactly
+  - **Eliminates Errors**: Prevents "Split frame X is outside clip range" errors from FPS mismatches
+
+  ## Idempotent and Transactional Operations
+
+  Split operations are designed for production reliability:
+  - **Database-First Approach**: Creates clip records before deleting original files
+  - **Conflict Resolution**: Handles unique constraint violations gracefully
+  - **Retry Safety**: Detects already-completed splits and handles file-not-found scenarios
+  - **State Validation**: Checks for review_archived state and existing split clips
+
   Uses domain modules for business logic and infrastructure adapters for I/O operations.
   """
 
@@ -12,6 +40,7 @@ defmodule Heaters.Clips.Operations.Edits.Split do
 
   alias Heaters.Clips.Clip
   alias Heaters.Clips.Operations.Shared.{Types, TempManager, FFmpegRunner}
+  alias Heaters.Utils
 
   # Domain modules (pure business logic)
   alias Heaters.Clips.Operations.Edits.Split.{Calculations, Validation, FileNaming}
@@ -23,13 +52,48 @@ defmodule Heaters.Clips.Operations.Edits.Split do
   @doc """
   Splits a clip at the specified frame, creating two separate clips.
 
+  ## Frame Number Convention: CLIP-RELATIVE FRAMES
+
+  **CRITICAL**: The `split_at_frame` parameter MUST be a clip-relative frame number
+  (1-indexed), NOT an absolute source video frame number.
+
+  - Frame validation: `1 < split_at_frame < clip_total_frames`
+  - Both resulting segments must meet minimum duration requirements
+  - Split frame cannot be at frame 1 or last frame (would create zero-duration segments)
+
+  ## Operation Flow
+
+  1. **Idempotency Check**: Detects if split already completed (clips exist or archived)
+  2. **Validation**: Validates clip state, file existence, and frame bounds
+  3. **Video Processing**: Downloads clip, creates split segments, uploads to S3
+  4. **Database Operations**: Creates new clip records with conflict handling
+  5. **Cleanup**: Deletes original clip file and updates state to review_archived
+
+  ## Reliability Features
+
+  - **Database-First**: Creates records before irreversible S3 deletion
+  - **Conflict Resolution**: Handles duplicate `clip_filepath` entries gracefully
+  - **Retry Safety**: Detects already-processed operations and file-not-found scenarios
+  - **Frame Consistency**: Uses same FPS calculation as sprite metadata for validation
+
   ## Parameters
-  - `clip_id`: The ID of the clip to split
-  - `split_at_frame`: The frame number where to split the video
+  - `clip_id`: ID of the clip to split
+  - `split_at_frame`: Clip-relative frame number (1-indexed) where to split
 
   ## Returns
-  - `{:ok, SplitResult.t()}` on success with created clip data
-  - `{:error, reason}` on failure
+  - `{:ok, %SplitResult{}}` on success with new clip IDs and metadata
+  - `{:error, :already_processed}` if split already completed (idempotent)
+  - `{:error, reason}` on validation or processing errors
+
+  ## Examples
+
+      # Split clip 123 at frame 50 (clip-relative)
+      {:ok, result} = Split.run_split(123, 50)
+      result.new_clip_ids
+      # => [124, 125]
+
+      # Already processed - idempotent behavior
+      {:error, :already_processed} = Split.run_split(123, 50)
   """
   @spec run_split(integer(), integer()) :: {:ok, Types.SplitResult.t()} | {:error, any()}
   def run_split(clip_id, split_at_frame) do
@@ -39,6 +103,7 @@ defmodule Heaters.Clips.Operations.Edits.Split do
 
     TempManager.with_temp_directory("split", fn temp_dir ->
       with {:ok, clip} <- fetch_clip_data(clip_id),
+           :ok <- check_split_idempotency(clip, split_at_frame),
            :ok <- validate_split_requirements(clip, split_at_frame),
            fps <- extract_video_fps(clip),
            {:ok, split_params} <- build_split_parameters(clip, split_at_frame, fps),
@@ -48,9 +113,11 @@ defmodule Heaters.Clips.Operations.Edits.Split do
            {:ok, created_clips} <-
              create_split_video_files(local_video_path, temp_dir, split_segments, split_params),
            {:ok, uploaded_clips} <- upload_split_clips(created_clips, clip),
-           {:ok, cleanup_result} <- cleanup_original_file(clip),
+           # CRITICAL FIX: Database operations BEFORE irreversible cleanup
            {:ok, new_clip_records} <- create_clip_records(uploaded_clips, clip),
-           :ok <- update_original_clip_state(clip_id) do
+           :ok <- update_original_clip_state(clip_id),
+           # Now safe to cleanup original file after database success
+           {:ok, cleanup_result} <- cleanup_original_file(clip) do
         duration_ms = calculate_duration(start_time)
 
         result =
@@ -87,7 +154,9 @@ defmodule Heaters.Clips.Operations.Edits.Split do
 
   @spec extract_video_fps(Clip.t()) :: float()
   defp extract_video_fps(clip) do
-    Calculations.extract_fps_from_metadata(clip, 30.0)
+    # Use the same consistent FPS calculation as validation and calculations modules
+    # This ensures all split operations use identical frame counting logic
+    Calculations.extract_consistent_fps(clip)
   end
 
   @spec build_split_parameters(Clip.t(), integer(), float()) ::
@@ -98,8 +167,25 @@ defmodule Heaters.Clips.Operations.Edits.Split do
 
   @spec download_source_video(Clip.t(), String.t()) :: {:ok, String.t()} | {:error, any()}
   defp download_source_video(clip, temp_dir) do
+    # Download the clip file for efficient extraction
+    # Note: Domain logic calculates absolute timestamps, then converts to clip-relative
     local_filename = Path.basename(clip.clip_filepath)
-    S3Adapter.download_clip_video(clip, temp_dir, local_filename)
+
+    case S3Adapter.download_clip_video(clip, temp_dir, local_filename) do
+      {:ok, local_path} ->
+        {:ok, local_path}
+
+      {:error, error_string} when is_binary(error_string) ->
+        # S3.download_file returns string errors, check if it's a 404-type error
+        if String.contains?(error_string, "404") or String.contains?(error_string, "not found") do
+          Logger.error("Split: Original clip file not found in S3: #{clip.clip_filepath}")
+          Logger.error("Split: This may indicate the file was already deleted by a previous split operation")
+          {:error, "Original clip file not found - may have been deleted by previous operation"}
+        else
+          Logger.error("Split: Failed to download clip file: #{error_string}")
+          {:error, error_string}
+        end
+    end
   end
 
   @spec calculate_split_segments(Calculations.split_params()) ::
@@ -166,28 +252,79 @@ defmodule Heaters.Clips.Operations.Edits.Split do
     clip_identifier = FileNaming.generate_clip_identifier(source_title, clip_segment)
     output_path = Path.join(output_dir, filename)
 
-    case FFmpegRunner.create_video_clip(source_video_path, output_path, start_time, end_time) do
-      {:ok, file_size} ->
-        clip_data =
-          Map.merge(clip_segment, %{
-            clip_identifier: clip_identifier,
-            filename: filename,
-            local_path: output_path,
-            file_size: file_size
-          })
+    Logger.debug(
+      "Split: Creating video clip #{filename} with start_time=#{start_time}, end_time=#{end_time}, duration=#{duration}"
+    )
 
-        segment_label = if segment_type == :before_split, do: "A", else: "B"
-
-        Logger.info(
-          "Split: Created clip #{segment_label}: #{filename} (#{Float.round(duration, 2)}s)"
+    # Validate time ranges before calling FFmpeg
+    cond do
+      start_time >= end_time ->
+        Logger.error(
+          "Split: Invalid time range for #{filename}: start_time=#{start_time} >= end_time=#{end_time}"
         )
 
-        {:ok, clip_data}
+        {:error, "Invalid time range: start_time must be less than end_time"}
+
+      start_time < 0 ->
+        Logger.error("Split: Invalid start_time for #{filename}: start_time=#{start_time} < 0")
+
+        {:error, "Invalid start_time: must be non-negative"}
+
+      duration <= 0 ->
+        Logger.error("Split: Invalid duration for #{filename}: duration=#{duration} <= 0")
+
+        {:error, "Invalid duration: must be positive"}
+
+      true ->
+        # Use clip-relative coordinates for efficient FFmpeg extraction from clip file
+        case FFmpegRunner.create_video_clip(
+               source_video_path,
+               output_path,
+               clip_segment.clip_relative_start,
+               clip_segment.clip_relative_end
+             ) do
+          {:ok, file_size} ->
+            clip_data =
+              Map.merge(clip_segment, %{
+                clip_identifier: clip_identifier,
+                filename: filename,
+                local_path: output_path,
+                file_size: file_size
+              })
+
+            segment_label = if segment_type == :before_split, do: "A", else: "B"
+
+            Logger.info(
+              "Split: Created clip #{segment_label}: #{filename} (#{Float.round(duration, 2)}s)"
+            )
+
+            # Validate the created file has video streams
+            case validate_created_video_file(output_path) do
+              :ok ->
+                {:ok, clip_data}
+
+              {:error, reason} ->
+                Logger.error("Split: Created file #{filename} failed validation: #{reason}")
+
+                {:error, "Created video file is invalid: #{reason}"}
+            end
+
+          {:error, reason} ->
+            segment_label = if segment_type == :before_split, do: "A", else: "B"
+            Logger.error("Split: Failed to create clip #{segment_label}: #{reason}")
+            {:error, reason}
+        end
+    end
+  end
+
+  @spec validate_created_video_file(String.t()) :: :ok | {:error, String.t()}
+  defp validate_created_video_file(file_path) do
+    case FFmpegRunner.get_video_metadata(file_path) do
+      {:ok, _metadata} ->
+        :ok
 
       {:error, reason} ->
-        segment_label = if segment_type == :before_split, do: "A", else: "B"
-        Logger.error("Split: Failed to create clip #{segment_label}: #{reason}")
-        {:error, reason}
+        {:error, "ffprobe validation failed: #{inspect(reason)}"}
     end
   end
 
@@ -246,7 +383,9 @@ defmodule Heaters.Clips.Operations.Edits.Split do
           start_frame: clip_data.start_frame,
           end_frame: clip_data.end_frame,
           duration_seconds: clip_data.duration_seconds,
-          segment_type: clip_data.segment_type
+          segment_type: clip_data.segment_type,
+          clip_relative_start: clip_data.clip_relative_start,
+          clip_relative_end: clip_data.clip_relative_end
         }
 
         processing_metadata =
@@ -271,14 +410,35 @@ defmodule Heaters.Clips.Operations.Edits.Split do
         }
       end)
 
-    case DatabaseAdapter.create_clips(clips_attrs) do
-      {:ok, clips} ->
+    # Use database-level idempotency to handle duplicate clip_filepath gracefully
+    case DatabaseAdapter.create_clips_with_conflict_handling(clips_attrs) do
+      {:ok, clips} when clips != [] ->
         Logger.info("Split: Created #{length(clips)} new clip records")
         {:ok, clips}
+
+      {:ok, []} ->
+        # All clips already existed, fetch them instead
+        Logger.info("Split: All split clips already exist, fetching existing records")
+        fetch_existing_clips_by_identifiers(clips_attrs)
 
       {:error, reason} ->
         Logger.error("Split: Error creating clip records: #{reason}")
         {:error, reason}
+    end
+  end
+
+  @spec fetch_existing_clips_by_identifiers(list(map())) :: {:ok, list(Clip.t())} | {:error, any()}
+  defp fetch_existing_clips_by_identifiers(clips_attrs) do
+    identifiers = Enum.map(clips_attrs, & &1.clip_identifier)
+
+    case DatabaseAdapter.get_clips_by_identifiers(identifiers) do
+      {:ok, clips} ->
+        Logger.info("Split: Fetched #{length(clips)} existing split clips")
+        {:ok, clips}
+
+      {:error, reason} ->
+        Logger.error("Split: Failed to fetch existing clips: #{inspect(reason)}")
+        {:error, "Failed to fetch existing clips: #{inspect(reason)}"}
     end
   end
 
@@ -336,5 +496,54 @@ defmodule Heaters.Clips.Operations.Edits.Split do
 
   defp get_source_title(%Clip{source_video_id: source_video_id}) do
     "source_#{source_video_id}"
+  end
+
+  @spec check_split_idempotency(Clip.t(), integer()) :: :ok | {:error, String.t()}
+  defp check_split_idempotency(clip, split_at_frame) do
+    case clip.ingest_state do
+      "review_archived" ->
+        Logger.info("Split: Clip #{clip.id} already split (review_archived state), operation is idempotent")
+        {:error, :already_processed}
+
+      _ ->
+        # Check if split clips already exist in database
+        case check_existing_split_clips(clip, split_at_frame) do
+          {:ok, :no_existing_clips} ->
+            :ok
+
+          {:ok, :existing_clips_found} ->
+            Logger.info("Split: Found existing split clips for clip_id: #{clip.id}, frame: #{split_at_frame}")
+            {:error, :already_processed}
+
+          {:error, reason} ->
+            Logger.warning("Split: Error checking existing clips: #{inspect(reason)}")
+            :ok  # Continue with split operation if check fails
+        end
+    end
+  end
+
+  @spec check_existing_split_clips(Clip.t(), integer()) :: {:ok, :no_existing_clips | :existing_clips_found} | {:error, any()}
+  defp check_existing_split_clips(clip, split_at_frame) do
+    # Generate expected clip identifiers for this split operation
+    fps = extract_video_fps(clip)
+    clip_duration_seconds = clip.end_time_seconds - clip.start_time_seconds
+    total_frames = Float.ceil(clip_duration_seconds * fps) |> trunc()
+
+    source_title = get_source_title(clip)
+
+    # Expected identifiers for split segments
+    before_identifier = "#{Utils.sanitize_filename(source_title)}_1_#{split_at_frame - 1}"
+    after_identifier = "#{Utils.sanitize_filename(source_title)}_#{split_at_frame}_#{total_frames}"
+
+    case DatabaseAdapter.check_clips_exist_by_identifiers([before_identifier, after_identifier]) do
+      {:ok, existing_count} when existing_count > 0 ->
+        {:ok, :existing_clips_found}
+
+      {:ok, 0} ->
+        {:ok, :no_existing_clips}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 end

@@ -94,7 +94,7 @@ Infrastructure Adapters (S3, FFmpeg, Python - external I/O)
 
 ### Hybrid Processing Architecture
 
-The system uses a **hybrid approach** combining native Elixir and Python processing:
+The system uses a **hybrid approach** combining native Elixir and Python processing, and balances architectural purity with practical efficiency:
 
 #### Python Scene Detection
 - **Technology**: Python OpenCV via PyRunner port communication for robust scene detection
@@ -123,6 +123,16 @@ def run_task_name(explicit_params, **kwargs) -> dict:
     # Return structured JSON for Elixir processing
 ```
 
+#### Hybrid Optimization Pattern
+
+**Split Operations** demonstrate the hybrid optimization pattern:
+- **Pure Clip-Relative Approach**: Uses 1-indexed clip-relative frames throughout for simplicity and consistency
+- **Frame-Time Conversion**: Converts clip-relative frames to clip-relative timestamps for FFmpeg operations
+- **FPS Consistency**: Uses same FPS calculation logic as sprite metadata to ensure frontend/backend frame range consistency
+- **I/O Efficiency**: Works directly with clip files, avoiding multi-gigabyte source video downloads
+- **Idempotent Operations**: Database-level conflict handling and S3 cleanup ordering prevent partial failures
+- **Benefits**: Maintains architectural purity while providing optimal performance and reliability
+
 ### Structured Result Types
 
 All operations return type-safe structs with `@enforce_keys`:
@@ -132,6 +142,7 @@ All operations return type-safe structs with `@enforce_keys`:
 %KeyframeResult{status: "success", keyframe_count: 8, strategy: "uniform"}
 %MergeResult{status: "success", merged_clip_id: 456, cleanup: %{...}}
 %SpliceResult{status: "success", clips_data: [...], total_scenes_detected: 25}
+%SplitResult{status: "success", new_clip_ids: [789, 790], cleanup: %{original_file_deleted: true}}
 ```
 
 **Benefits**: Compile-time validation, rich metadata, direct field access without defensive `Map.get`.
@@ -165,6 +176,22 @@ All workers implement robust idempotency patterns:
 - **Graceful Degradation**: Handle partial failures and retry scenarios
 - **Resource Cleanup**: Ensure proper cleanup of temporary files and S3 objects
 - **Error Recovery**: Comprehensive error handling with detailed logging
+
+### Idempotent Operations and Transactional Reliability
+
+All workers implement robust idempotency patterns for production reliability:
+- **State Validation**: Check current state before processing to prevent duplicate work
+- **Graceful Degradation**: Handle partial failures and retry scenarios with comprehensive error recovery
+- **Database-First Approach**: Perform database operations before irreversible S3 cleanup to prevent data loss
+- **Conflict Resolution**: Database-level unique constraint handling using `INSERT...ON CONFLICT DO NOTHING`
+- **Resource Cleanup**: Proper cleanup of temporary files and S3 objects with transaction ordering
+- **Error Recovery**: Comprehensive error handling with detailed logging for debugging
+
+**Split Operations** demonstrate advanced transactional patterns:
+- Database records created before S3 file deletion (prevents orphaned state)
+- Idempotency checks detect already-completed operations
+- Graceful handling of file-not-found scenarios when retrying interrupted operations
+- Worker behavior handles `:already_processed` errors without failing jobs
 
 ### Resumable Processing Architecture
 
@@ -261,6 +288,7 @@ Each stage is pure configuration:
   - **`Videos.Operations.Splice`**: Python scene detection using OpenCV via PyRunner port communication
 - **`Clips.Operations`**: Clip transformations and state management (semantic Edits/Artifacts organization)
   - **`Clips.Operations.Edits`**: User-driven transformations (Split, Merge) that create new clips
+    - **Split Operations**: Uses hybrid approach with absolute timestamp calculations in domain logic and clip-relative extraction for I/O efficiency
   - **`Clips.Operations.Artifacts`**: Pipeline-driven processing (Sprite, Keyframe) that create supplementary data
 - **`Clips.Review`**: Human review workflow and action coordination  
 - **`Clips.Embeddings`**: ML embedding generation and queries
