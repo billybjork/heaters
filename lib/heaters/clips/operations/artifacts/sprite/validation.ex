@@ -7,10 +7,10 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.Validation do
   clip state validation and sprite parameter validation. All functions are pure.
   """
 
-  alias Heaters.Clips.Operations.Shared.ClipValidation
   alias Heaters.Clips.Operations.Artifacts.Sprite.VideoMetadata
+  alias Heaters.Clips.Operations.Shared.ClipValidation
   alias Heaters.Clips.Operations.Artifacts.Sprite.Calculations
-  alias Heaters.Clips.Operations.Shared.Constants
+  alias Heaters.Clips.Operations.Edits.Split.Calculations, as: SplitCalculations
 
   @doc """
   Validate that a clip and parameters are suitable for sprite generation.
@@ -105,7 +105,7 @@ defmodule Heaters.Clips.Operations.Artifacts.Sprite.Validation do
          true <-
            VideoMetadata.sufficient_duration?(
              metadata.duration,
-             Constants.min_clip_duration_seconds()
+             SplitCalculations.min_clip_duration()
            ) do
       :ok
     else

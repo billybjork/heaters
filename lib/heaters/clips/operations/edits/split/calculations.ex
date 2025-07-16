@@ -4,8 +4,11 @@ defmodule Heaters.Clips.Operations.Edits.Split.Calculations do
   Used by Operations.Edits.Split for business logic.
   """
 
-  alias Heaters.Clips.Operations.Shared.Constants
   require Logger
+
+  # Minimum clip duration in seconds for split operations
+  # This applies to split validation (minimum viable segment length)
+  @min_clip_duration_seconds 0.1
 
   @type split_params :: %{
           split_at_frame: integer(),
@@ -183,7 +186,7 @@ defmodule Heaters.Clips.Operations.Edits.Split.Calculations do
   - Minimum duration in seconds as float
   """
   @spec min_clip_duration() :: float()
-  def min_clip_duration, do: Constants.min_clip_duration_seconds()
+  def min_clip_duration, do: @min_clip_duration_seconds
 
   @doc """
   Extracts FPS using consistent logic that matches sprite metadata generation.
@@ -283,7 +286,7 @@ defmodule Heaters.Clips.Operations.Edits.Split.Calculations do
        ) do
     duration = end_time - start_time
 
-    if duration >= Constants.min_clip_duration_seconds() do
+    if duration >= @min_clip_duration_seconds do
       %{
         start_time_seconds: start_time,
         end_time_seconds: end_time,
@@ -311,7 +314,7 @@ defmodule Heaters.Clips.Operations.Edits.Split.Calculations do
        ) do
     duration = end_time - start_time
 
-    if duration >= Constants.min_clip_duration_seconds() do
+    if duration >= @min_clip_duration_seconds do
       %{
         start_time_seconds: start_time,
         end_time_seconds: end_time,
