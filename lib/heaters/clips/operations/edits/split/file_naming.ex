@@ -128,6 +128,8 @@ defmodule Heaters.Clips.Operations.Edits.Split.FileNaming do
   @doc """
   Generates upload prefix for split clips.
 
+  Split clips are stored in the same directory as original clips for consistency.
+
   ## Parameters
   - `title`: Source video title
 
@@ -137,6 +139,6 @@ defmodule Heaters.Clips.Operations.Edits.Split.FileNaming do
   @spec generate_upload_prefix(String.t()) :: String.t()
   def generate_upload_prefix(title) do
     sanitized_title = FileNaming.sanitize_filename(title)
-    "clips/#{sanitized_title}/splits"
+    "clips/#{sanitized_title}"
   end
 end

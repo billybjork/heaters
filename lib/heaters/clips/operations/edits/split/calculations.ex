@@ -258,7 +258,17 @@ defmodule Heaters.Clips.Operations.Edits.Split.Calculations do
   end
 
   defp get_source_title(%{source_video_id: source_video_id}) do
-    "source_#{source_video_id}"
+    # Use the same database lookup pattern as clip_artifacts for consistency
+    alias Heaters.Videos.Queries, as: VideoQueries
+
+    case VideoQueries.get_source_video(source_video_id) do
+      {:ok, source_video} ->
+        source_video.title
+
+      {:error, _} ->
+        # Fallback to ID-based structure if title lookup fails (consistent with clip_artifacts)
+        "video_#{source_video_id}"
+    end
   end
 
   @spec calculate_segment_before_split(float(), float(), integer(), integer(), float(), float()) ::

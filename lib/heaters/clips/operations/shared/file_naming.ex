@@ -71,25 +71,32 @@ defmodule Heaters.Clips.Operations.Shared.FileNaming do
   @doc """
   Build S3 key for split clips.
 
+  Split clips are stored in the same directory as original clips to maintain
+  consistency and simplify the S3 structure. They flow through the same pipeline
+  and don't need to be organizationally separated.
+
   ## Examples
 
       iex> FileNaming.build_split_s3_key("My Video", "clip_123_456.mp4")
-      "clips/My_Video/splits/clip_123_456.mp4"
+      "clips/My_Video/clip_123_456.mp4"
   """
   @spec build_split_s3_key(String.t(), String.t()) :: String.t()
   def build_split_s3_key(title, filename) when is_binary(title) and is_binary(filename) do
     sanitized_title = sanitize_filename(title)
-    "clips/#{sanitized_title}/splits/#{filename}"
+    "clips/#{sanitized_title}/#{filename}"
   end
 
   @doc """
   Build S3 key for merge clips using existing S3 path structure.
 
+  Merge clips are placed in the same directory as the target clip, maintaining
+  the existing organizational structure.
+
   ## Examples
 
-      iex> target_clip = %{clip_filepath: "/clips/My_Video/splits/original.mp4"}
+      iex> target_clip = %{clip_filepath: "/clips/My_Video/original.mp4"}
       iex> FileNaming.build_merge_s3_key(target_clip, "merged_123_456.mp4")
-      "clips/My_Video/splits/merged_123_456.mp4"
+      "clips/My_Video/merged_123_456.mp4"
   """
   @spec build_merge_s3_key(map(), String.t()) :: String.t()
   def build_merge_s3_key(target_clip, filename)

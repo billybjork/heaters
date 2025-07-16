@@ -35,13 +35,20 @@ Unified agent guidance for working with this codebase. See `lib/heaters/README.m
    - Never remove or simplify business logic unless asked _or_ it's obviously broken—and then say so explicitly.  
    - Constants, parameters, and state machines (e.g. the `ingest_state` column) are sacrosanct until we both agree on changes.
 
-3. **No placeholders, no stubs**  
+3. **Maintain consistency across similar operations**  
+   - **Before implementing**: Search for existing patterns for the same type of operation (e.g., "how do other parts get source video title?")
+   - **Data access patterns**: If one module uses database lookups for source video titles, other modules should use the same pattern, not preloaded associations
+   - **S3 path structures**: Ensure consistent directory naming across operations (clips, artifacts, etc.)
+   - **Error handling**: Use the same error handling patterns for similar failure scenarios
+   - **When in doubt**: Grep for existing implementations before writing new code
+
+4. **No placeholders, no stubs**  
    Any code you commit should compile and run. If credentials or secrets are required, insert `TODO` notes rather than dummy placeholders.
 
-4. **Database changes require diligence**  
+5. **Database changes require diligence**  
    Never propose schema changes (migrations, new indexes, altering columns) without first reviewing current Ecto schemas/migrations and spelling out the trade‑offs.
 
-5. **Minimal, targeted edits**  
+6. **Minimal, targeted edits**  
    Prefer surgical diffs over wholesale rewrites. If a full‑file replacement is unavoidable, explain why first.
 
 ## Architecture Patterns
