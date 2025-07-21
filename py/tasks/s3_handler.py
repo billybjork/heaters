@@ -54,8 +54,19 @@ class S3TransferProgress:
             self._logger.error(f"S3 Progress error: {e}")
 
 
-def upload_to_s3(s3_client, bucket_name: str, file_path: Path, s3_key: str):
-    """Upload file to S3 with progress reporting and validation"""
+def get_s3_config():
+    """Get S3 configuration from environment variables"""
+    import os
+    bucket_name = os.environ.get('S3_BUCKET_NAME')
+    if not bucket_name:
+        raise ValueError("S3_BUCKET_NAME environment variable not set")
+    
+    s3_client = boto3.client('s3')
+    return s3_client, bucket_name
+
+
+def upload_to_s3(s3_client, bucket_name: str, file_path: Path, s3_key: str, storage_class: str = "STANDARD"):
+    """Upload file to S3 with progress reporting, validation, and storage class support"""
     if not file_path.exists():
         raise FileNotFoundError(f"File to upload does not exist: {file_path}")
     
@@ -66,11 +77,18 @@ def upload_to_s3(s3_client, bucket_name: str, file_path: Path, s3_key: str):
     progress_callback = S3TransferProgress(file_size, file_path.name, logger)
     
     try:
-        logger.info(f"Starting S3 upload: {file_path.name} ({file_size:,} bytes) to s3://{bucket_name}/{s3_key}")
+        logger.info(f"Starting S3 upload: {file_path.name} ({file_size:,} bytes) to s3://{bucket_name}/{s3_key} (storage class: {storage_class})")
+        
+        # Build extra args for storage class
+        extra_args = {}
+        if storage_class != "STANDARD":
+            extra_args['StorageClass'] = storage_class
+        
         s3_client.upload_file(
             str(file_path), 
             bucket_name, 
             s3_key,
+            ExtraArgs=extra_args,
             Callback=progress_callback
         )
         logger.info(f"Successfully uploaded {file_path.name} to s3://{bucket_name}/{s3_key}")
@@ -89,4 +107,46 @@ def upload_to_s3(s3_client, bucket_name: str, file_path: Path, s3_key: str):
         raise
     except Exception as e:
         logger.error(f"Unexpected error during S3 upload: {e}")
+        raise
+
+
+def download_from_s3(s3_client, bucket_name: str, s3_key: str, local_path: Path):
+    """Download file from S3 to local path with progress reporting"""
+    clean_key = str(s3_key).lstrip('/')
+    
+    try:
+        # Get object size for progress reporting
+        response = s3_client.head_object(Bucket=bucket_name, Key=clean_key)
+        file_size = response['ContentLength']
+        
+        logger.info(f"Starting S3 download: s3://{bucket_name}/{clean_key} ({file_size:,} bytes) to {local_path}")
+        
+        # Create progress callback
+        progress_callback = S3TransferProgress(file_size, local_path.name, logger)
+        
+        s3_client.download_file(
+            bucket_name, 
+            clean_key, 
+            str(local_path),
+            Callback=progress_callback
+        )
+        
+        logger.info(f"Successfully downloaded {clean_key} to {local_path}")
+        
+        # Verify download
+        if not local_path.exists():
+            raise FileNotFoundError(f"Downloaded file not found at {local_path}")
+            
+        downloaded_size = local_path.stat().st_size
+        if downloaded_size != file_size:
+            logger.warning(f"Size mismatch: expected {file_size}, got {downloaded_size}")
+        else:
+            logger.info(f"Download verification successful for {local_path}")
+            
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        logger.error(f"Failed to download from S3 (error code: {error_code}): {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during S3 download: {e}")
         raise

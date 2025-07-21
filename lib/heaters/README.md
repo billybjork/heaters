@@ -2,7 +2,19 @@
 
 ## Overview
 
-Heaters processes videos through a multi-stage pipeline: ingestion → clips → human review → approval → embedding. The system emphasizes functional architecture with "I/O at the edges", direct action execution with buffer-time undo, and **hybrid processing** combining native Elixir (scene detection) with Python (ML/media processing) for optimal performance and reliability.
+Heaters processes videos through a **virtual clip pipeline**: ingestion → proxy generation → virtual clips → human review → final export → embedding. The system emphasizes functional architecture with "I/O at the edges", direct action execution with buffer-time undo, and **hybrid processing** combining Elixir orchestration with Python (CV/ML/media processing) for optimal performance and reliability.
+
+### Virtual Clip Architecture
+
+The system uses a **virtual clip workflow** that eliminates re-encoding during review:
+
+1. **Universal Ingest**: Single pathway for both web-scraped shows and user-uploaded clips
+2. **Proxy Generation**: Creates lossless gold master (FFV1/MKV) + review proxy (all-I-frame H.264) 
+3. **Virtual Clips**: Database records with cut points, no physical files until final export
+4. **Instant Review**: WebCodecs-based seeking with instant merge/split operations
+5. **Final Export**: High-quality encoding from gold master only after review approval
+
+**Key Benefits**: Zero re-encoding during review, lossless quality preservation, instant operations, universal workflow.
 
 ### Technology Stack
 - **Backend**: Elixir/Phoenix with LiveView
@@ -26,29 +38,36 @@ Heaters processes videos through a multi-stage pipeline: ingestion → clips →
 
 ## State Flow
 
+### Virtual Clip Pipeline
+
 ```
-Source Video: new → downloading → downloaded → splicing → spliced
-                      ↓              ↓           ↓
-               download_failed  (resumable)  splicing_failed
-                      ↑                          ↑
-                      └──────────┬───────────────┘
+Source Video: new → downloading → downloaded → preprocessing → preprocessed → scene_detection → virtual clips created
+                      ↓              ↓              ↓              ↓                ↓
+               download_failed  (resumable)  preprocessing_failed  (resumable)  scene_detection_failed
+                      ↑                          ↑                              ↑
+                      └──────────────────────────┼──────────────────────────────┘
                                  ↓
                           (resumable processing)
 
-Clips: spliced → generating_sprite → pending_review → review_approved → keyframing → keyframed → embedding → embedded
-          ↓              ↓                ↓                 ↓              ↓           ↓           ↓
-    sprite_failed  (resumable)   review_skipped    review_archived   keyframe_failed  (resumable) embedding_failed
-          ↑                           ↓                 ↓              ↑                              ↑
-          └─────┬─────────────────────┼─────────────────┼──────────────┘                              │
-                ↓                     ↓                 ↓                                              │
-        (resumable processing)  (terminal state)   archive → cleanup                                   │
-                                     ↑                                                                │
-                                     │                                                                │
-                              merge/split → new clips → spliced                                       │
-                              (60s buffer)                ↓                                          │
-                                     ↑                    └─────────────┬──────────────────────────────┘
-                                     └──────────────────────────────────┘
+Virtual Clips: pending_review → review_approved → exporting → exported (physical) → keyframing → keyframed → embedding → embedded
+                    ↓                ↓              ↓            ↓              ↓           ↓           ↓
+            review_skipped    review_archived   export_failed  (resumable)  keyframe_failed  (resumable) embedding_failed
+                    ↓                ↓              ↑                           ↑                              ↑
+             (terminal state)   archive → cleanup  └─────┬─────────────────────┘                              │
+                                     ↑                   ↓                                                    │
+                                     │           (resumable processing)                                       │
+                              merge/split → new virtual clips → pending_review                               │
+                              (instant DB ops)           ↓                                                   │
+                                     ↑                   └─────────────┬───────────────────────────────────────┘
+                                     └─────────────────────────────────┘
                                                     (resumable processing)
+```
+
+### Legacy Pipeline (Transitional)
+
+```
+Source Video: downloaded → splicing → spliced (physical clips)
+Clips: spliced → generating_sprite → pending_review → review_approved → keyframing → embedding
 ```
 
 ## Key Design Decisions
@@ -193,6 +212,27 @@ All workers implement robust idempotency patterns for production reliability:
 - Graceful handling of file-not-found scenarios when retrying interrupted operations
 - Worker behavior handles `:already_processed` errors without failing jobs
 
+### Virtual Clip Database Schema
+
+The virtual clip architecture introduces key schema changes:
+
+#### Source Videos Table
+- **`needs_splicing`**: Boolean flag controlling scene detection workflow  
+- **`proxy_filepath`**: S3 path to all-I-frame H.264 review proxy
+- **`gold_master_filepath`**: S3 path to lossless FFV1/MKV archival master
+- **`keyframe_offsets`**: JSONB array of byte positions for WebCodecs seeking
+
+#### Clips Table  
+- **`is_virtual`**: Boolean distinguishing virtual (cut points only) vs physical (file) clips
+- **`cut_points`**: JSONB with `{start_frame, end_frame, start_time_seconds, end_time_seconds}`
+- **`clip_filepath`**: Nullable when `is_virtual = true`, required when `is_virtual = false`
+- **Constraint**: `CHECK (is_virtual = true OR clip_filepath IS NOT NULL)`
+
+#### Migration Strategy
+- **Graceful Transition**: Both virtual and legacy pipelines run concurrently
+- **Data Integrity**: Database constraints ensure clip files exist when marked as physical
+- **Backward Compatibility**: Existing physical clips continue to work unchanged
+
 ### Resumable Processing Architecture
 
 The system provides comprehensive resumable processing to handle container restarts and interruptions:
@@ -215,24 +255,40 @@ This architecture ensures maximum reliability in production environments where c
 
 ## Workflow Examples
 
-### Video Ingestion
+### Virtual Clip Pipeline
+
+#### Video Ingestion & Preprocessing
 1. `Videos.submit/1` creates source video in `new` state
 2. `Videos.Operations.Ingest.Worker` downloads/processes → `downloaded` state  
-3. `Videos.Operations.Splice.Worker` runs **Python scene detection** → clips in `spliced` state
+3. `Videos.Operations.Preprocessing.Worker` creates gold master + review proxy → `preprocessed` state
+   - **Gold Master**: Lossless FFV1/MKV for final export quality
+   - **Review Proxy**: All-I-frame H.264 for efficient WebCodecs seeking
+   - **Keyframe Offsets**: Byte positions for frame-perfect seeking
 
-### Review Workflow
-1. `Clips.Operations.Artifacts.Sprite.Worker` generates sprites using rambo → clips in `pending_review` state
-2. Human reviews and takes actions:
-   - **approve** → `review_approved` (continues to keyframes)
-   - **skip** → `review_skipped` (terminal, preserves sprite)
+#### Scene Detection & Virtual Clips
+1. `Videos.Operations.SceneDetection.Worker` runs **Python scene detection** on proxy → virtual clips in `pending_review` state
+2. Virtual clips contain cut points (database only), no physical files created
+3. Scene detection uses proxy file for speed while preserving cut point accuracy
+
+#### Review Workflow
+1. **WebCodecs Player**: Direct frame seeking on review proxy using keyframe offsets
+2. Human reviews virtual clips and takes actions:
+   - **approve** → `review_approved` (ready for export)
+   - **skip** → `review_skipped` (terminal state)
    - **archive** → `review_archived` (cleanup via archive worker)
    - **group** → both clips → `review_approved` with `grouped_with_clip_id` metadata
-   - **merge/split** → 60-second buffer → worker creates new clips → `spliced` state
-3. Actions execute directly with Oban reliability, new clips flow back through pipeline
+   - **merge/split** → **instant database operations** update cut points → new virtual clips
+3. Actions execute immediately with database transactions, no file re-encoding
 
-### Post-Approval Processing
-1. `Clips.Operations.Artifacts.Keyframe.Worker` extracts keyframes → `keyframed` state
-2. `Clips.Embeddings.Worker` generates ML embeddings → `embedded` state (final)
+#### Export & Post-Processing
+1. `Clips.Operations.Export.Worker` encodes approved virtual clips from gold master → physical clips in `exported` state
+2. `Clips.Operations.Artifacts.Keyframe.Worker` extracts keyframes → `keyframed` state
+3. `Clips.Embeddings.Worker` generates ML embeddings → `embedded` state (final)
+
+### Legacy Workflow (Transitional)
+1. `Videos.Operations.Splice.Worker` runs scene detection → physical clips in `spliced` state
+2. `Clips.Operations.Artifacts.Sprite.Worker` generates sprites → clips in `pending_review` state  
+3. Traditional review workflow with sprite-based navigation
 
 ### Archive Workflow
 1. `Clips.Operations.Archive.Worker` safely deletes S3 objects and database records
@@ -254,12 +310,19 @@ Each stage is pure configuration:
 - **Declarative Flow**: All state transitions handled by pipeline, not workers
 
 **`Infrastructure.Orchestration.PipelineConfig`** provides complete workflow as data:
+
+#### Virtual Clip Pipeline
 1. `new videos → download` (IngestWorker)
-2. `downloaded videos → splice` (SpliceWorker) 
-3. `spliced clips → sprites` (SpriteWorker) ← **Handles ALL spliced clips (original, merged, and split)**
-4. `approved clips → keyframes` (KeyframeWorker)
-5. `keyframed clips → embeddings` (EmbeddingWorker)
-6. `archived clips → archive` (ArchiveWorker)
+2. `downloaded videos → preprocessing` (PreprocessingWorker)
+3. `preprocessed videos → scene detection` (SceneDetectionWorker) ← **Creates virtual clips**
+4. `approved virtual clips → export` (ExportWorker) ← **Batch export from gold master**
+5. `exported clips → keyframes` (KeyframeWorker)
+6. `keyframed clips → embeddings` (EmbeddingWorker)
+7. `archived clips → archive` (ArchiveWorker)
+
+#### Legacy Pipeline (Transitional)
+- `downloaded videos → splice` (SpliceWorker) 
+- `spliced clips → sprites` (SpriteWorker) ← **Handles ALL spliced clips (original, merged, and split)**
 
 **Review Actions** are handled directly in the UI with immediate execution:
 - Simple actions (approve/skip/archive/group) update states immediately
@@ -283,16 +346,33 @@ Each stage is pure configuration:
 
 ## Context Responsibilities
 
-- **`Videos`**: Source video lifecycle from submission through clips creation
+### Virtual Clip Architecture
+
+- **`Videos`**: Source video lifecycle from submission through virtual clips creation
   - **`Videos.Operations.Ingest`**: Video download and processing workflow
-  - **`Videos.Operations.Splice`**: Python scene detection using OpenCV via PyRunner port communication
-- **`Clips.Operations`**: Clip transformations and state management (semantic Edits/Artifacts organization)
-  - **`Clips.Operations.Edits`**: User-driven transformations (Split, Merge) that create new clips
-    - **Split Operations**: Uses hybrid approach with absolute timestamp calculations in domain logic and clip-relative extraction for I/O efficiency
-  - **`Clips.Operations.Artifacts`**: Pipeline-driven processing (Sprite, Keyframe) that create supplementary data
-- **`Clips.Review`**: Human review workflow and action coordination  
-- **`Clips.Embeddings`**: ML embedding generation and queries
+  - **`Videos.Operations.Preprocessing`**: Gold master + review proxy generation with keyframe offsets
+  - **`Videos.Operations.SceneDetection`**: Python scene detection creating virtual clips (database records only)
+- **`Clips.Operations`**: Clip transformations and state management (semantic Edits/Artifacts/Export organization)
+  - **`Clips.Operations.VirtualClips`**: Virtual clip creation and cut point management
+  - **`Clips.Operations.Export`**: Final encoding from gold master to physical clips (batch processing)
+  - **`Clips.Operations.Edits`**: User-driven transformations (Split, Merge) - **now instant database operations on virtual clips**
+  - **`Clips.Operations.Artifacts`**: Pipeline-driven processing (Keyframe) that create supplementary data
+- **`Clips.Review`**: Human review workflow with **WebCodecs-based seeking** and instant virtual clip operations
+- **`Clips.Embeddings`**: ML embedding generation and queries (operates on exported physical clips)
+
+### Legacy Architecture (Transitional)
+
+- **`Videos.Operations.Splice`**: Python scene detection creating physical clips via file encoding
+- **`Clips.Operations.Artifacts.Sprite`**: Sprite sheet generation for traditional review UI
+- **Traditional Review**: Sprite-based navigation with file-based merge/split operations
+
+### Infrastructure
+
 - **`Infrastructure`**: I/O adapters (S3, FFmpeg, Database) and shared worker behaviors with consistent interfaces and robust error handling
+- **Python Tasks**: 
+  - **`preprocessing.py`**: FFmpeg gold master + proxy generation with progress reporting
+  - **`detect_scenes.py`**: OpenCV scene detection returning cut points for virtual clips
+  - **`export_clips.py`**: Batch encoding from gold master to delivery-optimized MP4s
 
 ## Production Reliability Features
 
@@ -328,13 +408,52 @@ Each stage is pure configuration:
 
 ## Key Benefits
 
-1. **Production Reliable**: Resumable processing handles container restarts gracefully with automatic recovery
-2. **Clear Architecture**: Functional domain modeling with "I/O at the edges" and semantic organization
-3. **Type-Safe**: Structured result types with compile-time validation and rich metadata
-4. **Hybrid Efficient**: Native Elixir for video operations, Python for ML/scene detection - optimal performance
-5. **Zero Boilerplate**: Centralized WorkerBehavior eliminates repetitive code while maintaining full functionality
-6. **Declarative Pipeline**: Single source of truth for workflow orchestration with clear separation of concerns
-7. **Idempotent Operations**: All workers implement robust idempotency patterns for safe retries
-8. **Comprehensive Testing**: Pure functions enable thorough testing without I/O dependencies
-9. **Semantic Organization**: Operations organized by business purpose for improved maintainability
-10. **Scalable Design**: Robust orchestration patterns support production workloads with container resilience 
+### Virtual Clip Architecture Benefits
+
+1. **Zero Re-encoding During Review**: Virtual clips are database records only - instant merge/split operations with no file processing
+2. **Lossless Quality Preservation**: Final clips encoded from uncompressed FFV1 gold master, not lossy proxy files
+3. **Universal Workflow**: Single ingest path handles both web-scraped shows and user-uploaded clips seamlessly
+4. **Instant Review Operations**: WebCodecs-based frame seeking with database-only merge/split transactions
+5. **Efficient Storage**: Review proxies use all-I-frame encoding for perfect seeking without full source downloads
+
+### Production Architecture Benefits
+
+6. **Production Reliable**: Resumable processing handles container restarts gracefully with automatic recovery
+7. **Clear Architecture**: Functional domain modeling with "I/O at the edges" and semantic organization
+8. **Type-Safe**: Structured result types with compile-time validation and rich metadata
+9. **Hybrid Efficient**: Elixir orchestration with Python for CV/ML/media processing - optimal performance
+10. **Zero Boilerplate**: Centralized WorkerBehavior eliminates repetitive code while maintaining full functionality
+11. **Declarative Pipeline**: Single source of truth for workflow orchestration with clear separation of concerns
+12. **Idempotent Operations**: All workers implement robust idempotency patterns for safe retries
+13. **Comprehensive Testing**: Pure functions enable thorough testing without I/O dependencies
+14. **Semantic Organization**: Operations organized by business purpose for improved maintainability
+15. **Scalable Design**: Robust orchestration patterns support production workloads with container resilience
+
+---
+
+## Implementation Status
+
+### ✅ Completed (Virtual Clip Backend Pipeline)
+
+- **Database Schema**: Added virtual clip support with `is_virtual`, `cut_points`, proxy architecture columns
+- **PreprocessingWorker**: Creates lossless gold master + all-I-frame proxy + keyframe offsets  
+- **SceneDetectionWorker**: Creates virtual clips (database records) from proxy file analysis
+- **VirtualClips Module**: Cut point validation and virtual clip database operations
+- **ExportWorker**: Batch export from gold master to final delivery MP4s
+- **Python Tasks**: `preprocessing.py`, updated `detect_scenes.py`, `export_clips.py`
+- **Pipeline Integration**: Updated `PipelineConfig` with new virtual clip stages
+- **Type Safety**: All Dialyzer warnings resolved, production-ready code quality
+
+### 🚧 In Progress / Next Steps
+
+- **WebCodecs Player**: JavaScript player using keyframe offsets for frame-perfect seeking
+- **Review UI Updates**: LiveView integration with virtual clip operations  
+- **Review Module**: Update `Clips.Review` for instant virtual merge/split operations
+- **S3 Integration**: Connect Python tasks to real S3 download/upload operations
+- **Legacy Migration**: Gradual transition from sprite-based to WebCodecs-based review
+
+### 🎯 Future Enhancements
+
+- **Performance Monitoring**: Track virtual vs physical operation performance metrics
+- **Advanced Export Settings**: Quality profiles and codec configurations
+- **Batch Review Tools**: Multi-clip approval and management workflows 

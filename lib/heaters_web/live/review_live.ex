@@ -22,6 +22,7 @@ defmodule HeatersWeb.ReviewLive do
 
   # Components / helpers
   import HeatersWeb.SpritePlayer, only: [sprite_player: 1, sprite_url: 1]
+  import HeatersWeb.WebCodecsPlayer, only: [webcodecs_player: 1, proxy_video_url: 1]
 
   alias Heaters.Clips.Review, as: ClipReview
   alias Heaters.Clips.Queries, as: ClipQueries
@@ -321,7 +322,8 @@ defmodule HeatersWeb.ReviewLive do
   @doc false
   defp assign_siblings(socket, %Clip{} = clip, page) do
     sibs =
-      ClipReview.for_source_video_with_sprites(
+      # Use virtual/physical-aware sibling query
+      for_source_video_siblings(
         clip.source_video_id,
         clip.id,
         page,
@@ -329,6 +331,18 @@ defmodule HeatersWeb.ReviewLive do
       )
 
     assign(socket, siblings: sibs, sibling_page: page)
+  end
+
+          @doc false
+  defp for_source_video_siblings(source_video_id, exclude_id, page, page_size) do
+    # For now, use the original sprite-based query as fallback during transition
+    # TODO: Enhance to fully support virtual clips once pipeline is stable
+    ClipReview.for_source_video_with_sprites(
+      source_video_id,
+      exclude_id,
+      page,
+      page_size
+    )
   end
 
   # -------------------------------------------------------------------------

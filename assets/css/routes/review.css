@@ -8,6 +8,23 @@
     margin-top: var(--space-4);
 }
 
+/* WebCodecs player ------------------------------------------------------- */
+.webcodecs-viewer {
+    margin-top: var(--space-4);
+    position: relative;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.webcodecs-viewer canvas,
+.webcodecs-viewer video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background-color: #000;
+}
+
 /* Sprite-player controls container (CSS Grid) ---------------------------- */
 .sprite-controls {
     display: grid;
@@ -24,8 +41,25 @@
     min-height: 3rem;
 }
 
+/* WebCodecs-player controls container (CSS Grid) ------------------------- */
+.webcodecs-controls {
+    display: grid;
+    align-items: center;
+    width: 100%;
+    padding: var(--space-2) 0;
+
+    /* play/pause, scrub bar, speed, frame display, indicator */
+    grid-template-columns: 3rem 1fr 3rem auto auto;
+    column-gap: var(--space-2);
+    max-width: 100%;
+
+    /* lock height so icon toggles don't shift navigation below */
+    min-height: 3rem;
+}
+
 /* Control buttons (play/pause, speed) – fixed size so icons stay aligned - */
-.sprite-controls button {
+.sprite-controls button,
+.webcodecs-controls button {
     width: 3rem;
     height: 3rem;
     display: flex;
@@ -36,7 +70,8 @@
     transition: background 0.15s;
 }
 
-.sprite-controls button:hover {
+.sprite-controls button:hover,
+.webcodecs-controls button:hover {
     background: var(--panel);
     opacity: 1;
 }
@@ -56,21 +91,37 @@
 }
 
 .actions .btn-ghost[disabled],
-.sprite-controls button[disabled] {
+.sprite-controls button[disabled],
+.webcodecs-controls button[disabled] {
     opacity: 0.4;
     cursor: not-allowed;
 }
 
 /* Scrub bar fills the middle grid column -------------------------------- */
-.sprite-controls input[type="range"] {
+.sprite-controls input[type="range"],
+.webcodecs-controls input[type="range"] {
     width: 100%;
     margin: 0;
     min-width: 0;
 }
 
-/* Remove the old frame counter ------------------------------------------ */
+/* Remove the old frame counter for sprite controls ---------------------- */
 .sprite-controls span {
     display: none;
+}
+
+/* Show frame counter and indicators for WebCodecs controls -------------- */
+.webcodecs-controls span {
+    display: inline-block;
+    font-size: 12px;
+    color: var(--fg-muted);
+    padding: 0 var(--space-1);
+    white-space: nowrap;
+}
+
+.webcodecs-controls .webcodecs-indicator {
+    margin-left: var(--space-2);
+    font-weight: 500;
 }
 
 /* Action buttons armed state -------------------------------------------- */

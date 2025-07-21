@@ -194,11 +194,13 @@ defmodule Heaters.Infrastructure.S3 do
   - `opts`: Optional keyword list with options
     - `:operation_name`: String to include in log messages (defaults to "S3")
     - `:content_type`: MIME type for the file (auto-detected if not provided)
+    - `:storage_class`: S3 storage class ("STANDARD", "GLACIER", etc.)
 
   ## Examples
 
       S3.upload_file("/tmp/video.mp4", "clips/new_video.mp4")
       S3.upload_file("/tmp/sprite.jpg", "artifacts/sprite.jpg", operation_name: "Sprite")
+      S3.upload_file("/tmp/master.mkv", "gold_masters/master.mkv", storage_class: "GLACIER")
 
   ## Returns
   - `{:ok, s3_key}` on success
@@ -356,13 +358,23 @@ defmodule Heaters.Infrastructure.S3 do
 
   defp build_upload_options(local_path, opts) do
     content_type = Keyword.get(opts, :content_type) || guess_content_type(local_path)
+    storage_class = Keyword.get(opts, :storage_class)
 
     base_options = []
 
-    if content_type do
-      [content_type: content_type] ++ base_options
+    # Add content type if available
+    options_with_content_type =
+      if content_type do
+        [content_type: content_type] ++ base_options
+      else
+        base_options
+      end
+
+    # Add storage class if specified
+    if storage_class do
+      [storage_class: storage_class] ++ options_with_content_type
     else
-      base_options
+      options_with_content_type
     end
   end
 

@@ -231,6 +231,148 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
     end
   end
 
+  @doc """
+  Upload gold master video to cold storage with appropriate storage class.
+
+  ## Examples
+
+      {:ok, result} = S3Adapter.upload_gold_master("/tmp/master.mkv", source_video, "video_123_master.mkv")
+  """
+  @spec upload_gold_master(String.t(), map(), String.t()) :: {:ok, map()} | {:error, any()}
+  def upload_gold_master(local_video_path, source_video, filename)
+      when is_binary(local_video_path) and is_binary(filename) do
+    s3_key = "gold_masters/#{filename}"
+
+    # Use GLACIER storage for cost-effective cold storage of archival masters
+    case S3.upload_file(local_video_path, s3_key,
+                       operation_name: "GoldMaster",
+                       storage_class: "GLACIER") do
+      {:ok, _} ->
+        file_size = get_file_size(local_video_path)
+
+        result = %{
+          s3_key: s3_key,
+          metadata: %{
+            file_size: file_size,
+            filename: filename,
+            storage_class: "GLACIER",
+            video_title: source_video.title,
+            upload_timestamp: DateTime.utc_now()
+          }
+        }
+
+        {:ok, result}
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
+  Upload review proxy video to hot storage for fast streaming access.
+
+  ## Examples
+
+      {:ok, result} = S3Adapter.upload_review_proxy("/tmp/proxy.mp4", source_video, "video_123_proxy.mp4")
+  """
+  @spec upload_review_proxy(String.t(), map(), String.t()) :: {:ok, map()} | {:error, any()}
+  def upload_review_proxy(local_video_path, source_video, filename)
+      when is_binary(local_video_path) and is_binary(filename) do
+    s3_key = "review_proxies/#{filename}"
+
+    # Use STANDARD storage for hot access during review
+    case S3.upload_file(local_video_path, s3_key,
+                       operation_name: "ReviewProxy",
+                       storage_class: "STANDARD") do
+      {:ok, _} ->
+        file_size = get_file_size(local_video_path)
+
+        result = %{
+          s3_key: s3_key,
+          metadata: %{
+            file_size: file_size,
+            filename: filename,
+            storage_class: "STANDARD",
+            video_title: source_video.title,
+            upload_timestamp: DateTime.utc_now()
+          }
+        }
+
+        {:ok, result}
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
+  Generate CDN URL for streaming proxy videos with WebCodecs support.
+
+  This generates URLs that support HTTP Range requests, which are critical
+  for WebCodecs to efficiently seek and decode video frames.
+
+  ## Examples
+
+      "https://cdn.domain.com/review_proxies/video_123_proxy.mp4" =
+        S3Adapter.proxy_cdn_url("review_proxies/video_123_proxy.mp4")
+  """
+  @spec proxy_cdn_url(String.t()) :: String.t()
+  def proxy_cdn_url(s3_key) do
+    case get_cdn_domain() do
+      {:ok, cdn_domain} ->
+        # Ensure s3_key doesn't start with /
+        clean_s3_key = String.trim_leading(s3_key, "/")
+        "https://#{cdn_domain}/#{clean_s3_key}"
+
+      {:error, _} ->
+        # Fallback to direct S3 URL if CDN not configured
+        case S3.get_bucket_name() do
+          {:ok, bucket_name} ->
+            clean_s3_key = String.trim_leading(s3_key, "/")
+            "https://#{bucket_name}.s3.amazonaws.com/#{clean_s3_key}"
+
+          {:error, _} ->
+            # Ultimate fallback - return key as-is
+            s3_key
+        end
+    end
+  end
+
+  @doc """
+  Get range of bytes from S3 object to support WebCodecs seeking.
+
+  This is critical for WebCodecs performance - allows downloading only
+  the keyframes needed for a specific time range.
+
+  ## Examples
+
+      {:ok, binary_data} = S3Adapter.get_range("review_proxies/video.mp4", 1024, 2048)
+  """
+  @spec get_range(String.t(), integer(), integer()) :: {:ok, binary()} | {:error, any()}
+  def get_range(s3_key, start_byte, end_byte) when is_integer(start_byte) and is_integer(end_byte) do
+    case S3.get_bucket_name() do
+      {:ok, bucket_name} ->
+        clean_s3_key = String.trim_leading(s3_key, "/")
+        range_header = "bytes=#{start_byte}-#{end_byte}"
+
+        require Logger
+        Logger.debug("S3: Range request #{range_header} for #{clean_s3_key}")
+
+        case ExAws.S3.get_object(bucket_name, clean_s3_key, range: range_header)
+             |> ExAws.request() do
+          {:ok, %{body: body}} ->
+            {:ok, body}
+
+          {:error, reason} ->
+            Logger.error("S3: Range request failed for #{clean_s3_key}: #{inspect(reason)}")
+            {:error, reason}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   # Private helper functions
 
   defp build_artifact_prefix(%Clip{source_video_id: source_video_id}, artifact_type) do
@@ -250,6 +392,18 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
     case File.stat(file_path) do
       {:ok, %{size: size}} -> size
       _ -> 0
+    end
+  end
+
+  defp get_cdn_domain() do
+    case Application.get_env(:heaters, :proxy_cdn_domain) do
+      nil ->
+        # Fallback to cloudfront domain for backwards compatibility
+        case Application.get_env(:heaters, :cloudfront_domain) do
+          nil -> {:error, "CDN domain not configured"}
+          domain -> {:ok, domain}
+        end
+      domain -> {:ok, domain}
     end
   end
 end

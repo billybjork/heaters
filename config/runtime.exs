@@ -108,6 +108,26 @@ if config_env() != :test and not is_database_operation do
   else
     IO.puts("[Runtime.exs] S3 Bucket not configured via APP_ENV specific vars or S3_BUCKET_NAME.")
   end
+
+  # Configure WebCodecs support and proxy settings
+  webcodecs_enabled = System.get_env("WEBCODECS_ENABLED", "true") == "true"
+  config :heaters, :webcodecs_enabled, webcodecs_enabled
+
+  # Configure CDN domain for proxy video streaming (supports range requests)
+  proxy_cdn_domain = System.get_env("PROXY_CDN_DOMAIN") || current_cloudfront_domain
+  config :heaters, :proxy_cdn_domain, proxy_cdn_domain
+
+  # Configure storage classes for cost optimization
+  gold_master_storage_class = System.get_env("GOLD_MASTER_STORAGE_CLASS", "GLACIER")
+  proxy_storage_class = System.get_env("PROXY_STORAGE_CLASS", "STANDARD")
+
+  config :heaters, :gold_master_storage_class, gold_master_storage_class
+  config :heaters, :proxy_storage_class, proxy_storage_class
+
+  IO.puts("[Runtime.exs] WebCodecs enabled: #{webcodecs_enabled}")
+  IO.puts("[Runtime.exs] Proxy CDN domain: #{proxy_cdn_domain}")
+  IO.puts("[Runtime.exs] Gold master storage: #{gold_master_storage_class}")
+  IO.puts("[Runtime.exs] Proxy storage: #{proxy_storage_class}")
 else
   # In test environment or database operations, configure minimal stubs for S3/CloudFront
   if is_database_operation do

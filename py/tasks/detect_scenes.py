@@ -81,16 +81,16 @@ def run_detect_scenes(
                 "source_video_id": source_video_id,
                 "total_scenes_detected": len(cut_points),
                 "video_properties": {
-                    "fps": fps,
-                    "width": width,
-                    "height": height,
-                    "total_frames": total_frames,
-                    "duration_seconds": total_frames / fps
-                },
-                "detection_params": {
-                    "threshold": threshold,
-                    "method": method,
-                    "min_duration_seconds": min_duration_seconds
+                "fps": fps,
+                "width": width,
+                "height": height,
+                "total_frames": total_frames,
+                "duration_seconds": total_frames / fps
+            },
+            "detection_params": {
+                "threshold": threshold,
+                "method": method,
+                "min_duration_seconds": min_duration_seconds
                 }
             }
         }

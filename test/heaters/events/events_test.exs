@@ -4,7 +4,7 @@ defmodule Heaters.EventsTest do
   alias Heaters.Events
   alias Heaters.Events.ReviewEvent
   alias Heaters.Clips.Clip
-  alias Heaters.SourceVideos.SourceVideo
+  alias Heaters.Videos.SourceVideo
 
   describe "log_review_action/4" do
     setup do
@@ -213,29 +213,4 @@ defmodule Heaters.EventsTest do
     end
   end
 
-  # Helper function to verify event relationships
-  defp insert(schema, attrs \\ %{}) do
-    case schema do
-      :source_video ->
-        %SourceVideo{
-          title: "Test Video #{System.unique_integer()}",
-          ingest_state: "new"
-        }
-        |> SourceVideo.changeset(attrs)
-        |> Repo.insert!()
-
-      :clip ->
-        default_attrs = %{
-          clip_filepath: "/tmp/test_clip_#{System.unique_integer()}.mp4",
-          clip_identifier: "test_clip_#{System.unique_integer()}",
-          start_frame: 0,
-          end_frame: 100,
-          ingest_state: "pending_review"
-        }
-
-        %Clip{}
-        |> Clip.changeset(Map.merge(default_attrs, attrs))
-        |> Repo.insert!()
-    end
-  end
 end

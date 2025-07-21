@@ -511,3 +511,145 @@ RUN npm install --prefix assets @webcodecs/av1-decoder
 - Smooth transition from virtual to physical clips via export worker
 - No breaking changes to review UI/UX  
 - Preserves all existing keyboard shortcuts and workflows
+
+---
+
+## Implementation Status
+
+### ✅ Completed
+- [x] Database schema and migration (`20250721145950_add_proxy_architecture_columns.exs`)
+- [x] Core business logic for virtual clips (`VirtualClips`, `ClipReview` updates)
+- [x] New worker implementations (Preprocessing, Scene Detection, Export)
+- [x] Pipeline configuration updates for new workflow stages
+- [x] WebCodecs player implementation with fallback support
+- [x] Review UI integration for virtual/physical clip handling
+- [x] Instant virtual clip merge/split operations
+- [x] **S3 integration with centralized `s3_handler.py` and storage class support**
+- [x] **CDN URL generation with range request support for WebCodecs**
+- [x] **Runtime configuration for WebCodecs, proxy CDN, and storage classes**
+
+### 📋 Pending Tasks
+
+#### 🧪 **Testing & Validation**
+- [ ] **End-to-end testing of new pipeline**: Test full workflow from video upload → preprocessing → scene detection → review → export
+- [ ] **WebCodecs browser compatibility testing**: Verify fallback behavior across Chrome, Firefox, Safari, and older browsers
+- [ ] **Performance benchmarking**: Compare virtual vs physical operation metrics (speed, storage, cost)
+- [ ] **S3 integration testing**: Verify uploads to correct storage classes and CDN serving
+- [ ] **Python task error handling**: Test failure scenarios and recovery mechanisms
+
+#### 🔄 **Migration & Transition**
+- [ ] **Gradual rollout strategy**: Implement feature flags or gradual migration from sprite-based to WebCodecs workflow
+- [ ] **Data migration scripts**: Handle existing physical clips and sprite sheets during transition
+- [ ] **Legacy compatibility testing**: Ensure existing sprite-based clips continue working during migration
+- [ ] **User training/documentation**: Update internal docs for new review interface
+
+#### 🧹 **Cleanup & Optimization**
+- [ ] **Remove legacy sprite workers**: Delete `Clips.Operations.Artifacts.Sprite.Worker` and related code after full migration
+- [ ] **Database cleanup**: Remove unused columns and constraints after migration is complete
+- [ ] **S3 cleanup**: Archive or delete old sprite sheets and intermediate clip files
+- [ ] **Performance monitoring**: Implement metrics collection for virtual clip operations
+
+#### ⚙️ **Environment & Deployment**
+- [ ] **Environment variable documentation**: Document all new env vars (WEBCODECS_ENABLED, PROXY_CDN_DOMAIN, storage classes)
+- [ ] **Docker updates**: Ensure all dependencies are in production containers
+- [ ] **CDN configuration**: Set up range request support for proxy video streaming
+- [ ] **Monitoring & alerting**: Add alerts for new worker failures and performance issues
+
+#### 📊 **Production Readiness**
+- [ ] **Load testing**: Test system under realistic video processing loads
+- [ ] **Cost analysis**: Validate expected storage and processing cost reductions
+- [ ] **Backup & recovery**: Ensure gold masters and virtual clip data are properly backed up
+- [ ] **Documentation updates**: Update README, deployment guides, and troubleshooting docs
+
+---
+
+## Environment Configuration
+
+### Required Environment Variables
+
+#### **S3 Configuration**
+```bash
+# Core S3 settings
+S3_BUCKET_NAME=your-video-bucket
+S3_DEV_BUCKET_NAME=your-dev-bucket      # Optional: dev-specific bucket
+S3_PROD_BUCKET_NAME=your-prod-bucket    # Optional: prod-specific bucket
+
+# Storage class optimization  
+GOLD_MASTER_STORAGE_CLASS=GLACIER       # Default: GLACIER (cost-optimized)
+PROXY_STORAGE_CLASS=STANDARD             # Default: STANDARD (fast access)
+```
+
+#### **CDN Configuration**
+```bash
+# WebCodecs streaming support
+PROXY_CDN_DOMAIN=cdn.yourdomain.com      # CDN with range request support
+CLOUDFRONT_DEV_DOMAIN=dev.cdn.yourdomain.com   # Fallback for dev
+CLOUDFRONT_PROD_DOMAIN=prod.cdn.yourdomain.com # Fallback for prod
+```
+
+#### **Feature Flags**
+```bash
+# WebCodecs support toggle
+WEBCODECS_ENABLED=true                   # Default: true
+
+# Pipeline behavior
+APP_ENV=development                      # or "production"
+```
+
+#### **Python Environment**
+```bash
+# Python execution (for Render/Docker)
+PYTHON_EXECUTABLE=/opt/venv/bin/python3  # Path to Python in container
+PYTHON_WORKING_DIR=/app                  # Working directory for Python tasks
+```
+
+### CDN Requirements
+
+Your CDN (CloudFront/etc.) must support:
+- **HTTP Range Requests** for WebCodecs byte-range fetching  
+- **CORS headers** for cross-origin video access
+- **Cache-Control** headers for optimal proxy video caching
+
+### Deployment Checklist
+
+1. ✅ **Database migration applied**: `mix ecto.migrate`
+2. ✅ **Environment variables set**: All required vars configured  
+3. ⏳ **CDN configured**: Range requests enabled for proxy videos
+4. ⏳ **Python dependencies**: Ensure boto3 is available in production
+5. ⏳ **Oban queues**: Verify new workers are included in queue configuration
+6. ⏳ **Monitoring**: Set up alerts for new worker failures
+
+---
+
+## Key Files & Changes Summary
+
+### 🗄️ **Database**
+- **`priv/repo/migrations/20250721145950_add_proxy_architecture_columns.exs`** - Schema for virtual clips and proxy architecture
+
+### 🔧 **Backend (Elixir)**
+- **`lib/heaters/videos/operations/preprocessing/worker.ex`** - Creates gold master + review proxy
+- **`lib/heaters/videos/operations/scene_detection/worker.ex`** - Creates virtual clips from cut points
+- **`lib/heaters/clips/operations/export/worker.ex`** - Final encoding from gold master
+- **`lib/heaters/clips/operations/virtual_clips.ex`** - Virtual clip management operations
+- **`lib/heaters/clips/review.ex`** - Updated for instant virtual merge/split
+- **`lib/heaters/infrastructure/orchestration/pipeline_config.ex`** - New workflow stages
+- **`lib/heaters/infrastructure/adapters/s3_adapter.ex`** - Enhanced S3 operations with CDN support
+
+### 🌐 **Frontend (Phoenix + JavaScript)**
+- **`lib/heaters_web/components/webcodecs_player.ex`** - WebCodecs player component
+- **`assets/js/webcodecs-player.js`** - WebCodecs implementation with fallback
+- **`lib/heaters_web/live/review_live.ex`** - Updated for virtual clip review
+- **`lib/heaters_web/live/review_live.html.heex`** - Conditional player rendering
+- **`assets/js/hover-play.js`** - Updated for virtual clip thumbnails
+
+### 🐍 **Python Tasks**
+- **`py/tasks/preprocessing.py`** - Gold master + proxy generation
+- **`py/tasks/detect_scenes.py`** - Scene detection returning cut points only  
+- **`py/tasks/export_clips.py`** - Final clip export from gold master
+- **`py/tasks/s3_handler.py`** - Enhanced S3 operations with storage classes
+
+### ⚙️ **Configuration**
+- **`config/runtime.exs`** - WebCodecs, CDN, and storage class configuration
+
+### 📋 **Documentation**
+- **`refactor_overview.md`** - This comprehensive implementation guide

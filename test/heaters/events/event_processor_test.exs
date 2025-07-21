@@ -4,7 +4,7 @@ defmodule Heaters.Events.EventProcessorTest do
   alias Heaters.Events.EventProcessor
   alias Heaters.Events.ReviewEvent
   alias Heaters.Clips.Clip
-  alias Heaters.SourceVideos.SourceVideo
+  alias Heaters.Videos.SourceVideo
   alias Heaters.Clips.Operations.Edits.Split.Worker, as: SplitWorker
   alias Heaters.Clips.Operations.Edits.Merge.Worker, as: MergeWorker
 
@@ -294,41 +294,4 @@ defmodule Heaters.Events.EventProcessorTest do
     end
   end
 
-  # Helper functions for test data creation
-  defp insert(schema, attrs \\ %{}) do
-    case schema do
-      :source_video ->
-        %SourceVideo{
-          title: "Test Video #{System.unique_integer()}",
-          ingest_state: "new"
-        }
-        |> SourceVideo.changeset(attrs)
-        |> Repo.insert!()
-
-      :clip ->
-        default_attrs = %{
-          clip_filepath: "/tmp/test_clip_#{System.unique_integer()}.mp4",
-          clip_identifier: "test_clip_#{System.unique_integer()}",
-          start_frame: 0,
-          end_frame: 100,
-          ingest_state: "pending_review"
-        }
-
-        %Clip{}
-        |> Clip.changeset(Map.merge(default_attrs, attrs))
-        |> Repo.insert!()
-
-      :review_event ->
-        default_attrs = %{
-          action: "test_action",
-          reviewer_id: "test_user",
-          event_data: %{},
-          processed_at: nil
-        }
-
-        %ReviewEvent{}
-        |> ReviewEvent.changeset(Map.merge(default_attrs, attrs))
-        |> Repo.insert!()
-    end
-  end
 end

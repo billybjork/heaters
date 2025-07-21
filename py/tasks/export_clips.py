@@ -315,16 +315,16 @@ def sanitize_filename(filename: str) -> str:
 
 
 def download_from_s3(s3_path: str, local_path: Path) -> None:
-    """Download file from S3 to local path"""
-    # This would integrate with your existing S3 infrastructure
-    logger.info(f"Downloading gold master {s3_path} to {local_path}")
-    # Implementation would use boto3 or your existing S3 client
-    pass
+    """Download file from S3 to local path using centralized S3 handler"""
+    from .s3_handler import get_s3_config, download_from_s3 as s3_download
+    
+    s3_client, bucket_name = get_s3_config()
+    s3_download(s3_client, bucket_name, s3_path, local_path)
 
 
 def upload_to_s3(local_path: Path, s3_key: str, storage_class: str = "STANDARD") -> None:
-    """Upload local file to S3 with specified storage class"""
-    # This would integrate with your existing S3 infrastructure
-    logger.info(f"Uploading final clip {local_path} to {s3_key} (storage class: {storage_class})")
-    # Implementation would use boto3 or your existing S3 client
-    pass 
+    """Upload local file to S3 using centralized S3 handler"""
+    from .s3_handler import get_s3_config, upload_to_s3 as s3_upload
+    
+    s3_client, bucket_name = get_s3_config()
+    s3_upload(s3_client, bucket_name, local_path, s3_key, storage_class) 

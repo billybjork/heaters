@@ -54,3 +54,9 @@ config :heaters, Heaters.Infrastructure.PyRunner,
 config :heaters, :app_env, "test"
 config :heaters, :cloudfront_domain, "test.cloudfront.test"
 config :heaters, :s3_bucket, "test-bucket"
+
+# Configure ExAws for testing
+config :ex_aws,
+  access_key_id: "test-access-key",
+  secret_access_key: "test-secret-key",
+  region: "us-east-1"
