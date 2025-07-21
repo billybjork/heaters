@@ -27,29 +27,36 @@ COMPARISON_METHODS = {
 }
 
 def run_detect_scenes(
-    source_video_path: str,
+    proxy_video_path: str,
+    source_video_id: int,
     threshold: float = 0.6,
     method: str = "correl", 
     min_duration_seconds: float = 1.0,
     **kwargs
 ) -> Dict[str, Any]:
     """
-    Detect scene cuts in a local video file using OpenCV.
+    Detect scene cuts in a proxy video file and return cut points for virtual clips.
     
     Args:
-        source_video_path: Local path to video file
+        proxy_video_path: S3 path to proxy video file
+        source_video_id: Database ID of the source video
         threshold: Scene cut threshold (0.0-1.0)
         method: Comparison method name
         min_duration_seconds: Minimum scene duration
         
     Returns:
-        dict: Scene cuts and basic video info
+        dict: Cut points for virtual clip creation and metadata
     """
     try:
+        # For now, assume proxy_video_path is accessible locally or via URL
+        # In production, this would download from S3 first
+        logger.info(f"Starting scene detection for source_video_id: {source_video_id}")
+        logger.info(f"Using proxy video: {proxy_video_path}")
+        
         # Open video
-        cap = cv2.VideoCapture(source_video_path)
+        cap = cv2.VideoCapture(proxy_video_path)
         if not cap.isOpened():
-            raise ValueError(f"Cannot open video: {source_video_path}")
+            raise ValueError(f"Cannot open proxy video: {proxy_video_path}")
         
         # Get video properties
         fps = cap.get(cv2.CAP_PROP_FPS)
@@ -60,29 +67,36 @@ def run_detect_scenes(
         # Detect scene cuts
         cut_frames = detect_scene_cuts(cap, threshold, method, total_frames)
         
-        # Build scenes from cuts
-        scenes = build_scenes_from_cuts(cut_frames, fps, min_duration_seconds)
+        # Build cut points for virtual clips (not scenes)
+        cut_points = build_cut_points_from_cuts(cut_frames, fps, min_duration_seconds)
         
         cap.release()
         
+        logger.info(f"Scene detection complete: found {len(cut_points)} valid cut points")
+        
         return {
             "status": "success",
-            "scenes": scenes,
-            "video_info": {
-                "fps": fps,
-                "width": width,
-                "height": height,
-                "total_frames": total_frames,
-                "duration_seconds": total_frames / fps
-            },
-            "detection_params": {
-                "threshold": threshold,
-                "method": method,
-                "min_duration_seconds": min_duration_seconds
+            "cut_points": cut_points,
+            "metadata": {
+                "source_video_id": source_video_id,
+                "total_scenes_detected": len(cut_points),
+                "video_properties": {
+                    "fps": fps,
+                    "width": width,
+                    "height": height,
+                    "total_frames": total_frames,
+                    "duration_seconds": total_frames / fps
+                },
+                "detection_params": {
+                    "threshold": threshold,
+                    "method": method,
+                    "min_duration_seconds": min_duration_seconds
+                }
             }
         }
         
     except Exception as e:
+        logger.error(f"Scene detection failed for source_video_id {source_video_id}: {e}")
         return {
             "status": "error",
             "error": str(e)
@@ -147,8 +161,31 @@ def is_scene_cut(score: float, threshold: float, method: str) -> bool:
     else:  # chisqr, bhattacharyya
         return score > threshold
 
+def build_cut_points_from_cuts(cut_frames: List[int], fps: float, min_duration: float) -> List[Dict[str, Any]]:
+    """Build cut points for virtual clips from cut frames."""
+    cut_points = []
+    
+    for i in range(len(cut_frames) - 1):
+        start_frame = cut_frames[i]
+        end_frame = cut_frames[i + 1]
+        
+        start_time = start_frame / fps
+        end_time = end_frame / fps
+        duration = end_time - start_time
+        
+        if duration >= min_duration:
+            # Format matches what VirtualClips.create_virtual_clips_from_cut_points expects
+            cut_points.append({
+                "start_frame": start_frame,
+                "end_frame": end_frame,
+                "start_time_seconds": round(start_time, 3),
+                "end_time_seconds": round(end_time, 3)
+            })
+    
+    return cut_points
+
 def build_scenes_from_cuts(cut_frames: List[int], fps: float, min_duration: float) -> List[Dict[str, Any]]:
-    """Build scene list from cut frames."""
+    """Build scene list from cut frames (legacy function for compatibility)."""
     scenes = []
     
     for i in range(len(cut_frames) - 1):

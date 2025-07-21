@@ -18,6 +18,8 @@ defmodule Heaters.Clips.Clip do
           processing_metadata: map() | nil,
           grouped_with_clip_id: integer() | nil,
           action_committed_at: NaiveDateTime.t() | nil,
+          is_virtual: boolean(),
+          cut_points: map() | nil,
           source_video: Heaters.Videos.SourceVideo.t() | Ecto.Association.NotLoaded.t(),
           clip_artifacts:
             [Heaters.Clips.Operations.Artifacts.ClipArtifact.t()] | Ecto.Association.NotLoaded.t(),
@@ -42,6 +44,10 @@ defmodule Heaters.Clips.Clip do
     field(:processing_metadata, :map)
     field(:grouped_with_clip_id, :integer)
     field(:action_committed_at, :naive_datetime)
+
+    # Virtual clip fields
+    field(:is_virtual, :boolean, default: false)
+    field(:cut_points, :map)
 
     belongs_to(:source_video, Heaters.Videos.SourceVideo)
     has_many(:clip_artifacts, Heaters.Clips.Operations.Artifacts.ClipArtifact)
@@ -69,8 +75,28 @@ defmodule Heaters.Clips.Clip do
       :embedded_at,
       :processing_metadata,
       :grouped_with_clip_id,
-      :action_committed_at
+      :action_committed_at,
+      :is_virtual,
+      :cut_points
     ])
-    |> validate_required([:clip_filepath, :clip_identifier, :ingest_state])
+    |> validate_required([:clip_identifier, :ingest_state])
+    |> validate_virtual_clip_requirements()
+  end
+
+  # Private helper to validate virtual vs physical clip requirements
+  defp validate_virtual_clip_requirements(changeset) do
+    is_virtual = get_field(changeset, :is_virtual, false)
+
+    case is_virtual do
+      true ->
+        # Virtual clips require cut_points but not clip_filepath
+        changeset
+        |> validate_required([:cut_points])
+
+      false ->
+        # Physical clips require clip_filepath but not cut_points
+        changeset
+        |> validate_required([:clip_filepath])
+    end
   end
 end

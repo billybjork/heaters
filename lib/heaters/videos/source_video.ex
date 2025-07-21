@@ -14,6 +14,12 @@ defmodule Heaters.Videos.SourceVideo do
           last_error: String.t() | nil,
           retry_count: integer(),
           original_url: String.t() | nil,
+          needs_splicing: boolean(),
+          proxy_filepath: String.t() | nil,
+          keyframe_offsets: list() | nil,
+          gold_master_filepath: String.t() | nil,
+          downloaded_at: DateTime.t() | nil,
+          spliced_at: DateTime.t() | nil,
           inserted_at: DateTime.t(),
           updated_at: DateTime.t()
         }
@@ -30,6 +36,12 @@ defmodule Heaters.Videos.SourceVideo do
     field(:last_error, :string)
     field(:retry_count, :integer, default: 0)
     field(:original_url, :string)
+    field(:needs_splicing, :boolean, default: true)
+    field(:proxy_filepath, :string)
+    field(:keyframe_offsets, {:array, :integer})
+    field(:gold_master_filepath, :string)
+    field(:downloaded_at, :utc_datetime)
+    field(:spliced_at, :utc_datetime)
     timestamps(type: :utc_datetime)
   end
 
@@ -49,7 +61,13 @@ defmodule Heaters.Videos.SourceVideo do
       :ingest_state,
       :last_error,
       :retry_count,
-      :original_url
+      :original_url,
+      :needs_splicing,
+      :proxy_filepath,
+      :keyframe_offsets,
+      :gold_master_filepath,
+      :downloaded_at,
+      :spliced_at
     ])
     |> validate_required([:ingest_state])
   end

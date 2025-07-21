@@ -52,11 +52,14 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
   alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Videos.Operations.Ingest.Worker, as: IngestWorker
+  alias Heaters.Videos.Operations.Preprocessing.Worker, as: PreprocessingWorker
+  alias Heaters.Videos.Operations.SceneDetection.Worker, as: SceneDetectionWorker
   alias Heaters.Videos.Operations.Splice.Worker, as: SpliceWorker
   alias Heaters.Clips.Operations.Artifacts.Sprite.Worker, as: SpriteWorker
   alias Heaters.Clips.Operations.Artifacts.Keyframe.Worker, as: KeyframeWorker
   alias Heaters.Clips.Embeddings.Worker, as: EmbeddingWorker
   alias Heaters.Clips.Operations.Archive.Worker, as: ArchiveWorker
+  alias Heaters.Clips.Operations.Export.Worker, as: ExportWorker
 
   @doc """
   Returns the complete pipeline stage configuration.
@@ -70,26 +73,49 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
   @spec stages() :: [map()]
   def stages do
     [
+      # Stage 1: Ingest (unchanged)
       %{
         label: "videos needing ingest → download",
         query: fn -> VideoQueries.get_videos_needing_ingest() end,
         build: fn video -> IngestWorker.new(%{source_video_id: video.id}) end
       },
+
+      # Stage 2: NEW - Preprocessing (replaces part of splice workflow)
+      %{
+        label: "videos needing preprocessing → proxy generation",
+        query: fn -> VideoQueries.get_videos_needing_preprocessing() end,
+        build: fn video -> PreprocessingWorker.new(%{source_video_id: video.id}) end
+      },
+
+      # Stage 3: NEW - Scene detection for virtual clips (replaces sprite generation)
+      %{
+        label: "videos needing scene detection → virtual clips",
+        query: fn -> VideoQueries.get_videos_needing_scene_detection() end,
+        build: fn video -> SceneDetectionWorker.new(%{source_video_id: video.id}) end
+      },
+
+      # Stage 4: Legacy splice (keep temporarily during transition)
       %{
         label: "videos needing splice → splice",
         query: fn -> VideoQueries.get_videos_needing_splice() end,
         build: fn video -> SpliceWorker.new(%{source_video_id: video.id}) end
       },
+
+      # Stage 5: Legacy sprite generation (keep temporarily during transition)
       %{
         label: "clips needing sprites → sprites",
         query: fn -> ClipQueries.get_clips_needing_sprites() end,
         build: fn clip -> SpriteWorker.new(%{clip_id: clip.id}) end
       },
+
+      # Stage 6: Keyframes (will be updated for source-level keyframes later)
       %{
         label: "clips needing keyframes → keyframes",
         query: fn -> ClipQueries.get_clips_needing_keyframes() end,
         build: fn clip -> KeyframeWorker.new(%{clip_id: clip.id, strategy: "multi"}) end
       },
+
+      # Stage 7: Embeddings (unchanged for now)
       %{
         label: "clips needing embeddings → embeddings",
         query: fn -> ClipQueries.get_clips_needing_embeddings() end,
@@ -101,6 +127,19 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
           })
         end
       },
+
+            # Stage 8: NEW - Export (virtual clips → physical clips)
+      %{
+        label: "approved virtual clips → final encoding",
+        query: fn ->
+          # Get source video IDs that have approved virtual clips
+          ClipQueries.get_source_videos_with_clips_ready_for_export()
+          |> Enum.map(fn source_video_id -> %{id: source_video_id} end)
+        end,
+        build: fn source_video -> ExportWorker.new(%{source_video_id: source_video.id}) end
+      },
+
+      # Stage 9: Archive (unchanged)
       %{
         label: "review_archived clips → archive",
         query: fn -> ClipQueries.get_clips_by_state("review_archived") end,

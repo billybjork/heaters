@@ -37,6 +37,26 @@ defmodule Heaters.Videos.Queries do
   end
 
   @doc """
+  Get all source videos that need preprocessing (downloaded without proxy_filepath).
+  This enables resumable processing of interrupted jobs.
+  """
+  def get_videos_needing_preprocessing() do
+    from(s in SourceVideo,
+      where: s.ingest_state == "downloaded" and is_nil(s.proxy_filepath))
+    |> Repo.all()
+  end
+
+  @doc """
+  Get all source videos that need scene detection (preprocessed with needs_splicing = true).
+  This enables resumable processing of interrupted jobs.
+  """
+  def get_videos_needing_scene_detection() do
+    from(s in SourceVideo,
+      where: not is_nil(s.proxy_filepath) and s.needs_splicing == true)
+    |> Repo.all()
+  end
+
+  @doc """
   Get all source videos that need splice processing (downloaded, splicing, or splicing_failed).
   This enables resumable processing of interrupted jobs.
   """

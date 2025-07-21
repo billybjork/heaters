@@ -93,6 +93,28 @@ defmodule Heaters.Clips.Queries do
     |> Repo.update()
   end
 
+  @doc """
+  Get all virtual clips that are ready for export (review_approved state).
+  This enables the export worker to find approved virtual clips for final encoding.
+  """
+  def get_virtual_clips_ready_for_export() do
+    from(c in Clip,
+      where: c.is_virtual == true and c.ingest_state == "review_approved")
+    |> Repo.all()
+  end
+
+  @doc """
+  Get all source videos that have approved virtual clips ready for export.
+  This enables the pipeline dispatcher to find source videos with clips to export.
+  """
+  def get_source_videos_with_clips_ready_for_export() do
+    from(c in Clip,
+      where: c.is_virtual == true and c.ingest_state == "review_approved",
+      select: c.source_video_id,
+      distinct: true)
+    |> Repo.all()
+  end
+
   @doc "Fast count of clips still in `pending_review`."
   def pending_review_count do
     Clip
