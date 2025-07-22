@@ -330,7 +330,33 @@ export const ProxyPlayerController = {
 
 ### Phase 4: Python Task Updates
 
-**4.1 New Preprocessing Task**
+**4.1 Enhanced Ingest Task with Quality Preservation**
+```python
+# py/tasks/ingest.py - Enhanced download workflow
+def run_ingest(source_video_id, input_source, **kwargs):
+    """
+    Download-only workflow with conditional normalization for quality preservation
+    
+    Key Features:
+    - Best-quality-first download strategy with graceful fallback
+    - Conditional normalization for primary downloads to fix yt-dlp merge issues
+    - Comprehensive metadata tracking for downstream processing decisions
+    - No transcoding overhead - stores original files for preprocessing pipeline
+    
+    Primary Downloads (requires_normalization=True):
+    - Format: 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b'
+    - Downloads separate video/audio streams for maximum quality
+    - yt-dlp merges internally but merge sometimes fails/corrupts
+    - Lightweight normalization fixes merge issues while preserving quality
+    
+    Fallback Downloads (requires_normalization=False):
+    - Format: 'bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+    - Downloads pre-merged or more compatible formats
+    - No normalization needed as no merge operation occurs
+    """
+```
+
+**4.2 New Preprocessing Task**
 ```python
 # py/tasks/preprocessing.py
 def run_preprocessing(source_video_path, temp_dir, **kwargs):
@@ -351,7 +377,7 @@ def run_preprocessing(source_video_path, temp_dir, **kwargs):
     # 3. Extract keyframe offsets for efficient WebCodecs seeking
 ```
 
-**4.2 Update Scene Detection Task**
+**4.3 Update Scene Detection Task**
 ```python
 # py/tasks/detect_scenes.py  
 def run_scene_detection(proxy_video_path, **kwargs):
@@ -371,7 +397,7 @@ def run_scene_detection(proxy_video_path, **kwargs):
     # Use existing OpenCV scene detection but don't encode clips
 ```
 
-**4.3 New Export Task**
+**4.4 New Export Task**
 ```python
 # py/tasks/export_clips.py
 def run_clip_export(gold_master_path, cut_points_list, output_dir, **kwargs):
@@ -527,6 +553,8 @@ RUN npm install --prefix assets @webcodecs/av1-decoder
 - [x] **S3 integration with centralized `s3_handler.py` and storage class support**
 - [x] **CDN URL generation with range request support for WebCodecs**
 - [x] **Runtime configuration for WebCodecs, proxy CDN, and storage classes**
+- [x] **Download quality regression fix with conditional normalization**
+- [x] **Best-quality-first download strategy with graceful fallback preserved**
 
 ### 📋 Pending Tasks
 
@@ -647,6 +675,8 @@ Your CDN (CloudFront/etc.) must support:
 - **`py/tasks/detect_scenes.py`** - Scene detection returning cut points only  
 - **`py/tasks/export_clips.py`** - Final clip export from gold master
 - **`py/tasks/s3_handler.py`** - Enhanced S3 operations with storage classes
+- **`py/tasks/ingest.py`** - Enhanced download workflow with conditional normalization for quality preservation
+- **`py/tasks/download_handler.py`** - Quality-focused yt-dlp download strategy with merge issue detection
 
 ### ⚙️ **Configuration**
 - **`config/runtime.exs`** - WebCodecs, CDN, and storage class configuration

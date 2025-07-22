@@ -1,12 +1,13 @@
 """
 Preprocessing Task for Video Pipeline
 
-Handles creation of:
+Handles creation of transcoded outputs from original source videos:
 1. Gold master - lossless MKV + FFV1 for archival and final export
 2. Review proxy - all-I-frame H.264 MP4 for efficient seeking in WebCodecs
 3. Keyframe offsets - byte positions for efficient seeking
 
-This replaces the current splicing workflow for the proxy architecture.
+This is the main transcoding step that creates all necessary video formats
+from the original video files stored by the ingest task.
 """
 
 import json
@@ -50,10 +51,13 @@ PROXY_ARGS = [
 
 def run_preprocessing(source_video_path: str, source_video_id: int, video_title: str, **kwargs) -> Dict[str, Any]:
     """
-    Create gold master and review proxy from source video
+    Create gold master and review proxy from original source video.
+    
+    This is the main transcoding step that processes original videos 
+    (stored by ingest task) into the required output formats.
     
     Args:
-        source_video_path: S3 path to source video
+        source_video_path: S3 path to original source video (from ingest task)
         source_video_id: Database ID of the source video
         video_title: Title for generating output filenames
         
@@ -137,6 +141,21 @@ def validate_ffmpeg_available() -> None:
             raise RuntimeError(f"FFmpeg returned error code {result.returncode}")
     except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as e:
         raise RuntimeError(f"FFmpeg validation failed: {e}")
+
+
+def validate_ffprobe_available() -> None:
+    """Validate that FFprobe is available and working"""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-version"], 
+            capture_output=True, 
+            text=True, 
+            timeout=10
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"FFprobe returned error code {result.returncode}")
+    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as e:
+        raise RuntimeError(f"FFprobe validation failed: {e}")
 
 
 def extract_video_metadata(video_path: Path) -> Dict[str, Any]:

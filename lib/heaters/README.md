@@ -85,6 +85,45 @@ The `Clips.Operations` context is organized by **operation type**, not file type
 
 This reflects the fundamental difference between human review actions and automated processing stages.
 
+### Quality-First Download Architecture
+
+The ingest pipeline implements a **quality-first download strategy** with intelligent fallback to ensure optimal video quality while maintaining reliability:
+
+#### Primary Download Strategy (Best Quality)
+- **Format**: `'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b'`
+- **Approach**: Downloads highest quality separate video/audio streams
+- **yt-dlp Merge**: Internally merges streams using FFmpeg for maximum quality
+- **Challenge**: Merge operation sometimes fails or produces corrupted files
+- **Solution**: **Conditional normalization** applies lightweight FFmpeg re-encoding to fix merge issues
+
+#### Fallback Download Strategy (Compatibility)
+- **Format**: `'bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best'`
+- **Approach**: Downloads pre-merged or more compatible formats
+- **Benefit**: No merge operation needed, highly reliable
+- **Trade-off**: May not achieve maximum possible quality
+
+#### Conditional Normalization Logic
+```python
+# CRITICAL: This step preserves the best-quality-first approach
+if download_method == 'primary' and requires_normalization:
+    # Apply lightweight normalization to fix yt-dlp merge issues
+    # Uses fast settings: -preset fast -crf 23 -movflags +faststart
+    # Different from preprocessing.py - just ensures valid MP4
+    normalize_video(original_download, normalized_output)
+else:
+    # Fallback downloads don't need normalization
+    use_original_download()
+```
+
+#### Architecture Benefits
+- **Quality Preservation**: Gets best possible quality when available
+- **Reliability**: Graceful fallback when quality approach fails  
+- **Separation of Concerns**: Lightweight ingest fix vs. full preprocessing pipeline
+- **Performance**: Only normalizes when necessary (primary downloads)
+- **Documentation**: Extensive comments prevent accidental removal of quality logic
+
+This architecture ensures we maintain the **best quality first** principle while providing robust fallback mechanisms for challenging video sources.
+
 ### Direct Action Execution with Buffer Time
 
 Human review actions execute immediately with undo support:
@@ -370,9 +409,12 @@ Each stage is pure configuration:
 
 - **`Infrastructure`**: I/O adapters (S3, FFmpeg, Database) and shared worker behaviors with consistent interfaces and robust error handling
 - **Python Tasks**: 
+  - **`ingest.py`**: Quality-focused video download with conditional normalization for merge issue prevention
+  - **`download_handler.py`**: yt-dlp integration with best-quality-first strategy and intelligent fallback
   - **`preprocessing.py`**: FFmpeg gold master + proxy generation with progress reporting
   - **`detect_scenes.py`**: OpenCV scene detection returning cut points for virtual clips
   - **`export_clips.py`**: Batch encoding from gold master to delivery-optimized MP4s
+  - **`s3_handler.py`**: Centralized S3 operations with storage class optimization
 
 ## Production Reliability Features
 
@@ -443,6 +485,8 @@ Each stage is pure configuration:
 - **Python Tasks**: `preprocessing.py`, updated `detect_scenes.py`, `export_clips.py`
 - **Pipeline Integration**: Updated `PipelineConfig` with new virtual clip stages
 - **Type Safety**: All Dialyzer warnings resolved, production-ready code quality
+- **Enhanced Download Workflow**: Quality-first download strategy with conditional normalization
+- **S3 Integration**: Centralized S3 operations with storage class optimization
 
 ### 🚧 In Progress / Next Steps
 

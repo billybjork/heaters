@@ -10,6 +10,8 @@ This "dumb" version:
 
 import json
 import logging
+import tempfile
+from pathlib import Path
 from typing import Dict, List, Any
 
 import cv2
@@ -48,29 +50,32 @@ def run_detect_scenes(
         dict: Cut points for virtual clip creation and metadata
     """
     try:
-        # For now, assume proxy_video_path is accessible locally or via URL
-        # In production, this would download from S3 first
         logger.info(f"Starting scene detection for source_video_id: {source_video_id}")
         logger.info(f"Using proxy video: {proxy_video_path}")
         
-        # Open video
-        cap = cv2.VideoCapture(proxy_video_path)
-        if not cap.isOpened():
-            raise ValueError(f"Cannot open proxy video: {proxy_video_path}")
-        
-        # Get video properties
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        
-        # Detect scene cuts
-        cut_frames = detect_scene_cuts(cap, threshold, method, total_frames)
-        
-        # Build cut points for virtual clips (not scenes)
-        cut_points = build_cut_points_from_cuts(cut_frames, fps, min_duration_seconds)
-        
-        cap.release()
+        # Download proxy video from S3 to local temp file
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local_proxy_path = Path(temp_dir) / "proxy.mp4"
+            download_from_s3(proxy_video_path, local_proxy_path)
+            
+            # Open video
+            cap = cv2.VideoCapture(str(local_proxy_path))
+            if not cap.isOpened():
+                raise ValueError(f"Cannot open proxy video: {proxy_video_path}")
+            
+            # Get video properties
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            
+            # Detect scene cuts
+            cut_frames = detect_scene_cuts(cap, threshold, method, total_frames)
+            
+            # Build cut points for virtual clips (not scenes)
+            cut_points = build_cut_points_from_cuts(cut_frames, fps, min_duration_seconds)
+            
+            cap.release()
         
         logger.info(f"Scene detection complete: found {len(cut_points)} valid cut points")
         
@@ -206,6 +211,15 @@ def build_scenes_from_cuts(cut_frames: List[int], fps: float, min_duration: floa
             })
     
     return scenes
+
+
+def download_from_s3(s3_path: str, local_path: Path) -> None:
+    """Download file from S3 to local path using centralized S3 handler"""
+    from .s3_handler import get_s3_config, download_from_s3 as s3_download
+    
+    s3_client, bucket_name = get_s3_config()
+    s3_download(s3_client, bucket_name, s3_path, local_path)
+
 
 def main():
     """CLI entry point for testing."""

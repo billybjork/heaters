@@ -41,8 +41,7 @@ defmodule Heaters.Videos.Operations.Ingest.Worker do
       # Python task constructs its own S3 path based on video title
       py_args = %{
         source_video_id: updated_video.id,
-        input_source: updated_video.original_url,
-        re_encode_for_qt: true
+        input_source: updated_video.original_url
       }
 
       case PyRunner.run("ingest", py_args, timeout: :timer.minutes(20)) do
