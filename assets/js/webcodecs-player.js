@@ -53,8 +53,8 @@ export const WebCodecsPlayerController = {
     const supportsWebCodecs = this._detectWebCodecsSupport();
     console.log(`[WebCodecsPlayer] WebCodecs support: ${supportsWebCodecs}`);
 
-    if (supportsWebCodecs && meta.isVirtual) {
-      /* use WebCodecs player for virtual clips */
+    if (supportsWebCodecs && meta.isVirtual && meta.keyframeOffsets && meta.keyframeOffsets.length > 0) {
+      /* use WebCodecs player for virtual clips with keyframe data */
       this.player = new WebCodecsPlayer(
         clipId,
         this.el,
@@ -66,6 +66,7 @@ export const WebCodecsPlayerController = {
       );
     } else {
       /* fallback to traditional video player */
+      console.log(`[WebCodecsPlayer] Using fallback player - WebCodecs: ${supportsWebCodecs}, Virtual: ${meta.isVirtual}, Keyframes: ${meta.keyframeOffsets?.length || 0}`);
       this.player = new FallbackVideoPlayer(
         clipId,
         this.el,
@@ -239,12 +240,45 @@ class WebCodecsPlayer {
 
   async _loadInitialFrames() {
     // Load keyframes using byte-range requests
-    // For now, load the first few keyframes to get started
     const keyframeOffsets = this.meta.keyframeOffsets || [];
-    const initialFramesToLoad = Math.min(10, keyframeOffsets.length);
     
+    if (keyframeOffsets.length === 0) {
+      // Fallback: Load first chunk of video without keyframe data
+      console.warn("[WebCodecsPlayer] No keyframe offsets available, using fallback loading");
+      await this._loadVideoChunk(0, 2 * 1024 * 1024); // Load first 2MB
+      return;
+    }
+    
+    // Load the first few keyframes to get started
+    const initialFramesToLoad = Math.min(10, keyframeOffsets.length);
     for (let i = 0; i < initialFramesToLoad; i++) {
       await this._loadKeyframe(i);
+    }
+  }
+
+  async _loadVideoChunk(startByte, size) {
+    try {
+      const endByte = startByte + size - 1;
+      const response = await fetch(this.meta.proxyVideoUrl, {
+        headers: {
+          "Range": `bytes=${startByte}-${endByte}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const chunk = new EncodedVideoChunk({
+        type: "key", // All-I-frame means every chunk can be a keyframe
+        timestamp: 0, // Start from beginning
+        data: arrayBuffer
+      });
+
+      this.decoder.decode(chunk);
+    } catch (error) {
+      console.error(`[WebCodecsPlayer] Failed to load video chunk:`, error);
     }
   }
 
@@ -398,6 +432,18 @@ class WebCodecsPlayer {
   }
 
   async _seekToFrame(frameNum) {
+    const keyframeOffsets = this.meta.keyframeOffsets || [];
+    
+    if (keyframeOffsets.length === 0) {
+      // Fallback: Load video chunk based on estimated byte position
+      const frameRate = this.meta.fps || 30;
+      const totalFrames = this.meta.totalFrames || 1;
+      const estimatedBytesPerFrame = (2 * 1024 * 1024) / totalFrames; // Rough estimate
+      const startByte = Math.floor((frameNum - 1) * estimatedBytesPerFrame);
+      await this._loadVideoChunk(startByte, 1024 * 1024); // Load 1MB chunk
+      return;
+    }
+    
     // Calculate which keyframe we need
     const frameRate = this.meta.fps || 30;
     const keyframeInterval = 30; // All-I-frame means every frame is a keyframe!
@@ -548,9 +594,23 @@ class FallbackVideoPlayer {
 
   _setupUI() {
     const m = this.meta;
-    const duration = this.video.duration || 0;
-    const fps = m.fps || 30;
-    const totalFrames = Math.ceil(duration * fps);
+    let totalFrames, startTime = 0;
+    
+    if (m.isVirtual && m.cutPoints) {
+      // For virtual clips, use cut points to determine frame range
+      totalFrames = m.totalFrames || 1;
+      startTime = m.cutPoints.start_time_seconds || 0;
+      
+      // Seek to the start of the virtual clip
+      if (this.video && startTime > 0) {
+        this.video.currentTime = startTime;
+      }
+    } else {
+      // For physical clips, use video duration
+      const duration = this.video.duration || 0;
+      const fps = m.fps || 30;
+      totalFrames = Math.ceil(duration * fps);
+    }
 
     /* controls default state */
     this.scrubEl.min = 1;
@@ -606,7 +666,18 @@ class FallbackVideoPlayer {
     this._onTimeUpdate = () => {
       if (!this.isScrubbing) {
         const fps = this.meta.fps || 30;
-        const frame = Math.floor(this.video.currentTime * fps) + 1;
+        let frame;
+        
+        if (this.meta.isVirtual && this.meta.cutPoints) {
+          // For virtual clips, calculate frame relative to clip start
+          const startTime = this.meta.cutPoints.start_time_seconds || 0;
+          const relativeTime = Math.max(0, this.video.currentTime - startTime);
+          frame = Math.floor(relativeTime * fps) + 1;
+        } else {
+          // For physical clips, use absolute time
+          frame = Math.floor(this.video.currentTime * fps) + 1;
+        }
+        
         this.currentFrame = frame;
         this.frameLblEl.textContent = `Frame: ${frame}`;
         this.scrubEl.value = frame;
@@ -619,19 +690,39 @@ class FallbackVideoPlayer {
     if (!this.video) return;
     
     const fps = this.meta.fps || 30;
-    const duration = this.video.duration || 0;
-    const totalFrames = Math.ceil(duration * fps);
+    let totalFrames, timeSeconds;
     
-    const f = Math.max(1, Math.min(frameNum, totalFrames - 1));
-    if (f === this.currentFrame && !force) return;
+    if (this.meta.isVirtual && this.meta.cutPoints) {
+      // For virtual clips, use cut points
+      totalFrames = this.meta.totalFrames || 1;
+      const startTime = this.meta.cutPoints.start_time_seconds || 0;
+      
+      const f = Math.max(1, Math.min(frameNum, totalFrames - 1));
+      if (f === this.currentFrame && !force) return;
 
-    this.currentFrame = f;
-    this.frameLblEl.textContent = `Frame: ${f}`;
-    if (!this.isScrubbing) this.scrubEl.value = f;
+      this.currentFrame = f;
+      this.frameLblEl.textContent = `Frame: ${f}`;
+      if (!this.isScrubbing) this.scrubEl.value = f;
 
-    // Seek video to frame time
-    const timeSeconds = (f - 1) / fps;
-    this.video.currentTime = timeSeconds;
+      // Seek to absolute time in source video
+      timeSeconds = startTime + (f - 1) / fps;
+      this.video.currentTime = timeSeconds;
+    } else {
+      // For physical clips, use video duration
+      const duration = this.video.duration || 0;
+      totalFrames = Math.ceil(duration * fps);
+      
+      const f = Math.max(1, Math.min(frameNum, totalFrames - 1));
+      if (f === this.currentFrame && !force) return;
+
+      this.currentFrame = f;
+      this.frameLblEl.textContent = `Frame: ${f}`;
+      if (!this.isScrubbing) this.scrubEl.value = f;
+
+      // Seek video to frame time
+      timeSeconds = (f - 1) / fps;
+      this.video.currentTime = timeSeconds;
+    }
   }
 
   _cycleSpeed() {

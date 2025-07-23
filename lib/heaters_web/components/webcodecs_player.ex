@@ -62,7 +62,7 @@ defmodule HeatersWeb.WebCodecsPlayer do
           |> assign(:json_meta, json_meta)
 
         ~H"""
-    <div class="clip-display-container" style={"width: #{@meta["display_width"]}px;"}>
+    <div class="clip-display-container" style={"width: #{@meta["displayWidth"]}px;"}>
       <div
         id={"viewer-#{@clip.id}"}
         phx-hook="WebCodecsPlayer"
@@ -70,8 +70,8 @@ defmodule HeatersWeb.WebCodecsPlayer do
         data-clip-id={@clip.id}
         data-player={@json_meta}
         class="webcodecs-viewer"
-        style={"width: #{@meta["display_width"]}px;
-                height: #{@meta["display_height"]}px;
+        style={"width: #{@meta["displayWidth"]}px;
+                height: #{@meta["displayHeight"]}px;
                 background-color: #000;
                 border-radius: 4px;
                 overflow: hidden;"}
@@ -103,7 +103,7 @@ defmodule HeatersWeb.WebCodecsPlayer do
         </span>
 
         <span class="webcodecs-indicator" style="font-size: 12px; color: #666; margin-left: auto;">
-          <%= if @meta["is_virtual"] do %>
+          <%= if @meta["isVirtual"] do %>
             <span style="color: #0066cc;">⚡ Virtual</span>
           <% else %>
             <span style="color: #666;">📹 Traditional</span>
@@ -122,12 +122,12 @@ defmodule HeatersWeb.WebCodecsPlayer do
   def thumb_meta_json(%Clip{} = clip) do
     build_webcodecs_player_meta(clip)
     |> Map.take([
-      "display_width",
-      "display_height",
-      "total_frames",
+      "displayWidth",
+      "displayHeight",
+      "totalFrames",
       "fps",
-      "proxy_video_url",
-      "is_virtual"
+      "proxyVideoUrl",
+      "isVirtual"
     ])
     |> Jason.encode!()
   end
@@ -176,32 +176,32 @@ defmodule HeatersWeb.WebCodecsPlayer do
     end
 
     %{
-      # Core player information
-      "is_virtual" => is_virtual,
-      "total_frames" => total_frames,
+      # Core player information (camelCase for JavaScript)
+      "isVirtual" => is_virtual,
+      "totalFrames" => total_frames,
       "fps" => fps,
-      "duration_seconds" => duration_seconds,
+      "durationSeconds" => duration_seconds,
 
       # Display settings
-      "display_width" => display_width,
-      "display_height" => display_height,
+      "displayWidth" => display_width,
+      "displayHeight" => display_height,
 
-      # Video sources
-      "proxy_video_url" => proxy_url,
-      "clip_video_url" => clip_url,
+      # Video sources (camelCase for JavaScript)
+      "proxyVideoUrl" => proxy_url,
+      "clipVideoUrl" => clip_url,
 
       # WebCodecs-specific data
-      "keyframe_offsets" => keyframe_offsets,
+      "keyframeOffsets" => keyframe_offsets,
 
       # Cut points for virtual clips
-      "cut_points" => if(is_virtual, do: clip.cut_points, else: nil),
+      "cutPoints" => if(is_virtual, do: clip.cut_points, else: nil),
 
       # Validation
-      "is_valid" => has_valid_video_source?(is_virtual, proxy_url, clip_url),
+      "isValid" => has_valid_video_source?(is_virtual, proxy_url, clip_url),
 
       # Frame range (for compatibility with split manager)
-      "start_frame" => clip.start_frame,
-      "end_frame" => clip.end_frame
+      "startFrame" => clip.start_frame,
+      "endFrame" => clip.end_frame
     }
   end
 
