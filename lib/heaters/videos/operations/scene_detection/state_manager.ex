@@ -66,6 +66,7 @@ defmodule Heaters.Videos.Operations.SceneDetection.StateManager do
   def complete_scene_detection(source_video_id) do
     with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
       update_source_video(source_video, %{
+        ingest_state: "virtual_clips_created",
         needs_splicing: false,
         last_error: nil
       })

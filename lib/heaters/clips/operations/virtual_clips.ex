@@ -63,13 +63,23 @@ defmodule Heaters.Clips.Operations.VirtualClips do
   def create_virtual_clips_from_cut_points(source_video_id, cut_points, metadata \\ %{}) do
     Logger.info("VirtualClips: Creating #{length(cut_points)} virtual clips for source_video_id: #{source_video_id}")
 
-    case validate_cut_points(cut_points) do
-      :ok ->
-        create_clips_from_validated_cut_points(source_video_id, cut_points, metadata)
+    # IDEMPOTENCY: Check if virtual clips already exist for this source video
+    case get_existing_virtual_clips(source_video_id) do
+      [] ->
+        # No existing clips, create new ones
+        case validate_cut_points(cut_points) do
+          :ok ->
+            create_clips_from_validated_cut_points(source_video_id, cut_points, metadata)
 
-      {:error, reason} ->
-        Logger.error("VirtualClips: Cut points validation failed: #{reason}")
-        {:error, reason}
+          {:error, reason} ->
+            Logger.error("VirtualClips: Cut points validation failed: #{reason}")
+            {:error, reason}
+        end
+
+      existing_clips ->
+        # Virtual clips already exist, return them
+        Logger.info("VirtualClips: Found #{length(existing_clips)} existing virtual clips for source_video_id: #{source_video_id}")
+        {:ok, existing_clips}
     end
   end
 
@@ -107,6 +117,14 @@ defmodule Heaters.Clips.Operations.VirtualClips do
   end
 
   # Private functions
+
+  defp get_existing_virtual_clips(source_video_id) do
+    from(c in Clip,
+      where: c.source_video_id == ^source_video_id and c.is_virtual == true,
+      order_by: [asc: c.id]
+    )
+    |> Repo.all()
+  end
 
   defp validate_cut_points(cut_points) when is_list(cut_points) do
     case cut_points do
@@ -170,15 +188,53 @@ defmodule Heaters.Clips.Operations.VirtualClips do
   end
 
   defp create_clips_from_validated_cut_points(source_video_id, cut_points, metadata) do
-    # Use database transaction for atomic creation
-    Repo.transaction(fn ->
-      cut_points
-      |> Enum.with_index()
-      |> Enum.map(fn {cut_point, index} ->
-        create_single_virtual_clip(source_video_id, cut_point, index, metadata)
-      end)
-      |> handle_clip_creation_results()
+    # Check if clips already exist BEFORE starting transaction (idempotency)
+    expected_identifiers = Enum.with_index(cut_points) 
+    |> Enum.map(fn {_cut_point, index} -> 
+      generate_virtual_clip_identifier(source_video_id, index) 
     end)
+    
+    existing_clips = from(c in Clip,
+      where: c.clip_identifier in ^expected_identifiers,
+      order_by: [asc: c.id]
+    )
+    |> Repo.all()
+    
+    case existing_clips do
+      [] ->
+        # No existing clips, proceed with creation in transaction
+        Repo.transaction(fn ->
+          cut_points
+          |> Enum.with_index()
+          |> Enum.map(fn {cut_point, index} ->
+            create_single_virtual_clip(source_video_id, cut_point, index, metadata)
+          end)
+          |> handle_clip_creation_results()
+        end)
+        
+      clips when length(clips) == length(cut_points) ->
+        # All expected clips exist, return them (idempotent)
+        Logger.info("VirtualClips: Found all #{length(clips)} existing virtual clips for source_video_id: #{source_video_id}")
+        {:ok, clips}
+        
+      partial_clips ->
+        # Partial creation scenario - this shouldn't happen but handle gracefully
+        Logger.warning("VirtualClips: Found #{length(partial_clips)} of #{length(cut_points)} expected clips - cleaning up and retrying")
+        
+        # Delete partial clips and retry
+        clip_ids = Enum.map(partial_clips, & &1.id)
+        Repo.delete_all(from(c in Clip, where: c.id in ^clip_ids))
+        
+        # Retry creation
+        Repo.transaction(fn ->
+          cut_points
+          |> Enum.with_index()
+          |> Enum.map(fn {cut_point, index} ->
+            create_single_virtual_clip(source_video_id, cut_point, index, metadata)
+          end)
+          |> handle_clip_creation_results()
+        end)
+    end
   end
 
   defp create_single_virtual_clip(source_video_id, cut_point, index, metadata) do
@@ -205,8 +261,24 @@ defmodule Heaters.Clips.Operations.VirtualClips do
         {:ok, clip}
 
       {:error, changeset} ->
-        Logger.error("VirtualClips: Failed to create virtual clip: #{inspect(changeset.errors)}")
-        {:error, changeset}
+        # Check if this is a unique constraint error (idempotency fallback)
+        case changeset.errors do
+          [clip_identifier: {"has already been taken", [constraint: :unique, constraint_name: "clips_clip_identifier_key"]}] ->
+            # This clip already exists, try to find it
+            case Repo.get_by(Clip, clip_identifier: Map.get(clip_attrs, :clip_identifier)) do
+              %Clip{} = existing_clip ->
+                Logger.debug("VirtualClips: Found existing virtual clip #{existing_clip.id} (#{existing_clip.clip_identifier})")
+                {:ok, existing_clip}
+                
+              nil ->
+                Logger.error("VirtualClips: Unique constraint error but clip not found: #{inspect(changeset.errors)}")
+                {:error, changeset}
+            end
+            
+          _ ->
+            Logger.error("VirtualClips: Failed to create virtual clip: #{inspect(changeset.errors)}")
+            {:error, changeset}
+        end
     end
   end
 

@@ -61,6 +61,7 @@ defmodule Heaters.Clips.Clip do
   def changeset(clip, attrs) do
     clip
     |> cast(attrs, [
+      :source_video_id,
       :clip_filepath,
       :clip_identifier,
       :start_frame,
@@ -79,8 +80,9 @@ defmodule Heaters.Clips.Clip do
       :is_virtual,
       :cut_points
     ])
-    |> validate_required([:clip_identifier, :ingest_state])
+    |> validate_required([:source_video_id, :clip_identifier, :ingest_state])
     |> validate_virtual_clip_requirements()
+    |> unique_constraint(:clip_identifier, name: "clips_clip_identifier_key")
   end
 
   # Private helper to validate virtual vs physical clip requirements

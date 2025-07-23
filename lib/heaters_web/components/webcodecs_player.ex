@@ -41,15 +41,27 @@ defmodule HeatersWeb.WebCodecsPlayer do
   @doc "Renders the WebCodecs video player for one clip."
   def webcodecs_player(assigns) do
     clip = assigns.clip
-    meta = build_webcodecs_player_meta(clip)
-    json_meta = Jason.encode!(meta)
+    
+    case build_webcodecs_player_meta(clip) do
+      {:error, reason} ->
+        # Fallback to error message if meta building fails
+        assigns = assign(assigns, :error_message, "Unable to load video player: #{reason}")
+        
+        ~H"""
+        <div class="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
+          <%= @error_message %>
+        </div>
+        """
+        
+      meta ->
+        json_meta = Jason.encode!(meta)
 
-    assigns =
-      assigns
-      |> assign(:meta, meta)
-      |> assign(:json_meta, json_meta)
+        assigns =
+          assigns
+          |> assign(:meta, meta)
+          |> assign(:json_meta, json_meta)
 
-    ~H"""
+        ~H"""
     <div class="clip-display-container" style={"width: #{@meta["display_width"]}px;"}>
       <div
         id={"viewer-#{@clip.id}"}
@@ -100,6 +112,7 @@ defmodule HeatersWeb.WebCodecsPlayer do
       </div>
     </div>
     """
+    end
   end
 
   @doc """
@@ -124,13 +137,26 @@ defmodule HeatersWeb.WebCodecsPlayer do
   # ------------------------------------------------------------------------
 
   defp build_webcodecs_player_meta(clip) do
-    source_video = clip.source_video || %{}
+    # Defensive checks
+    case clip.source_video do
+      %Ecto.Association.NotLoaded{} -> 
+        {:error, "Source video not preloaded"}
+      nil -> 
+        {:error, "No source video associated"}
+      source_video when is_map(source_video) ->
+        build_meta_with_source_video(clip, source_video)
+      _ -> 
+        {:error, "Invalid source video data"}
+    end
+  end
+
+  defp build_meta_with_source_video(clip, source_video) do
 
     # Determine if this is a virtual clip
     is_virtual = clip.is_virtual || false
 
     # Calculate frame information
-    fps = source_video.fps || clip.fps || 30.0
+    fps = Map.get(source_video, :fps, 30.0)
 
     {total_frames, duration_seconds} = calculate_frame_info(clip, fps)
 
@@ -144,7 +170,7 @@ defmodule HeatersWeb.WebCodecsPlayer do
 
     # Get keyframe offsets for virtual clips
     keyframe_offsets = if is_virtual do
-      source_video.keyframe_offsets || []
+      Map.get(source_video, :keyframe_offsets, []) || []
     else
       []
     end

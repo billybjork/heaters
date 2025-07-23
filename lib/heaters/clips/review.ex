@@ -500,20 +500,24 @@ defmodule Heaters.Clips.Review do
   Results are ordered by id ASC to make pagination deterministic even when
   background workers update timestamps.
   """
-  def for_source_video_with_sprites(source_video_id, exclude_id, page, page_size) do
+  def for_source_video_with_sprites(source_video_id, exclude_id, page, page_size) 
+      when not is_nil(source_video_id) do
+    exclude_clause = if is_nil(exclude_id), do: true, else: dynamic([c], c.id != ^exclude_id)
+    
     Clip
     |> join(:inner, [c], ca in assoc(c, :clip_artifacts), on: ca.artifact_type == "sprite_sheet")
-    |> where(
-      [c, _ca],
-      c.source_video_id == ^source_video_id and c.id != ^exclude_id
-    )
+    |> where([c, _ca], c.source_video_id == ^source_video_id)
+    |> where(^exclude_clause)
     |> distinct([c, _ca], c.id)
     |> order_by([c, _ca], asc: c.id)
-    |> offset(^((page - 1) * page_size))
-    |> limit(^page_size)
-    |> preload([c, ca], clip_artifacts: ca)
+    |> offset(^(((page || 1) - 1) * (page_size || 24)))
+    |> limit(^(page_size || 24))
+    |> preload(:clip_artifacts)
     |> Repo.all()
   end
+
+  # Handle nil source_video_id case
+  def for_source_video_with_sprites(nil, _exclude_id, _page, _page_size), do: []
 
   # -------------------------------------------------------------------------
   # Private helpers for virtual clip operations
