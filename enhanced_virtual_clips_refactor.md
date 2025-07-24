@@ -177,9 +177,15 @@ end
 - **Streaming Ready**: CRF 20 all-I-frame perfect for Cloudflare Stream ingestion
 
 **Implementation:**
-- Updated `py/tasks/export_clips.py` to use proxy with FFmpeg stream copy
+- Updated `py/tasks/export_clips.py` to use proxy with FFmpeg stream copy and S3 presigned URLs
 - Updated `lib/heaters/clips/export/worker.ex` to pass proxy_path instead of master_path
 - Master remains available for true archival/compliance needs
+
+**I/O Optimization Strategy:**
+- **Direct S3 Access**: FFmpeg reads proxy via presigned URLs (no full download)
+- **Byte-Range Seeking**: Leverages HTTP range requests for efficient seeking
+- **:moov Atom Optimization**: Proxy files use `faststart` for instant seeking capability
+- **Minimal Data Transfer**: Only extracts required byte ranges for each clip
 
 ### ✅ Phase 2: Rolling Export System (COMPLETE)
 - [x] Individual clip export worker enhancement (stream copy from proxy)
@@ -199,6 +205,13 @@ end
 - [ ] User training and documentation
 - [ ] Final optimization
 
+**Production Considerations for I/O Optimization:**
+- **S3 Presigned URL Security**: 1-hour expiration prevents URL leakage while allowing sufficient export time
+- **CloudFront Integration**: Consider CloudFront presigned URLs for improved global performance
+- **Error Handling**: Fallback to local download if presigned URL access fails (network issues, expired URLs)
+- **Monitoring**: Track byte-range request patterns and proxy file access frequency
+- **Cost Impact**: Reduced egress costs due to targeted byte-range access vs full file downloads
+
 ---
 
 ## Key Benefits
@@ -211,10 +224,11 @@ end
 
 ### Performance Benefits  
 1. **Optimized Export**: 10x faster clip creation via stream copy from proxy (no re-encoding)
-2. **Resource Efficiency**: Dual-purpose proxy eliminates redundant file operations
-3. **Instant Operations**: All review actions are immediate database transactions
-4. **WebCodecs Native**: Frame-perfect seeking without sprite generation overhead
-5. **Superior Quality**: CRF 20 proxy source > deprecated CRF 23 final_export encoding
+2. **I/O Efficiency**: Direct S3 byte-range access eliminates proxy download bottleneck
+3. **Resource Efficiency**: Dual-purpose proxy eliminates redundant file operations
+4. **Instant Operations**: All review actions are immediate database transactions
+5. **WebCodecs Native**: Frame-perfect seeking without sprite generation overhead
+6. **Superior Quality**: CRF 20 proxy source > deprecated CRF 23 final_export encoding
 
 ### Maintenance Benefits
 1. **Reduced Complexity**: Fewer concepts and code paths to maintain

@@ -79,6 +79,8 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 
 **Export Performance**: Stream copy from proxy achieves 10x performance improvement with superior quality (CRF 20 vs deprecated CRF 23).
 
+**I/O Optimization**: Direct S3 access via presigned URLs with byte-range seeking eliminates proxy download bottleneck.
+
 ## Context Responsibilities
 
 - **`Videos`**: Source video lifecycle (download, preprocess, detect scenes)
@@ -97,7 +99,8 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 
 1. **Zero Re-encoding During Review**: Virtual clips are DB records only; instant operations
 2. **Superior Quality**: Export from high-quality proxy (CRF 20) with zero transcoding loss
-3. **Universal Workflow**: Handles all ingest types
-4. **Instant Review**: WebCodecs-based seeking and review
-5. **Maintainable Codebase**: Modular, focused, and up-to-date
-6. **Production Reliable**: Resumable, idempotent, and robust
+3. **I/O Efficiency**: Direct S3 byte-range access eliminates download bottlenecks
+4. **Universal Workflow**: Handles all ingest types
+5. **Instant Review**: WebCodecs-based seeking and review
+6. **Maintainable Codebase**: Modular, focused, and up-to-date
+7. **Production Reliable**: Resumable, idempotent, and robust

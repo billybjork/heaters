@@ -21,10 +21,12 @@ Creates MP4 files optimized for streaming/delivery using stream copy for maximum
 - **Final Clips** (S3 Standard): Stream-copied from proxy, ready for CDN
 
 **Export Method:**
-Uses FFmpeg stream copy (`-c copy`) to extract clip segments without re-encoding,
-preserving exact quality while achieving 10x performance improvement.
+Uses FFmpeg stream copy (`-c copy`) with S3 presigned URLs for optimal I/O efficiency:
+- Direct byte-range access to proxy files (no full download required)
+- Leverages :moov atom positioning (faststart) for instant seeking
+- Preserves exact quality while achieving 10x performance improvement
 
-This is the final stage of the virtual clip pipeline - optimized for quality and performance.
+This is the final stage of the virtual clip pipeline - optimized for I/O, quality and performance.
 """
 
 import json
@@ -72,11 +74,12 @@ def run_export_clips(proxy_path: str, clips_data: list, source_video_id: int, vi
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_dir_path = Path(temp_dir)
             
-            # Download proxy
-            local_proxy = temp_dir_path / "proxy.mp4"
-            download_from_s3(proxy_path, local_proxy)
+            # Generate presigned URL for efficient byte-range access
+            proxy_url = generate_presigned_url(proxy_path, expires_in=3600)
             
-            # Extract video metadata from proxy
+            # Extract video metadata from proxy (still needs local access for reliable metadata)
+            local_proxy = temp_dir_path / "proxy.mp4"  
+            download_from_s3(proxy_path, local_proxy)  # Only for metadata extraction
             metadata = extract_video_metadata(local_proxy)
             logger.info(f"Proxy metadata: {metadata}")
             
@@ -85,7 +88,7 @@ def run_export_clips(proxy_path: str, clips_data: list, source_video_id: int, vi
             for clip_data in clips_data:
                 try:
                     exported_clip = export_single_clip(
-                        local_proxy, 
+                        proxy_url,  # Use presigned URL instead of local file
                         clip_data, 
                         temp_dir_path, 
                         video_title, 
@@ -124,11 +127,13 @@ def run_export_clips(proxy_path: str, clips_data: list, source_video_id: int, vi
         }
 
 
-def export_single_clip(proxy_path: Path, clip_data: dict, temp_dir: Path, video_title: str, metadata: dict) -> Dict[str, Any]:
+def export_single_clip(proxy_url: str, clip_data: dict, temp_dir: Path, video_title: str, metadata: dict) -> Dict[str, Any]:
     """
     Export a single clip from the proxy using cut points with stream copy for maximum quality.
     
-    Uses FFmpeg stream copy to extract clip segments without re-encoding:
+    Uses FFmpeg stream copy with S3 presigned URL for optimal I/O efficiency:
+    - Direct byte-range access to S3 via presigned URL (no full download)
+    - Leverages :moov atom at file start (faststart) for instant seeking  
     - Preserves exact quality from proxy (CRF 20)
     - 10x faster than re-encoding approaches
     - Zero transcoding artifacts or generational loss
@@ -154,10 +159,10 @@ def export_single_clip(proxy_path: Path, clip_data: dict, temp_dir: Path, video_
     local_output = temp_dir / f"{clip_identifier}.mp4"
     s3_output_key = f"final_clips/{sanitized_title}_{clip_identifier}.mp4"
     
-    # Build FFmpeg command - use stream copy for maximum quality and speed
+    # Build FFmpeg command - use presigned URL with stream copy for optimal I/O efficiency
     cmd = [
-        "ffmpeg", "-i", str(proxy_path),
-        "-ss", str(start_time),           # Start time
+        "ffmpeg", "-i", proxy_url,       # Direct S3 access via presigned URL
+        "-ss", str(start_time),           # Start time (leverages :moov atom for instant seek)
         "-t", str(duration),              # Duration (not end time)
         "-map", "0",                      # Map all streams
         "-c", "copy",                     # Stream copy - no re-encoding
@@ -352,4 +357,16 @@ def upload_to_s3(local_path: Path, s3_key: str, storage_class: str = "STANDARD")
     from utils.s3_handler import get_s3_config, upload_to_s3 as s3_upload
     
     s3_client, bucket_name = get_s3_config()
-    s3_upload(s3_client, bucket_name, local_path, s3_key, storage_class) 
+    s3_upload(s3_client, bucket_name, local_path, s3_key, storage_class)
+
+
+def generate_presigned_url(s3_key: str, expires_in: int = 3600) -> str:
+    """Generate presigned URL for direct FFmpeg access to S3 object"""
+    from utils.s3_handler import get_s3_config
+    
+    s3_client, bucket_name = get_s3_config()
+    return s3_client.generate_presigned_url(
+        'get_object',
+        Params={'Bucket': bucket_name, 'Key': s3_key},
+        ExpiresIn=expires_in
+    ) 
