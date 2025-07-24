@@ -7,7 +7,7 @@ defmodule Heaters.Infrastructure.Adapters.FFmpegAdapter do
   All functions in this module perform I/O operations.
   """
 
-  alias Heaters.Clips.Operations.Shared.FFmpegRunner
+  alias Heaters.Clips.Shared.FFmpegRunner
 
   @doc """
   Get video metadata from a local video file.

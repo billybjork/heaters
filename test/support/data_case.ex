@@ -84,7 +84,7 @@ defmodule Heaters.DataCase do
   def insert(:clip, attrs) do
     # Handle both keyword lists and maps
     attrs_map = if is_list(attrs), do: Enum.into(attrs, %{}), else: attrs
-    
+
     source_video = Map.get(attrs_map, :source_video) || insert(:source_video)
     attrs_map = Map.delete(attrs_map, :source_video)
 
@@ -110,17 +110,17 @@ defmodule Heaters.DataCase do
 
   def insert(:virtual_clip, attrs) do
     import Ecto.Query
-    
+
     # Handle both keyword lists and maps
     attrs_map = if is_list(attrs), do: Enum.into(attrs, %{}), else: attrs
-    
+
     source_video = Map.get(attrs_map, :source_video) || insert(:source_video)
     attrs_map = Map.delete(attrs_map, :source_video)
 
     # Generate unique order if not provided
-    source_video_order = Map.get(attrs_map, :source_video_order) || 
+    source_video_order = Map.get(attrs_map, :source_video_order) ||
       (Heaters.Repo.aggregate(
-        from(c in Heaters.Clips.Clip, 
+        from(c in Heaters.Clips.Clip,
           where: c.source_video_id == ^source_video.id and c.is_virtual == true
         ), :count, :id
       ) + 1)
@@ -168,8 +168,8 @@ defmodule Heaters.DataCase do
 
     attrs = Map.merge(default_attrs, Enum.into(attrs, %{}))
 
-    %Heaters.Clips.Operations.Artifacts.ClipArtifact{}
-    |> Heaters.Clips.Operations.Artifacts.ClipArtifact.changeset(attrs)
+    %Heaters.Clips.Artifacts.ClipArtifact{}
+    |> Heaters.Clips.Artifacts.ClipArtifact.changeset(attrs)
     |> Heaters.Repo.insert!()
   end
 end

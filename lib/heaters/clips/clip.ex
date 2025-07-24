@@ -26,7 +26,7 @@ defmodule Heaters.Clips.Clip do
           last_modified_by_user_id: integer() | nil,
           source_video: Heaters.Videos.SourceVideo.t() | Ecto.Association.NotLoaded.t(),
           clip_artifacts:
-            [Heaters.Clips.Operations.Artifacts.ClipArtifact.t()] | Ecto.Association.NotLoaded.t(),
+            [Heaters.Clips.Artifacts.ClipArtifact.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t(),
           updated_at: DateTime.t()
         }
@@ -52,7 +52,7 @@ defmodule Heaters.Clips.Clip do
     # Virtual clip fields
     field(:is_virtual, :boolean, default: false)
     field(:cut_points, :map)
-    
+
     # MECE operation fields
     field(:source_video_order, :integer)
     field(:cut_point_version, :integer, default: 1)
@@ -60,7 +60,7 @@ defmodule Heaters.Clips.Clip do
     field(:last_modified_by_user_id, :integer)
 
     belongs_to(:source_video, Heaters.Videos.SourceVideo)
-    has_many(:clip_artifacts, Heaters.Clips.Operations.Artifacts.ClipArtifact)
+    has_many(:clip_artifacts, Heaters.Clips.Artifacts.ClipArtifact)
 
     timestamps(type: :utc_datetime)
   end

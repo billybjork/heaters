@@ -74,13 +74,13 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 
 ### Semantic Operations Organization
 
-The `Clips.Operations` context is organized by **operation type**, not file type:
+The `Clips` context is organized by **operation type**, not file type:
 
-- **`operations/edits/`**: User actions that create new clips and enter review workflow
+- **`edits/`**: User actions that create new clips and enter review workflow
   - `Merge`, `Split` operations (write to `clips` table)
-- **`operations/artifacts/`**: Pipeline stages that generate supplementary data  
+- **`artifacts/`**: Pipeline stages that generate supplementary data  
   - `Sprite`, `Keyframe`, `ClipArtifact` operations (write to `clip_artifacts` table)
-- **`operations/archive/`**: Cleanup operations for archived clips
+- **`archive/`**: Cleanup operations for archived clips
   - `Archive` worker (S3 deletion and database cleanup)
 
 This reflects the fundamental difference between human review actions and automated processing stages.
@@ -157,13 +157,13 @@ The system uses a **hybrid approach** combining native Elixir and Python process
 #### Python Scene Detection
 - **Technology**: Python OpenCV via PyRunner port communication for robust scene detection
 - **Benefits**: Leverages mature Python OpenCV ecosystem with reliable scene detection algorithms
-- **Implementation**: `Videos.Operations.DetectScenes` with Python task execution via PyRunner
+- **Implementation**: `Videos.DetectScenes` with Python task execution via PyRunner
 - **Idempotency**: S3-based scene detection caching and clip existence checking prevents reprocessing
 
 #### Native Elixir Keyframe Extraction
 - **Technology**: Native Elixir FFmpeg implementation for high-performance keyframe extraction
 - **Benefits**: Eliminates subprocess overhead and JSON parsing for better performance
-- **Implementation**: `Clips.Operations.Artifacts.Keyframe` with direct FFmpeg calls via `Infrastructure.FFmpegAdapter`
+- **Implementation**: `Clips.Artifacts.Keyframe` with direct FFmpeg calls via `Infrastructure.FFmpegAdapter`
 - **Configuration**: Supports percentage-based and tag-based keyframe extraction strategies
 
 #### Python ML/Media Processing
@@ -298,14 +298,14 @@ This architecture ensures maximum reliability in production environments where c
 
 #### Video Download & Preprocessing
 1. `Videos.submit/1` creates source video in `new` state
-2. `Videos.Operations.Download.Worker` downloads/processes → `downloaded` state  
-3. `Videos.Operations.Preprocess.Worker` creates gold master + review proxy → `preprocessed` state
+2. `Videos.Download.Worker` downloads/processes → `downloaded` state  
+3. `Videos.Preprocess.Worker` creates gold master + review proxy → `preprocessed` state
    - **Gold Master**: Lossless FFV1/MKV for final export quality
    - **Review Proxy**: All-I-frame H.264 for efficient WebCodecs seeking
    - **Keyframe Offsets**: Byte positions for frame-perfect seeking
 
 #### Scene Detection & Virtual Clips
-1. `Videos.Operations.DetectScenes.Worker` runs **Python scene detection** on proxy → virtual clips in `pending_review` state
+1. `Videos.DetectScenes.Worker` runs **Python scene detection** on proxy → virtual clips in `pending_review` state
 2. Virtual clips contain cut points (database only), no physical files created
 3. Scene detection uses proxy file for speed while preserving cut point accuracy
 
@@ -320,17 +320,17 @@ This architecture ensures maximum reliability in production environments where c
 3. Actions execute immediately with database transactions, no file re-encoding
 
 #### Export & Post-Processing
-1. `Clips.Operations.Export.Worker` encodes approved virtual clips from gold master → physical clips in `exported` state
-2. `Clips.Operations.Artifacts.Keyframe.Worker` extracts keyframes → `keyframed` state
+1. `Clips.Export.Worker` encodes approved virtual clips from gold master → physical clips in `exported` state
+2. `Clips.Artifacts.Keyframe.Worker` extracts keyframes → `keyframed` state
 3. `Clips.Embeddings.Worker` generates ML embeddings → `embedded` state (final)
 
 ### Legacy Workflow (Transitional)
-1. `Videos.Operations.Splice.Worker` runs scene detection → physical clips in `spliced` state
-2. `Clips.Operations.Artifacts.Sprite.Worker` generates sprites → clips in `pending_review` state  
+1. `Videos.Splice.Worker` runs scene detection → physical clips in `spliced` state
+2. `Clips.Artifacts.Sprite.Worker` generates sprites → clips in `pending_review` state  
 3. Traditional review workflow with sprite-based navigation
 
 ### Archive Workflow
-1. `Clips.Operations.Archive.Worker` safely deletes S3 objects and database records
+1. `Clips.Archive.Worker` safely deletes S3 objects and database records
 2. Robust S3 deletion handling for both XML and JSON responses
 3. Proper cleanup of all associated artifacts and metadata
 
@@ -345,7 +345,7 @@ PipelineConfig.stages()
 
 Each stage is pure configuration:
 - **Database Query Stages**: `query` function finds work, `build` function creates jobs
-- **Action Stages**: `call` function executes direct operations (EventProcessor)
+- **Action Stages**: `call` function executes direct operations (database maintenance)
 - **Declarative Flow**: All state transitions handled by pipeline, not workers
 
 **`Infrastructure.Orchestration.PipelineConfig`** provides complete workflow as data:
@@ -388,21 +388,21 @@ Each stage is pure configuration:
 ### Virtual Clip Architecture
 
 - **`Videos`**: Source video lifecycle from submission through virtual clips creation
-  - **`Videos.Operations.Download`**: Video download and processing workflow
-  - **`Videos.Operations.Preprocess`**: Gold master + review proxy generation with keyframe offsets
-  - **`Videos.Operations.DetectScenes`**: Python scene detection creating virtual clips (database records only)
-- **`Clips.Operations`**: Clip transformations and state management (semantic Edits/Artifacts/Export organization)
-  - **`Clips.Operations.VirtualClips`**: Virtual clip creation and cut point management
-  - **`Clips.Operations.Export`**: Final encoding from gold master to physical clips (batch processing)
-  - **`Clips.Operations.Edits`**: User-driven transformations (Split, Merge) - **now instant database operations on virtual clips**
-  - **`Clips.Operations.Artifacts`**: Pipeline-driven processing (Keyframe) that create supplementary data
+  - **`Videos.Download`**: Video download and processing workflow
+  - **`Videos.Preprocess`**: Gold master + review proxy generation with keyframe offsets
+  - **`Videos.DetectScenes`**: Python scene detection creating virtual clips (database records only)
+- **`Clips`**: Clip transformations and state management (semantic Edits/Artifacts/Export organization)
+  - **`Clips.VirtualClips`**: Virtual clip creation and cut point management
+  - **`Clips.Export`**: Final encoding from gold master to physical clips (batch processing)
+  - **`Clips.Edits`**: User-driven transformations (Split, Merge) - **now instant database operations on virtual clips**
+  - **`Clips.Artifacts`**: Pipeline-driven processing (Keyframe) that create supplementary data
 - **`Clips.Review`**: Human review workflow with **WebCodecs-based seeking** and instant virtual clip operations
 - **`Clips.Embeddings`**: ML embedding generation and queries (operates on exported physical clips)
 
 ### Legacy Architecture (Transitional)
 
-- **`Videos.Operations.Splice`**: Python scene detection creating physical clips via file encoding
-- **`Clips.Operations.Artifacts.Sprite`**: Sprite sheet generation for traditional review UI
+- **`Videos.Splice`**: Python scene detection creating physical clips via file encoding
+- **`Clips.Artifacts.Sprite`**: Sprite sheet generation for traditional review UI
 - **Traditional Review**: Sprite-based navigation with file-based merge/split operations
 
 ### Infrastructure
@@ -487,6 +487,7 @@ Each stage is pure configuration:
 - **Type Safety**: All Dialyzer warnings resolved, production-ready code quality
 - **Enhanced Download Workflow**: Quality-first download strategy with conditional normalization
 - **S3 Integration**: Centralized S3 operations with storage class optimization
+- **Organizational Cleanup**: Flattened directory structure, removed legacy Events functionality
 
 ### 🚧 In Progress / Next Steps
 

@@ -10,7 +10,7 @@ defmodule Heaters.Clips.Review do
   alias Ecto.Query, as: Q
   alias Heaters.Repo
   alias Heaters.Clips.Clip
-  alias Heaters.Clips.Operations.VirtualClips
+  alias Heaters.Clips.VirtualClips
 
   require Logger
 
@@ -20,7 +20,7 @@ defmodule Heaters.Clips.Review do
 
   @action_map %{
     "approve" => "selected_approve",
-    "skip" => "selected_skip", 
+    "skip" => "selected_skip",
     "archive" => "selected_archive",
     "undo" => "selected_undo",
     "group" => "selected_group_source"

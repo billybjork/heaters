@@ -10,7 +10,7 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
 
   Each stage is defined as a map with either:
   - `query` + `build` functions for database queries that enqueue jobs
-  - `call` function for direct operations (like EventProcessor actions)
+  - `call` function for direct operations (like database maintenance tasks)
 
   The `label` field provides human-readable descriptions for logging.
 
@@ -49,13 +49,13 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
 
   alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Clips.Queries, as: ClipQueries
-  alias Heaters.Videos.Operations.Download.Worker, as: DownloadWorker
-  alias Heaters.Videos.Operations.Preprocess.Worker, as: PreprocessWorker
-  alias Heaters.Videos.Operations.DetectScenes.Worker, as: DetectScenesWorker
-  alias Heaters.Clips.Operations.Artifacts.Keyframe.Worker, as: KeyframeWorker
+  alias Heaters.Videos.Download.Worker, as: DownloadWorker
+  alias Heaters.Videos.Preprocess.Worker, as: PreprocessWorker
+  alias Heaters.Videos.DetectScenes.Worker, as: DetectScenesWorker
+  alias Heaters.Clips.Artifacts.Keyframe.Worker, as: KeyframeWorker
   alias Heaters.Clips.Embeddings.Worker, as: EmbeddingWorker
-  alias Heaters.Clips.Operations.Archive.Worker, as: ArchiveWorker
-  alias Heaters.Clips.Operations.Export.Worker, as: ExportWorker
+  alias Heaters.Clips.Archive.Worker, as: ArchiveWorker
+  alias Heaters.Clips.Export.Worker, as: ExportWorker
 
   @doc """
   Returns the complete pipeline stage configuration.
@@ -94,7 +94,7 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
       %{
         label: "approved virtual clips → rolling export",
         query: fn -> ClipQueries.get_virtual_clips_ready_for_export() end,
-        build: fn clip -> 
+        build: fn clip ->
           ExportWorker.new(%{
             clip_id: clip.id,
             source_video_id: clip.source_video_id

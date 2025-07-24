@@ -8,7 +8,9 @@ defmodule Heaters.Videos do
   ## Sub-contexts
 
   - **Submit**: Video submission and initial processing (`Heaters.Videos.Submit`)
-  - **Download**: Video download workflow management (`Heaters.Videos.Operations.Download`)
+  - **Download**: Video download workflow management (`Heaters.Videos.Download`)
+  - **Preprocess**: Gold master and proxy generation (`Heaters.Videos.Preprocess`)
+  - **DetectScenes**: Scene detection and virtual clip creation (`Heaters.Videos.DetectScenes`)
 
   ## Schema
 

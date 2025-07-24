@@ -69,7 +69,7 @@ defmodule Heaters.Clips.Operations do
   alias Heaters.Clips.Clip
   alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Videos.Queries, as: VideoQueries
-  alias Heaters.Clips.Operations.Artifacts.ClipArtifact
+  alias Heaters.Clips.Artifacts.ClipArtifact
   require Logger
 
   @doc """

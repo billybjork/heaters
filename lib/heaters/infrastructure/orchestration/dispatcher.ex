@@ -60,7 +60,7 @@ defmodule Heaters.Infrastructure.Orchestration.Dispatcher do
     end
   end
 
-  # Handle stages that perform direct actions (like EventProcessor)
+      # Handle stages that perform direct actions (like database maintenance)
   defp run_stage(%{call: call_fn, label: label}, step_num) do
     Logger.info("Dispatcher[step #{step_num}]: #{String.capitalize(label)}.")
 

@@ -15,7 +15,8 @@ This document represents a comprehensive refactor of a video processing system's
 **Major Work Completed This Session**:
 - ✅ **Legacy Code Removal (Phase 4)**: Systematically removed ~42 files of legacy merge/split/splice/sprite functionality, achieving complete clean slate
 - ✅ **Enhanced VirtualClips Module (Phase 1)**: Implemented mathematically sound cut point operations with MECE validation, comprehensive audit trail, and database schema enhancements
-- 🔄 **Current State**: Solid foundation ready for Phase 2 (Rolling Export System) implementation
+- ✅ **Organizational Cleanup**: Flattened directory structure by removing `operations/` layer from both `clips/` and `videos/` contexts, updated all module references
+- 🔄 **Current State**: Clean, maintainable foundation ready for Phase 2 (Rolling Export System) implementation
 
 **Architecture Foundation**: All cut point operations now maintain MECE (Mutually Exclusive, Collectively Exhaustive) properties through algorithmic validation, ensuring no gaps, overlaps, or coverage holes in video processing.
 
@@ -61,7 +62,7 @@ Virtual Clips: pending_review → review_approved → exported (physical) → ke
 
 ```elixir
 # Enhanced VirtualClips module
-defmodule Heaters.Clips.Operations.VirtualClips do
+defmodule Heaters.Clips.VirtualClips do
   
   # Current functions (keep)
   def create_virtual_clips_from_cut_points/3
@@ -207,7 +208,7 @@ end
 ### Enhanced Export Worker
 
 ```elixir
-defmodule Heaters.Clips.Operations.Export.Worker do
+defmodule Heaters.Clips.Export.Worker do
   @moduledoc """
   Enhanced export worker for individual virtual clip export with resource sharing.
   
@@ -577,7 +578,7 @@ defmodule HeatersWeb.ReviewLive do
   # Replace with pure cut point operations
   
   def handle_event("add_cut_point", %{"frame" => frame_num}, socket) do
-    case VirtualClips.add_cut_point(socket.assigns.source_video_id, frame_num, socket.assigns.user_id) do
+    case Clips.VirtualClips.add_cut_point(socket.assigns.source_video_id, frame_num, socket.assigns.user_id) do
       {:ok, _new_clips} ->
         # Refresh review queue and advance
         {:noreply, advance_to_next_clip(socket)}
@@ -588,7 +589,7 @@ defmodule HeatersWeb.ReviewLive do
   end
   
   def handle_event("remove_cut_point", %{"frame" => frame_num}, socket) do
-    case VirtualClips.remove_cut_point(socket.assigns.source_video_id, frame_num, socket.assigns.user_id) do
+    case Clips.VirtualClips.remove_cut_point(socket.assigns.source_video_id, frame_num, socket.assigns.user_id) do
       {:ok, _merged_clip} ->
         {:noreply, advance_to_next_clip(socket)}
         
@@ -598,7 +599,7 @@ defmodule HeatersWeb.ReviewLive do
   end
   
   def handle_event("move_cut_point", %{"old_frame" => old_frame, "new_frame" => new_frame}, socket) do
-    case VirtualClips.move_cut_point(socket.assigns.source_video_id, old_frame, new_frame, socket.assigns.user_id) do
+    case Clips.VirtualClips.move_cut_point(socket.assigns.source_video_id, old_frame, new_frame, socket.assigns.user_id) do
       {:ok, _updated_clips} ->
         {:noreply, refresh_current_clip(socket)}
         
@@ -705,7 +706,7 @@ CREATE INDEX idx_cut_point_ops_source_video
 ### Backend Modules to Remove Entirely
 
 ```
-lib/heaters/clips/operations/edits/
+lib/heaters/clips/edits/
 ├── merge.ex                    # Remove entirely
 ├── merge/                      # Remove entirely
 │   ├── calculations.ex
@@ -719,7 +720,7 @@ lib/heaters/clips/operations/edits/
     ├── validation.ex
     └── worker.ex
 
-lib/heaters/clips/operations/artifacts/
+lib/heaters/clips/artifacts/
 ├── sprite.ex                   # Remove entirely
 └── sprite/                     # Remove entirely
     ├── calculations.ex
@@ -728,12 +729,11 @@ lib/heaters/clips/operations/artifacts/
     ├── video_metadata.ex
     └── worker.ex
 
-lib/heaters/videos/operations/
+lib/heaters/videos/splice/
 ├── splice.ex                   # Remove entirely
-└── splice/                     # Remove entirely
-    ├── filepaths.ex
-    ├── state_manager.ex
-    └── worker.ex
+├── filepaths.ex
+├── state_manager.ex
+└── worker.ex
 ```
 
 ### Frontend Components to Remove
@@ -784,18 +784,19 @@ ALTER TABLE source_videos DROP COLUMN IF EXISTS needs_splicing;
 
 **Completed Tasks**:
 - [x] **Removed all merge/split/splice/sprite modules** (~42 files deleted)
-  - All `lib/heaters/clips/operations/edits/merge*` modules removed
-  - All `lib/heaters/clips/operations/edits/split*` modules removed  
-  - All `lib/heaters/videos/operations/splice*` modules removed
-  - All `lib/heaters/clips/operations/artifacts/sprite*` modules removed
+  - All `lib/heaters/clips/edits/merge*` modules removed
+  - All `lib/heaters/clips/edits/split*` modules removed  
+  - All `lib/heaters/videos/splice*` modules removed
+  - All `lib/heaters/clips/artifacts/sprite*` modules removed
 - [x] **Frontend component cleanup**
   - `lib/heaters_web/components/sprite_player.ex` removed
   - `assets/js/sprite-player.js` and `assets/js/split-manager.js` removed
   - Review templates updated for WebCodecs-only approach
 - [x] **Core file cleanup**
   - Pipeline configuration updated for virtual clips workflow
-  - Operations and Clips contexts cleaned of legacy delegations
+  - Clips contexts cleaned of legacy delegations
   - Review module simplified to virtual-only operations
+  - **Directory structure flattened** - Removed `operations/` layer from both `clips/` and `videos/` contexts
 - [x] **Database cleanup migration created**
   - Migration `20250724024744_remove_legacy_states_and_references.exs` created
   - Removes sprite artifacts and legacy states
@@ -807,7 +808,7 @@ ALTER TABLE source_videos DROP COLUMN IF EXISTS needs_splicing;
   - All legacy-related compilation warnings eliminated
   - Type safety maintained throughout codebase
 
-**Key Achievement**: **Clean slate successfully achieved** - codebase is free of all legacy merge/split/splice/sprite concepts.
+**Key Achievement**: **Clean slate successfully achieved** - codebase is free of all legacy merge/split/splice/sprite concepts and uses clean, flattened directory structure.
 
 ---
 
@@ -850,9 +851,9 @@ ALTER TABLE source_videos DROP COLUMN IF EXISTS needs_splicing;
 - **Type Safety**: Full Dialyzer compatibility with proper type specifications
 
 **Files Modified/Created**:
-- Enhanced: `lib/heaters/clips/operations/virtual_clips.ex` (+400 lines)
+- Enhanced: `lib/heaters/clips/virtual_clips.ex` (+400 lines)
 - Enhanced: `lib/heaters/clips/clip.ex` (added MECE fields)
-- Created: `test/heaters/clips/operations/virtual_clips_test.exs` (comprehensive test suite)
+- Created: `test/heaters/clips/virtual_clips_test.exs` (comprehensive test suite)
 - Enhanced: `test/support/data_case.ex` (added virtual_clip factory)
 - Created: Database migrations for audit trail and MECE operations
 

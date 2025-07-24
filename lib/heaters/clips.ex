@@ -8,7 +8,10 @@ defmodule Heaters.Clips do
   ## Sub-contexts
 
   - **Review**: Virtual clip review workflow with cut point operations (`Heaters.Clips.Review`)
-  - **Operations**: Enhanced virtual clip processing operations (`Heaters.Clips.Operations`)
+  - **VirtualClips**: Enhanced virtual clip processing operations (`Heaters.Clips.VirtualClips`)
+  - **Artifacts**: Keyframe extraction and clip artifact management (`Heaters.Clips.Artifacts`)
+  - **Export**: Virtual clip export to physical files (`Heaters.Clips.Export`)
+  - **Archive**: Clip archival operations (`Heaters.Clips.Archive`)
   - **Embeddings**: Embedding generation and queries (`Heaters.Clips.Embeddings`)
 
   ## Schema

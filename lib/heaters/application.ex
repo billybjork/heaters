@@ -39,7 +39,7 @@ defmodule Heaters.Application do
 
   # Private helper for startup cleanup
   defp cleanup_orphaned_temp_files() do
-    case Heaters.Clips.Operations.Shared.TempManager.cleanup_orphaned_temp_files() do
+    case Heaters.Clips.Shared.TempManager.cleanup_orphaned_temp_files() do
       {:ok, 0} ->
         Logger.debug("Application startup: No orphaned temp files found")
 
