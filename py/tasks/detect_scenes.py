@@ -215,7 +215,7 @@ def build_scenes_from_cuts(cut_frames: List[int], fps: float, min_duration: floa
 
 def download_from_s3(s3_path: str, local_path: Path) -> None:
     """Download file from S3 to local path using centralized S3 handler"""
-    from .s3_handler import get_s3_config, download_from_s3 as s3_download
+    from utils.s3_handler import get_s3_config, download_from_s3 as s3_download
     
     s3_client, bucket_name = get_s3_config()
     s3_download(s3_client, bucket_name, s3_path, local_path)

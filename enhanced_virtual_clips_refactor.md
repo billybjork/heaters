@@ -65,6 +65,14 @@ Virtual Clips: pending_review → review_approved → exported (physical) → ke
 - **`export/`**: Final encoding from gold master to physical clips
   - `worker.ex`: Batch/rolling export operations
 
+---
+
+**Frontend (assets/js/): Modular WebCodecs Player**
+  - `webcodecs-player-core.js`: Main WebCodecs player implementation (virtual clips, frame-perfect seeking)
+  - `fallback-video-player.js`: Fallback player for browsers without WebCodecs or for non-virtual clips
+  - `webcodecs-player-controller.js`: Phoenix LiveView hook/controller for player initialization and event wiring
+  - `webcodecs-player.js`: Re-export for backward compatibility
+
 ### Cut Point Management
 
 All cut point operations are now instant database transactions with full audit trail and MECE validation:
@@ -155,7 +163,7 @@ end
 
 ### Phase 3: Enhanced Review Interface
 - [ ] Cut point manipulation UI with WebCodecs
-- [ ] Implement WebCodecs player with fallback
+- [x] Implement modular WebCodecs player (core, fallback, controller) with fallback and LiveView integration
 - [ ] Update LiveView event handlers for cut point operations
 - [ ] User experience testing
 
@@ -186,5 +194,6 @@ end
 2. **Better Testing**: Pure functions enable comprehensive unit testing
 3. **Clear Semantics**: Cut point operations have obvious, predictable behavior
 4. **Future-Proof**: Architecture supports advanced cut point features
+5. **Frontend Modularity**: WebCodecs player code is split into focused modules, making future updates and debugging easier.
 
 ---

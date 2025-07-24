@@ -29,7 +29,7 @@ from .download_handler import (
     download_from_url,
     extract_download_metadata
 )
-from .s3_handler import upload_to_s3
+from utils.s3_handler import upload_to_s3
 
 # --- Logging Configuration ---
 logging.basicConfig(
