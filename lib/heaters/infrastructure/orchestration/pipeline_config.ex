@@ -43,7 +43,7 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
 
   The pipeline uses individual clip export rather than batch processing:
   - Each approved virtual clip gets its own export job
-  - Resource sharing optimizes gold master downloads
+  - Resource sharing optimizes master downloads
   - Clips become available immediately after export (no waiting for full batch)
   """
 
@@ -76,7 +76,7 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
         build: fn video -> DownloadWorker.new(%{source_video_id: video.id}) end
       },
 
-      # Stage 2: Preprocess (creates gold master + review proxy)
+      # Stage 2: Preprocess (creates master + proxy)
       %{
         label: "videos needing preprocessing → proxy generation",
         query: fn -> VideoQueries.get_videos_needing_preprocessing() end,

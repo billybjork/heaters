@@ -3,7 +3,7 @@ defmodule Heaters.Videos.Preprocess.StateManager do
   State management for the preprocessing workflow.
 
   This module handles video state transitions specific to the preprocessing process.
-  Preprocessing creates gold master and proxy files from the source video.
+  Preprocessing creates master and proxy files from the source video.
 
   ## State Flow
   - "downloaded" → "preprocessing" via `start_preprocessing/1`
@@ -53,7 +53,7 @@ defmodule Heaters.Videos.Preprocess.StateManager do
 
   ## Parameters
   - `source_video_id`: ID of the source video to mark as preprocessed
-  - `update_attrs`: Map containing proxy_filepath, gold_master_filepath, keyframe_offsets, etc.
+  - `update_attrs`: Map containing proxy_filepath, master_filepath, keyframe_offsets, etc.
 
   ## Returns
   - `{:ok, updated_video}` on successful transition
@@ -63,7 +63,7 @@ defmodule Heaters.Videos.Preprocess.StateManager do
 
       attrs = %{
         proxy_filepath: "review_proxies/video_123_proxy.mp4",
-        gold_master_filepath: "gold_masters/video_123_master.mkv",
+        master_filepath: "masters/video_123_master.mkv",
         keyframe_offsets: [0, 1500, 3000]
       }
       {:ok, video} = StateManager.complete_preprocessing(123, attrs)

@@ -3,13 +3,13 @@ defmodule Heaters.Videos.DetectScenes.Worker do
   Worker for creating virtual clips from preprocessed source videos using scene detection.
 
   This worker handles the "preprocessed → virtual clips created" stage of the video processing pipeline.
-  It runs scene detection on the review proxy and creates virtual clip records with cut points,
+  It runs scene detection on the proxy and creates virtual clip records with cut points,
   but does NOT create physical clip files.
 
   ## Workflow
 
   1. Transition source video processing state
-  2. Run Python scene detection on the review proxy file
+  2. Run Python scene detection on the proxy file
   3. Create virtual clip records in database with cut points
   4. Set needs_splicing = false to mark scene detection complete
   5. Virtual clips enter review workflow
@@ -24,7 +24,7 @@ defmodule Heaters.Videos.DetectScenes.Worker do
   ## Virtual Clips vs Physical Clips
 
   - **Virtual clips**: Only cut points in database, no file encoding
-  - **Physical clips**: Created later during export from gold master
+  - **Physical clips**: Created later during export from master
   - **Review workflow**: Same for both, but virtual clips are much faster to merge/split
 
   ## Architecture

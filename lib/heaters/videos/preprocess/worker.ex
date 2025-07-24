@@ -1,16 +1,16 @@
 defmodule Heaters.Videos.Preprocess.Worker do
   @moduledoc """
-  Worker for preprocessing source videos into gold master and review proxy files.
+  Worker for preprocessing source videos into master and proxy files.
 
   This worker handles the "downloaded → preprocessed" stage of the video processing pipeline.
   It creates two video files from the source video:
-  1. Gold master (lossless MKV + FFV1) for final export
-  2. Review proxy (all-I-frame H.264) for efficient seeking in the review UI
+  1. Master (lossless MKV + FFV1) for archival storage
+  2. Proxy (all-I-frame H.264) for efficient seeking in the review UI and export
 
   ## Workflow
 
   1. Transition source video to "preprocessing" state
-  2. Run Python preprocessing task to create gold master and proxy
+  2. Run Python preprocessing task to create master and proxy
   3. Extract keyframe offsets for efficient WebCodecs seeking
   4. Upload both files to S3 (cold storage for master, hot for proxy)
   5. Update source video with file paths and keyframe data
@@ -18,7 +18,7 @@ defmodule Heaters.Videos.Preprocess.Worker do
   ## State Management
 
   - **Input**: Source videos in "downloaded" state without proxy_filepath
-  - **Output**: Source videos with proxy_filepath, gold_master_filepath, and keyframe_offsets
+  - **Output**: Source videos with proxy_filepath, master_filepath, and keyframe_offsets
   - **Error Handling**: Marks source video as "preprocessing_failed" on errors
   - **Idempotency**: Skip if proxy_filepath IS NOT NULL (preprocessing already complete)
 
@@ -26,7 +26,7 @@ defmodule Heaters.Videos.Preprocess.Worker do
 
   - **Preprocessing**: Python task via PyRunner port
   - **State Management**: Elixir state transitions and database operations
-  - **Storage**: S3 for both gold master and proxy files
+  - **Storage**: S3 for both master and proxy files
   """
 
   use Heaters.Infrastructure.Orchestration.WorkerBehavior,
@@ -88,14 +88,14 @@ defmodule Heaters.Videos.Preprocess.Worker do
 
   defp execute_preprocessing(source_video) do
     # Get FFmpeg configuration for preprocessing
-    gold_master_args = FFmpegConfig.get_args(:gold_master)
-    proxy_args = FFmpegConfig.get_args(:review_proxy)
+    master_args = FFmpegConfig.get_args(:master)
+    proxy_args = FFmpegConfig.get_args(:proxy)
 
     preprocessing_args = %{
       source_video_id: source_video.id,
       source_video_path: source_video.filepath,
       video_title: source_video.title,
-      gold_master_args: gold_master_args,
+      master_args: master_args,
       proxy_args: proxy_args
     }
 
@@ -120,14 +120,14 @@ defmodule Heaters.Videos.Preprocess.Worker do
 
   defp process_preprocessing_results(source_video, results) do
     # Extract results from Python task
-    gold_master_path = Map.get(results, "gold_master_path")
+    master_path = Map.get(results, "master_path")
     proxy_path = Map.get(results, "proxy_path")
     keyframe_offsets = Map.get(results, "keyframe_offsets", [])
     metadata = Map.get(results, "metadata", %{})
 
     update_attrs =
       %{
-        gold_master_filepath: gold_master_path,
+        master_filepath: master_path,
         proxy_filepath: proxy_path,
         keyframe_offsets: keyframe_offsets,
         ingest_state: "preprocessed"

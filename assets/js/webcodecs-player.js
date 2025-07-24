@@ -5,7 +5,7 @@
  * • WebCodecsPlayer           – core WebCodecs playback with frame seeking
  * • FallbackVideoPlayer       – traditional <video> fallback for older browsers
  *
- * Uses keyframe offsets for frame-perfect seeking on review proxy videos.
+ * Uses keyframe offsets for frame-perfect seeking on proxy videos.
  * Automatic fallback to <video> element when WebCodecs is unavailable.
  */
 

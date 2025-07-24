@@ -17,7 +17,7 @@ defmodule Heaters.Videos.SourceVideo do
           needs_splicing: boolean(),
           proxy_filepath: String.t() | nil,
           keyframe_offsets: list() | nil,
-          gold_master_filepath: String.t() | nil,
+          master_filepath: String.t() | nil,
           downloaded_at: DateTime.t() | nil,
           inserted_at: DateTime.t(),
           updated_at: DateTime.t()
@@ -38,7 +38,7 @@ defmodule Heaters.Videos.SourceVideo do
     field(:needs_splicing, :boolean, default: true)
     field(:proxy_filepath, :string)
     field(:keyframe_offsets, {:array, :integer})
-    field(:gold_master_filepath, :string)
+    field(:master_filepath, :string)
     field(:downloaded_at, :utc_datetime)
     timestamps(type: :utc_datetime)
   end
@@ -63,7 +63,7 @@ defmodule Heaters.Videos.SourceVideo do
       :needs_splicing,
       :proxy_filepath,
       :keyframe_offsets,
-      :gold_master_filepath,
+      :master_filepath,
       :downloaded_at
     ])
     |> validate_required([:ingest_state])

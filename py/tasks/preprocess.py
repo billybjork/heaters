@@ -2,8 +2,8 @@
 Preprocess Task for Video Pipeline
 
 Handles creation of transcoded outputs from original source videos:
-1. Gold master - lossless MKV + FFV1 for archival and final export
-2. Review proxy - all-I-frame H.264 MP4 for efficient seeking in WebCodecs
+1. Master - lossless MKV + FFV1 for archival storage
+2. Proxy - all-I-frame H.264 MP4 for efficient seeking in WebCodecs and export
 3. Keyframe offsets - byte positions for efficient seeking
 
 This is the main transcoding step that creates all necessary video formats
@@ -25,9 +25,9 @@ logger = logging.getLogger(__name__)
 
 
 def run_preprocess(source_video_path: str, source_video_id: int, video_title: str, 
-                  gold_master_args: list, proxy_args: list, **kwargs) -> Dict[str, Any]:
+                  master_args: list, proxy_args: list, **kwargs) -> Dict[str, Any]:
     """
-    Create gold master and review proxy from original source video.
+    Create master and proxy from original source video.
     
     This is the main transcoding step that processes original videos 
     (stored by ingest task) into the required output formats.
@@ -36,13 +36,13 @@ def run_preprocess(source_video_path: str, source_video_id: int, video_title: st
         source_video_path: S3 path to original source video (from download task)
         source_video_id: Database ID of the source video
         video_title: Title for generating output filenames
-        gold_master_args: FFmpeg arguments for gold master encoding (from FFmpegConfig)
-        proxy_args: FFmpeg arguments for review proxy encoding (from FFmpegConfig)
+        master_args: FFmpeg arguments for master encoding (from FFmpegConfig)
+        proxy_args: FFmpeg arguments for proxy encoding (from FFmpegConfig)
         
     Returns:
         {
             "status": "success",
-            "gold_master_path": "gold_masters/video_123_master.mkv",
+            "master_path": "masters/video_123_master.mkv",
             "proxy_path": "review_proxies/video_123_proxy.mp4", 
             "keyframe_offsets": [0, 150, 300, ...],
             "metadata": {
@@ -73,25 +73,25 @@ def run_preprocess(source_video_path: str, source_video_id: int, video_title: st
             
             # Generate output paths
             sanitized_title = sanitize_filename(video_title)
-            gold_master_s3_key = f"gold_masters/{sanitized_title}_{source_video_id}_master.mkv"
-            proxy_s3_key = f"review_proxies/{sanitized_title}_{source_video_id}_proxy.mp4"
+            master_s3_key = f"masters/{sanitized_title}_{source_video_id}_master.mkv"
+            proxy_s3_key = f"proxies/{sanitized_title}_{source_video_id}_proxy.mp4"
             
-            # Create gold master (lossless)
-            gold_master_local = temp_dir_path / "gold_master.mkv"
-            create_gold_master(local_source_path, gold_master_local, metadata, gold_master_args)
+            # Create master (lossless)
+            master_local = temp_dir_path / "master.mkv"
+            create_master(local_source_path, master_local, metadata, master_args)
             
-            # Create review proxy (all I-frame)
+            # Create proxy (all I-frame)
             proxy_local = temp_dir_path / "proxy.mp4"
-            keyframe_offsets = create_review_proxy(local_source_path, proxy_local, metadata, proxy_args)
+            keyframe_offsets = create_proxy(local_source_path, proxy_local, metadata, proxy_args)
             
             # Upload both files to S3
-            upload_to_s3(gold_master_local, gold_master_s3_key, storage_class="GLACIER")
+            upload_to_s3(master_local, master_s3_key, storage_class="GLACIER")
             upload_to_s3(proxy_local, proxy_s3_key, storage_class="STANDARD")
             
             # Return success result
             return {
                 "status": "success",
-                "gold_master_path": gold_master_s3_key,
+                "master_path": master_s3_key,
                 "proxy_path": proxy_s3_key,
                 "keyframe_offsets": keyframe_offsets,
                 "metadata": metadata
@@ -182,27 +182,27 @@ def parse_frame_rate(fps_str: str) -> float:
         return 0.0
 
 
-def create_gold_master(source_path: Path, output_path: Path, metadata: Dict[str, Any], gold_master_args: list) -> None:
-    """Create lossless gold master for archival and final export"""
-    logger.info(f"Creating gold master: {output_path}")
+def create_master(source_path: Path, output_path: Path, metadata: Dict[str, Any], master_args: list) -> None:
+    """Create lossless master for archival storage"""
+    logger.info(f"Creating master: {output_path}")
     
-    cmd = ["ffmpeg", "-i", str(source_path)] + gold_master_args + ["-y", str(output_path)]
+    cmd = ["ffmpeg", "-i", str(source_path)] + master_args + ["-y", str(output_path)]
     
     duration = metadata.get("duration_seconds", 0)
-    success = run_ffmpeg_with_progress(cmd, duration, "Gold Master Creation")
+    success = run_ffmpeg_with_progress(cmd, duration, "Master Creation")
     
     if not success:
-        raise RuntimeError("Failed to create gold master")
+        raise RuntimeError("Failed to create master")
     
     if not output_path.exists():
-        raise RuntimeError(f"Gold master file was not created: {output_path}")
+        raise RuntimeError(f"Master file was not created: {output_path}")
     
-    logger.info(f"Gold master created successfully: {output_path.stat().st_size} bytes")
+    logger.info(f"Master created successfully: {output_path.stat().st_size} bytes")
 
 
-def create_review_proxy(source_path: Path, output_path: Path, metadata: Dict[str, Any], proxy_args: list) -> List[int]:
+def create_proxy(source_path: Path, output_path: Path, metadata: Dict[str, Any], proxy_args: list) -> List[int]:
     """Create all-I-frame proxy and extract keyframe offsets"""
-    logger.info(f"Creating review proxy: {output_path}")
+    logger.info(f"Creating proxy: {output_path}")
     
     cmd = ["ffmpeg", "-i", str(source_path)] + proxy_args + ["-y", str(output_path)]
     
@@ -210,7 +210,7 @@ def create_review_proxy(source_path: Path, output_path: Path, metadata: Dict[str
     success = run_ffmpeg_with_progress(cmd, duration, "Proxy Creation")
     
     if not success:
-        raise RuntimeError("Failed to create review proxy")
+        raise RuntimeError("Failed to create proxy")
     
     if not output_path.exists():
         raise RuntimeError(f"Proxy file was not created: {output_path}")

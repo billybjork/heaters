@@ -200,7 +200,7 @@ defmodule Heaters.Infrastructure.S3 do
 
       S3.upload_file("/tmp/video.mp4", "clips/new_video.mp4")
       S3.upload_file("/tmp/sprite.jpg", "artifacts/sprite.jpg", operation_name: "Sprite")
-      S3.upload_file("/tmp/master.mkv", "gold_masters/master.mkv", storage_class: "GLACIER")
+      S3.upload_file("/tmp/master.mkv", "masters/master.mkv", storage_class: "GLACIER")
 
   ## Returns
   - `{:ok, s3_key}` on success

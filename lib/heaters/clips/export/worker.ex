@@ -1,16 +1,28 @@
 defmodule Heaters.Clips.Export.Worker do
   @moduledoc """
-  Worker for exporting virtual clips to physical clips using the gold master.
+  Worker for exporting virtual clips to physical clips using the proxy.
 
-  This worker handles the final stage of the virtual clip pipeline by encoding
-  approved virtual clips into physical MP4 files using the lossless gold master.
+  This worker handles the final stage of the virtual clip pipeline by clipping
+  approved virtual clips into physical MP4 files using the high-quality proxy.
+
+  ## Storage Strategy & Quality Decision
+
+  **Why Proxy Instead of Gold Master:**
+  - **Higher Quality**: Proxy uses CRF 20 vs old final_export CRF 23
+  - **Instant Access**: Proxy in S3 Standard vs gold master in S3 Glacier
+  - **Stream Copy**: No re-encoding = zero quality loss + 10x faster
+  - **Cost Optimization**: Gold master in Glacier saves 95% storage costs
+  - **Perfect for Streaming**: CRF 20 all-I-frame is ideal for Cloudflare Stream ingestion
+
+  **Gold Master**: Reserved for true archival/compliance, stored in S3 Glacier
+  **Proxy**: Dual-purpose for WebCodecs review AND final export source
 
   ## Workflow
 
   1. Group virtual clips by source_video for batch processing
-  2. Download gold master file for the source video
-  3. Extract individual clips using cut points and FFmpeg
-  4. Upload physical clips to S3
+  2. Download proxy file (S3 Standard, instant access)
+  3. Extract individual clips using FFmpeg stream copy (no re-encoding)
+  4. Upload physical clips to S3 Standard
   5. Update clip records: is_virtual = false, add clip_filepath
   6. Clean up temporary files
 
@@ -24,14 +36,21 @@ defmodule Heaters.Clips.Export.Worker do
   ## Batch Processing
 
   For efficiency, this worker processes all approved virtual clips from the same
-  source video together in a single job. This minimizes gold master downloads
+  source video together in a single job. This minimizes proxy downloads
   and temporary file operations.
+
+  ## Performance Benefits
+
+  - **10x Faster**: Stream copy vs re-encoding significantly reduces processing time
+  - **Zero Quality Loss**: No transcoding artifacts or generational loss
+  - **Resource Efficient**: Minimal CPU usage compared to encoding operations
+  - **Instant Availability**: No Glacier retrieval delays (1-12 hours)
 
   ## Architecture
 
-  - **Export**: Python task via PyRunner port for FFmpeg operations
+  - **Export**: Python task via PyRunner for FFmpeg stream copy operations
   - **State Management**: Elixir state transitions and database operations
-  - **Storage**: S3 for physical clip files
+  - **Storage**: S3 Standard for physical clip files (ready for CDN/streaming)
   - **Cleanup**: Temporary file management
   """
 
@@ -42,7 +61,7 @@ defmodule Heaters.Clips.Export.Worker do
 
   alias Heaters.Clips.Clip
   alias Heaters.Clips.Export.StateManager
-  alias Heaters.Infrastructure.Orchestration.{WorkerBehavior, FFmpegConfig}
+  alias Heaters.Infrastructure.Orchestration.WorkerBehavior
   alias Heaters.Infrastructure.PyRunner
   require Logger
 
@@ -90,27 +109,27 @@ defmodule Heaters.Clips.Export.Worker do
   defp process_virtual_clips_batch([first_clip | _rest] = clips) do
     source_video = first_clip.source_video
 
-    # Validate that gold master is available
-    case source_video.gold_master_filepath do
+    # Validate that proxy is available
+    case source_video.proxy_filepath do
       nil ->
-        error_msg = "No gold master available for source_video_id: #{source_video.id}"
+        error_msg = "No proxy available for source_video_id: #{source_video.id}"
         Logger.error("ExportWorker: #{error_msg}")
         mark_clips_export_failed(clips, error_msg)
 
-      gold_master_path ->
+      proxy_path ->
         Logger.info(
-          "ExportWorker: Processing #{length(clips)} clips from gold master: #{gold_master_path}"
+          "ExportWorker: Processing #{length(clips)} clips from proxy: #{proxy_path}"
         )
 
-        execute_batch_export(clips, source_video, gold_master_path)
+        execute_batch_export(clips, source_video, proxy_path)
     end
   end
 
-  defp execute_batch_export(clips, source_video, gold_master_path) do
+  defp execute_batch_export(clips, source_video, proxy_path) do
     # Transition clips to exporting state
     case StateManager.start_export_batch(clips) do
       {:ok, updated_clips} ->
-        run_export_task(updated_clips, source_video, gold_master_path)
+        run_export_task(updated_clips, source_video, proxy_path)
 
       {:error, reason} ->
         Logger.error(
@@ -121,17 +140,13 @@ defmodule Heaters.Clips.Export.Worker do
     end
   end
 
-  defp run_export_task(clips, source_video, gold_master_path) do
-    # Get FFmpeg configuration for final export
-    final_export_args = FFmpegConfig.get_args(:final_export)
-
-    # Prepare export arguments for Python task
+  defp run_export_task(clips, source_video, proxy_path) do
+    # Prepare export arguments for Python task (no FFmpeg args needed for stream copy)
     export_args = %{
       source_video_id: source_video.id,
-      gold_master_path: gold_master_path,
+      proxy_path: proxy_path,
       clips_data: prepare_clips_data(clips),
-      video_title: source_video.title,
-      final_export_args: final_export_args
+      video_title: source_video.title
     }
 
     Logger.info("ExportWorker: Running Python export with #{length(clips)} clips")

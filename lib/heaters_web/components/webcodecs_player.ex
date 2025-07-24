@@ -3,7 +3,7 @@ defmodule HeatersWeb.WebCodecsPlayer do
   WebCodecs-based video player for virtual clips.
 
   This component replaces sprite-based navigation with direct video seeking
-  using keyframe offsets for frame-perfect navigation on review proxy videos.
+  using keyframe offsets for frame-perfect navigation on proxy videos.
   Automatically falls back to traditional <video> player when WebCodecs is unavailable.
   """
   use Phoenix.Component
@@ -14,7 +14,7 @@ defmodule HeatersWeb.WebCodecsPlayer do
   # ------------------------------------------------------------------------
 
   @doc """
-  Return the CDN review proxy URL for a virtual clip's source video.
+  Return the CDN proxy URL for a virtual clip's source video.
 
   Used for WebCodecs frame seeking and fallback video playback.
   """

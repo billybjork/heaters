@@ -232,20 +232,20 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
   end
 
   @doc """
-  Upload gold master video to cold storage with appropriate storage class.
+  Upload master video to cold storage with appropriate storage class.
 
   ## Examples
 
-      {:ok, result} = S3Adapter.upload_gold_master("/tmp/master.mkv", source_video, "video_123_master.mkv")
+      {:ok, result} = S3Adapter.upload_master("/tmp/master.mkv", source_video, "video_123_master.mkv")
   """
-  @spec upload_gold_master(String.t(), map(), String.t()) :: {:ok, map()} | {:error, any()}
-  def upload_gold_master(local_video_path, source_video, filename)
+  @spec upload_master(String.t(), map(), String.t()) :: {:ok, map()} | {:error, any()}
+  def upload_master(local_video_path, source_video, filename)
       when is_binary(local_video_path) and is_binary(filename) do
-    s3_key = "gold_masters/#{filename}"
+    s3_key = "masters/#{filename}"
 
     # Use GLACIER storage for cost-effective cold storage of archival masters
     case S3.upload_file(local_video_path, s3_key,
-           operation_name: "GoldMaster",
+           operation_name: "Master",
            storage_class: "GLACIER"
          ) do
       {:ok, _} ->
@@ -270,20 +270,20 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
   end
 
   @doc """
-  Upload review proxy video to hot storage for fast streaming access.
+  Upload proxy video to hot storage for fast streaming access and export.
 
   ## Examples
 
-      {:ok, result} = S3Adapter.upload_review_proxy("/tmp/proxy.mp4", source_video, "video_123_proxy.mp4")
+      {:ok, result} = S3Adapter.upload_proxy("/tmp/proxy.mp4", source_video, "video_123_proxy.mp4")
   """
-  @spec upload_review_proxy(String.t(), map(), String.t()) :: {:ok, map()} | {:error, any()}
-  def upload_review_proxy(local_video_path, source_video, filename)
+  @spec upload_proxy(String.t(), map(), String.t()) :: {:ok, map()} | {:error, any()}
+  def upload_proxy(local_video_path, source_video, filename)
       when is_binary(local_video_path) and is_binary(filename) do
-    s3_key = "review_proxies/#{filename}"
+    s3_key = "proxies/#{filename}"
 
-    # Use STANDARD storage for hot access during review
+    # Use STANDARD storage for hot access during review and export
     case S3.upload_file(local_video_path, s3_key,
-           operation_name: "ReviewProxy",
+           operation_name: "Proxy",
            storage_class: "STANDARD"
          ) do
       {:ok, _} ->

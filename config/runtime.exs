@@ -118,15 +118,15 @@ if config_env() != :test and not is_database_operation do
   config :heaters, :proxy_cdn_domain, proxy_cdn_domain
 
   # Configure storage classes for cost optimization
-  gold_master_storage_class = System.get_env("GOLD_MASTER_STORAGE_CLASS", "GLACIER")
+  master_storage_class = System.get_env("MASTER_STORAGE_CLASS", "GLACIER")
   proxy_storage_class = System.get_env("PROXY_STORAGE_CLASS", "STANDARD")
 
-  config :heaters, :gold_master_storage_class, gold_master_storage_class
+  config :heaters, :master_storage_class, master_storage_class
   config :heaters, :proxy_storage_class, proxy_storage_class
 
   IO.puts("[Runtime.exs] WebCodecs enabled: #{webcodecs_enabled}")
   IO.puts("[Runtime.exs] Proxy CDN domain: #{proxy_cdn_domain}")
-  IO.puts("[Runtime.exs] Gold master storage: #{gold_master_storage_class}")
+  IO.puts("[Runtime.exs] Master storage: #{master_storage_class}")
   IO.puts("[Runtime.exs] Proxy storage: #{proxy_storage_class}")
 else
   # In test environment or database operations, configure minimal stubs for S3/CloudFront
