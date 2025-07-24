@@ -51,9 +51,9 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
 
   alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Clips.Queries, as: ClipQueries
-  alias Heaters.Videos.Operations.Ingest.Worker, as: IngestWorker
-  alias Heaters.Videos.Operations.Preprocessing.Worker, as: PreprocessingWorker
-  alias Heaters.Videos.Operations.SceneDetection.Worker, as: SceneDetectionWorker
+  alias Heaters.Videos.Operations.Download.Worker, as: DownloadWorker
+  alias Heaters.Videos.Operations.Preprocess.Worker, as: PreprocessWorker
+  alias Heaters.Videos.Operations.DetectScenes.Worker, as: DetectScenesWorker
   alias Heaters.Videos.Operations.Splice.Worker, as: SpliceWorker
   alias Heaters.Clips.Operations.Artifacts.Sprite.Worker, as: SpriteWorker
   alias Heaters.Clips.Operations.Artifacts.Keyframe.Worker, as: KeyframeWorker
@@ -77,21 +77,21 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
       %{
         label: "videos needing ingest → download",
         query: fn -> VideoQueries.get_videos_needing_ingest() end,
-        build: fn video -> IngestWorker.new(%{source_video_id: video.id}) end
+        build: fn video -> DownloadWorker.new(%{source_video_id: video.id}) end
       },
 
-      # Stage 2: NEW - Preprocessing (replaces part of splice workflow)
+      # Stage 2: NEW - Preprocess (replaces part of splice workflow)
       %{
         label: "videos needing preprocessing → proxy generation",
         query: fn -> VideoQueries.get_videos_needing_preprocessing() end,
-        build: fn video -> PreprocessingWorker.new(%{source_video_id: video.id}) end
+        build: fn video -> PreprocessWorker.new(%{source_video_id: video.id}) end
       },
 
       # Stage 3: NEW - Scene detection for virtual clips (replaces sprite generation)
       %{
         label: "videos needing scene detection → virtual clips",
         query: fn -> VideoQueries.get_videos_needing_scene_detection() end,
-        build: fn video -> SceneDetectionWorker.new(%{source_video_id: video.id}) end
+        build: fn video -> DetectScenesWorker.new(%{source_video_id: video.id}) end
       },
 
       # Stage 4: Legacy splice (keep temporarily during transition)
@@ -128,7 +128,7 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
         end
       },
 
-            # Stage 8: NEW - Export (virtual clips → physical clips)
+      # Stage 8: NEW - Export (virtual clips → physical clips)
       %{
         label: "approved virtual clips → final encoding",
         query: fn ->

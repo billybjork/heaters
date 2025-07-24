@@ -99,7 +99,8 @@ defmodule Heaters.Clips.Queries do
   """
   def get_virtual_clips_ready_for_export() do
     from(c in Clip,
-      where: c.is_virtual == true and c.ingest_state == "review_approved")
+      where: c.is_virtual == true and c.ingest_state == "review_approved"
+    )
     |> Repo.all()
   end
 
@@ -111,7 +112,8 @@ defmodule Heaters.Clips.Queries do
     from(c in Clip,
       where: c.is_virtual == true and c.ingest_state == "review_approved",
       select: c.source_video_id,
-      distinct: true)
+      distinct: true
+    )
     |> Repo.all()
   end
 

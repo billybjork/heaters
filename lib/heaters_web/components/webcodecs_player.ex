@@ -25,6 +25,7 @@ defmodule HeatersWeb.WebCodecsPlayer do
       proxy_path -> cdn_url(proxy_path)
     end
   end
+
   def proxy_video_url(_clip), do: nil
 
   @doc """
@@ -41,18 +42,18 @@ defmodule HeatersWeb.WebCodecsPlayer do
   @doc "Renders the WebCodecs video player for one clip."
   def webcodecs_player(assigns) do
     clip = assigns.clip
-    
+
     case build_webcodecs_player_meta(clip) do
       {:error, reason} ->
         # Fallback to error message if meta building fails
         assigns = assign(assigns, :error_message, "Unable to load video player: #{reason}")
-        
+
         ~H"""
         <div class="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
           <%= @error_message %>
         </div>
         """
-        
+
       meta ->
         json_meta = Jason.encode!(meta)
 
@@ -62,56 +63,56 @@ defmodule HeatersWeb.WebCodecsPlayer do
           |> assign(:json_meta, json_meta)
 
         ~H"""
-    <div class="clip-display-container" style={"width: #{@meta["displayWidth"]}px;"}>
-      <div
-        id={"viewer-#{@clip.id}"}
-        phx-hook="WebCodecsPlayer"
-        phx-update="ignore"
-        data-clip-id={@clip.id}
-        data-player={@json_meta}
-        class="webcodecs-viewer"
-        style={"width: #{@meta["displayWidth"]}px;
-                height: #{@meta["displayHeight"]}px;
-                background-color: #000;
-                border-radius: 4px;
-                overflow: hidden;"}
-      >
-        <!-- WebCodecs canvas or video element will be inserted here -->
-      </div>
+        <div class="clip-display-container" style={"width: #{@meta["displayWidth"]}px;"}>
+          <div
+            id={"viewer-#{@clip.id}"}
+            phx-hook="WebCodecsPlayer"
+            phx-update="ignore"
+            data-clip-id={@clip.id}
+            data-player={@json_meta}
+            class="webcodecs-viewer"
+            style={"width: #{@meta["displayWidth"]}px;
+                    height: #{@meta["displayHeight"]}px;
+                    background-color: #000;
+                    border-radius: 4px;
+                    overflow: hidden;"}
+          >
+            <!-- WebCodecs canvas or video element will be inserted here -->
+          </div>
 
-      <div class="webcodecs-controls">
-        <button
-          id={"playpause-#{@clip.id}"}
-          class="review-buttons__action review-buttons__action--play"
-          data-action="toggle"
-        >
-          ▶
-        </button>
+          <div class="webcodecs-controls">
+            <button
+              id={"playpause-#{@clip.id}"}
+              class="review-buttons__action review-buttons__action--play"
+              data-action="toggle"
+            >
+              ▶
+            </button>
 
-        <input id={"scrub-#{@clip.id}"} type="range" min="0" step="1" />
+            <input id={"scrub-#{@clip.id}"} type="range" min="0" step="1" />
 
-        <button
-          id={"speed-#{@clip.id}"}
-          class="review-buttons__action review-buttons__action--speed"
-          disabled
-        >
-          1×
-        </button>
+            <button
+              id={"speed-#{@clip.id}"}
+              class="review-buttons__action review-buttons__action--speed"
+              disabled
+            >
+              1×
+            </button>
 
-        <span id={"frame-display-#{@clip.id}"}>
-          Frame: 0
-        </span>
+            <span id={"frame-display-#{@clip.id}"}>
+              Frame: 0
+            </span>
 
-        <span class="webcodecs-indicator" style="font-size: 12px; color: #666; margin-left: auto;">
-          <%= if @meta["isVirtual"] do %>
-            <span style="color: #0066cc;">⚡ Virtual</span>
-          <% else %>
-            <span style="color: #666;">📹 Traditional</span>
-          <% end %>
-        </span>
-      </div>
-    </div>
-    """
+            <span class="webcodecs-indicator" style="font-size: 12px; color: #666; margin-left: auto;">
+              <%= if @meta["isVirtual"] do %>
+                <span style="color: #0066cc;">⚡ Virtual</span>
+              <% else %>
+                <span style="color: #666;">📹 Traditional</span>
+              <% end %>
+            </span>
+          </div>
+        </div>
+        """
     end
   end
 
@@ -139,19 +140,21 @@ defmodule HeatersWeb.WebCodecsPlayer do
   defp build_webcodecs_player_meta(clip) do
     # Defensive checks
     case clip.source_video do
-      %Ecto.Association.NotLoaded{} -> 
+      %Ecto.Association.NotLoaded{} ->
         {:error, "Source video not preloaded"}
-      nil -> 
+
+      nil ->
         {:error, "No source video associated"}
+
       source_video when is_map(source_video) ->
         build_meta_with_source_video(clip, source_video)
-      _ -> 
+
+      _ ->
         {:error, "Invalid source video data"}
     end
   end
 
   defp build_meta_with_source_video(clip, source_video) do
-
     # Determine if this is a virtual clip
     is_virtual = clip.is_virtual || false
 
@@ -161,19 +164,22 @@ defmodule HeatersWeb.WebCodecsPlayer do
     {total_frames, duration_seconds} = calculate_frame_info(clip, fps)
 
     # Display dimensions (consistent with sprite player)
-    display_width = 640  # Standard player width
-    display_height = round(display_width * 9 / 16)  # 16:9 aspect ratio
+    # Standard player width
+    display_width = 640
+    # 16:9 aspect ratio
+    display_height = round(display_width * 9 / 16)
 
     # Get video URLs
     proxy_url = if is_virtual, do: proxy_video_url(clip), else: nil
     clip_url = if not is_virtual, do: clip_video_url(clip), else: nil
 
     # Get keyframe offsets for virtual clips
-    keyframe_offsets = if is_virtual do
-      Map.get(source_video, :keyframe_offsets, []) || []
-    else
-      []
-    end
+    keyframe_offsets =
+      if is_virtual do
+        Map.get(source_video, :keyframe_offsets, []) || []
+      else
+        []
+      end
 
     %{
       # Core player information (camelCase for JavaScript)
@@ -229,7 +235,8 @@ defmodule HeatersWeb.WebCodecsPlayer do
 
       # Default fallback
       true ->
-        {30, 1.0}  # 1 second at 30fps
+        # 1 second at 30fps
+        {30, 1.0}
     end
   end
 

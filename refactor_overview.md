@@ -4,7 +4,7 @@
 
 Transition from **eager clip encoding + sprite-sheet review** to a **single-proxy, virtual-clip workflow**:
 
-* One universal ingest path for both web-scraped full shows _and_ raw user-uploaded clips
+* One universal download path for both web-scraped full shows _and_ raw user-uploaded clips
 * Reviewers work on *virtual* cut points against the source proxy; no re-encoding during review
 * After all clips are approved, encode once from the archival master
 * Eliminate sprite sheet dependency with WebCodecs-based frame seeking
@@ -33,7 +33,7 @@ Transition from **eager clip encoding + sprite-sheet review** to a **single-prox
 
 | Stage | Current | New | Key Changes |
 |-------|---------|-----|-------------|
-| **1. Universal Ingest** | Same | Same | No change - works for both user uploads and web-scraped content |
+| **1. Universal Download** | Same | Same | No change - works for both user uploads and web-scraped content |
 | **2. Preprocessing** | Downloads to temp → uploads clips | **Creates gold master + review proxy only** | **No individual clips created** |
 | **3. Scene Detection** | Creates clip records + files | **Creates virtual clip records (cut points only)** | **Database records only, no file encoding** |
 | **4. Review UI** | Sprite sheet navigation | **WebCodecs frame seeking on review proxy** | **Eliminates sprite generation entirely** |
@@ -89,11 +89,11 @@ ALTER TABLE clips ADD CONSTRAINT clips_filepath_required_when_physical
 # lib/heaters/infrastructure/orchestration/pipeline_config.ex
 def stages do
   [
-    # Stage 1 & 2: No changes to ingest/download
+    # Stage 1 & 2: No changes to download
     %{
-      label: "videos needing ingest → download",
-      query: fn -> VideoQueries.get_videos_needing_ingest() end,
-      build: fn video -> IngestWorker.new(%{source_video_id: video.id}) end
+      label: "videos needing download",
+      query: fn -> VideoQueries.get_videos_needing_download() end,
+      build: fn video -> DownloadWorker.new(%{source_video_id: video.id}) end
     },
     
     # Stage 3: NEW - Universal preprocessing (replaces current splice)

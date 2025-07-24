@@ -1,8 +1,8 @@
-defmodule Heaters.Videos.Operations.Ingest do
+defmodule Heaters.Videos.Operations.Download do
   @moduledoc """
-  Context for managing source video ingestion workflow and state transitions.
+  Context for managing source video download workflow and state transitions.
 
-  This module handles the initial ingestion phase: video submission and download.
+  This module handles the initial download phase: video submission and download.
   Splice operations are handled separately by the Videos.Operations.Splice module.
   """
 

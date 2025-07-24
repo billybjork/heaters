@@ -1,5 +1,5 @@
 """
-Preprocessing Task for Video Pipeline
+Preprocess Task for Video Pipeline
 
 Handles creation of transcoded outputs from original source videos:
 1. Gold master - lossless MKV + FFV1 for archival and final export
@@ -7,7 +7,7 @@ Handles creation of transcoded outputs from original source videos:
 3. Keyframe offsets - byte positions for efficient seeking
 
 This is the main transcoding step that creates all necessary video formats
-from the original video files stored by the ingest task.
+from the original video files stored by the download task.
 """
 
 import json
@@ -49,7 +49,7 @@ PROXY_ARGS = [
 ]
 
 
-def run_preprocessing(source_video_path: str, source_video_id: int, video_title: str, **kwargs) -> Dict[str, Any]:
+def run_preprocess(source_video_path: str, source_video_id: int, video_title: str, **kwargs) -> Dict[str, Any]:
     """
     Create gold master and review proxy from original source video.
     
@@ -57,7 +57,7 @@ def run_preprocessing(source_video_path: str, source_video_id: int, video_title:
     (stored by ingest task) into the required output formats.
     
     Args:
-        source_video_path: S3 path to original source video (from ingest task)
+        source_video_path: S3 path to original source video (from download task)
         source_video_id: Database ID of the source video
         video_title: Title for generating output filenames
         
@@ -77,7 +77,7 @@ def run_preprocessing(source_video_path: str, source_video_id: int, video_title:
     """
     
     try:
-        logger.info(f"Starting preprocessing for video {source_video_id}: {video_title}")
+        logger.info(f"Starting preprocess for video {source_video_id}: {video_title}")
         
         # Validate FFmpeg availability
         validate_ffmpeg_available()
@@ -120,7 +120,7 @@ def run_preprocessing(source_video_path: str, source_video_id: int, video_title:
             }
             
     except Exception as e:
-        logger.error(f"Preprocessing failed for video {source_video_id}: {e}")
+        logger.error(f"Preprocess failed for video {source_video_id}: {e}")
         return {
             "status": "error",
             "error": str(e),

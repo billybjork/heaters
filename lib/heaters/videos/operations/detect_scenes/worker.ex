@@ -1,4 +1,4 @@
-defmodule Heaters.Videos.Operations.SceneDetection.Worker do
+defmodule Heaters.Videos.Operations.DetectScenes.Worker do
   @moduledoc """
   Worker for creating virtual clips from preprocessed source videos using scene detection.
 
@@ -39,7 +39,7 @@ defmodule Heaters.Videos.Operations.SceneDetection.Worker do
     unique: [period: 900, fields: [:args]]
 
   alias Heaters.Videos.{SourceVideo, Queries}
-  alias Heaters.Videos.Operations.SceneDetection.StateManager
+  alias Heaters.Videos.Operations.DetectScenes.StateManager
   alias Heaters.Clips.Operations.VirtualClips
   alias Heaters.Infrastructure.Orchestration.WorkerBehavior
   alias Heaters.Infrastructure.PyRunner
@@ -51,7 +51,9 @@ defmodule Heaters.Videos.Operations.SceneDetection.Worker do
   end
 
   defp handle_scene_detection_work(%{"source_video_id" => source_video_id}) do
-    Logger.info("SceneDetectionWorker: Starting scene detection for source_video_id: #{source_video_id}")
+    Logger.info(
+      "DetectScenesWorker: Starting scene detection for source_video_id: #{source_video_id}"
+    )
 
     with {:ok, source_video} <- Queries.get_source_video(source_video_id) do
       handle_scene_detection(source_video)
@@ -65,15 +67,18 @@ defmodule Heaters.Videos.Operations.SceneDetection.Worker do
     # IDEMPOTENCY: Skip if needs_splicing = false OR virtual clips already exist
     case check_scene_detection_complete(source_video) do
       :complete ->
-        Logger.info("SceneDetectionWorker: Video #{source_video.id} scene detection already complete, skipping")
+        Logger.info(
+          "DetectScenesWorker: Video #{source_video.id} scene detection already complete, skipping"
+        )
+
         :ok
 
       :needs_processing ->
-        Logger.info("SceneDetectionWorker: Starting scene detection for video #{source_video.id}")
+        Logger.info("DetectScenesWorker: Starting scene detection for video #{source_video.id}")
         run_scene_detection_task(source_video)
 
       {:error, reason} ->
-        Logger.error("SceneDetectionWorker: Cannot process video #{source_video.id}: #{reason}")
+        Logger.error("DetectScenesWorker: Cannot process video #{source_video.id}: #{reason}")
         {:error, reason}
     end
   end
@@ -90,7 +95,10 @@ defmodule Heaters.Videos.Operations.SceneDetection.Worker do
 
       # Check if virtual clips already exist
       virtual_clips_exist?(source_video.id) ->
-        Logger.info("SceneDetectionWorker: Virtual clips already exist for video #{source_video.id}, marking complete")
+        Logger.info(
+          "DetectScenesWorker: Virtual clips already exist for video #{source_video.id}, marking complete"
+        )
+
         # Update needs_splicing to false if virtual clips exist but flag not set
         StateManager.mark_scene_detection_complete(source_video.id)
         :complete
@@ -103,16 +111,19 @@ defmodule Heaters.Videos.Operations.SceneDetection.Worker do
   defp virtual_clips_exist?(source_video_id) do
     import Ecto.Query
 
-    query = from(c in Heaters.Clips.Clip,
-      where: c.source_video_id == ^source_video_id and c.is_virtual == true,
-      select: count("*")
-    )
+    query =
+      from(c in Heaters.Clips.Clip,
+        where: c.source_video_id == ^source_video_id and c.is_virtual == true,
+        select: count("*")
+      )
 
     Heaters.Repo.one(query) > 0
   end
 
   defp run_scene_detection_task(source_video) do
-    Logger.info("SceneDetectionWorker: Running Python scene detection for source_video_id: #{source_video.id}")
+    Logger.info(
+      "DetectScenesWorker: Running Python scene detection for source_video_id: #{source_video.id}"
+    )
 
     # Transition to scene_detection state
     case StateManager.start_scene_detection(source_video.id) do
@@ -120,7 +131,7 @@ defmodule Heaters.Videos.Operations.SceneDetection.Worker do
         execute_scene_detection(updated_video)
 
       {:error, reason} ->
-        Logger.error("SceneDetectionWorker: Failed to start scene detection: #{inspect(reason)}")
+        Logger.error("DetectScenesWorker: Failed to start scene detection: #{inspect(reason)}")
         {:error, reason}
     end
   end
@@ -135,19 +146,21 @@ defmodule Heaters.Videos.Operations.SceneDetection.Worker do
       min_duration_seconds: 1.0
     }
 
-    Logger.info("SceneDetectionWorker: Running Python scene detection with args: #{inspect(scene_detection_args)}")
+    Logger.info(
+      "DetectScenesWorker: Running Python scene detection with args: #{inspect(scene_detection_args)}"
+    )
 
     case PyRunner.run("detect_scenes", scene_detection_args, timeout: :timer.minutes(15)) do
       {:ok, %{"status" => "success"} = result} ->
-        Logger.info("SceneDetectionWorker: Python scene detection completed successfully")
+        Logger.info("DetectScenesWorker: Python scene detection completed successfully")
         process_scene_detection_results(source_video, result)
 
       {:ok, %{"status" => "error", "error" => error_msg}} ->
-        Logger.error("SceneDetectionWorker: Python scene detection failed: #{error_msg}")
+        Logger.error("DetectScenesWorker: Python scene detection failed: #{error_msg}")
         mark_scene_detection_failed(source_video, error_msg)
 
       {:error, reason} ->
-        Logger.error("SceneDetectionWorker: PyRunner failed: #{inspect(reason)}")
+        Logger.error("DetectScenesWorker: PyRunner failed: #{inspect(reason)}")
         mark_scene_detection_failed(source_video, "PyRunner failed: #{inspect(reason)}")
     end
   end
@@ -159,20 +172,25 @@ defmodule Heaters.Videos.Operations.SceneDetection.Worker do
 
     case VirtualClips.create_virtual_clips_from_cut_points(source_video.id, cut_points, metadata) do
       {:ok, created_clips} ->
-        Logger.info("SceneDetectionWorker: Successfully created #{length(created_clips)} virtual clips")
+        Logger.info(
+          "DetectScenesWorker: Successfully created #{length(created_clips)} virtual clips"
+        )
 
         case StateManager.complete_scene_detection(source_video.id) do
           {:ok, _final_video} ->
-            Logger.info("SceneDetectionWorker: Successfully completed scene detection for video #{source_video.id}")
+            Logger.info(
+              "DetectScenesWorker: Successfully completed scene detection for video #{source_video.id}"
+            )
+
             :ok
 
           {:error, reason} ->
-            Logger.error("SceneDetectionWorker: Failed to update video state: #{inspect(reason)}")
+            Logger.error("DetectScenesWorker: Failed to update video state: #{inspect(reason)}")
             {:error, reason}
         end
 
       {:error, reason} ->
-        Logger.error("SceneDetectionWorker: Failed to create virtual clips: #{inspect(reason)}")
+        Logger.error("DetectScenesWorker: Failed to create virtual clips: #{inspect(reason)}")
         mark_scene_detection_failed(source_video, reason)
     end
   end
@@ -183,7 +201,7 @@ defmodule Heaters.Videos.Operations.SceneDetection.Worker do
         {:error, reason}
 
       {:error, db_error} ->
-        Logger.error("SceneDetectionWorker: Failed to mark video as failed: #{inspect(db_error)}")
+        Logger.error("DetectScenesWorker: Failed to mark video as failed: #{inspect(db_error)}")
         {:error, reason}
     end
   end

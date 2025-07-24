@@ -1,4 +1,4 @@
-defmodule Heaters.Videos.Operations.SceneDetection.StateManager do
+defmodule Heaters.Videos.Operations.DetectScenes.StateManager do
   @moduledoc """
   State management for the scene detection workflow.
 
@@ -112,7 +112,8 @@ defmodule Heaters.Videos.Operations.SceneDetection.StateManager do
       video.retry_count     # incremented
   """
   @spec mark_scene_detection_failed(integer(), any()) :: {:ok, SourceVideo.t()} | {:error, any()}
-  def mark_scene_detection_failed(source_video_id, error_reason) when is_integer(source_video_id) do
+  def mark_scene_detection_failed(source_video_id, error_reason)
+      when is_integer(source_video_id) do
     with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
       error_message = format_error_message(error_reason)
 

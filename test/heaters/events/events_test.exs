@@ -212,5 +212,4 @@ defmodule Heaters.EventsTest do
       end
     end
   end
-
 end

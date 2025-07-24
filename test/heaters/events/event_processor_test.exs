@@ -293,5 +293,4 @@ defmodule Heaters.Events.EventProcessorTest do
       refute is_nil(event.processed_at)
     end
   end
-
 end

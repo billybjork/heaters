@@ -2,13 +2,13 @@
 
 ## Overview
 
-Heaters processes videos through a **virtual clip pipeline**: ingestion → proxy generation → virtual clips → human review → final export → embedding. The system emphasizes functional architecture with "I/O at the edges", direct action execution with buffer-time undo, and **hybrid processing** combining Elixir orchestration with Python (CV/ML/media processing) for optimal performance and reliability.
+Heaters processes videos through a **virtual clip pipeline**: download → proxy generation → virtual clips → human review → final export → embedding. The system emphasizes functional architecture with "I/O at the edges", direct action execution with buffer-time undo, and **hybrid processing** combining Elixir orchestration with Python (CV/ML/media processing) for optimal performance and reliability.
 
 ### Virtual Clip Architecture
 
 The system uses a **virtual clip workflow** that eliminates re-encoding during review:
 
-1. **Universal Ingest**: Single pathway for both web-scraped shows and user-uploaded clips
+1. **Universal Download**: Single pathway for both web-scraped shows and user-uploaded clips
 2. **Proxy Generation**: Creates lossless gold master (FFV1/MKV) + review proxy (all-I-frame H.264) 
 3. **Virtual Clips**: Database records with cut points, no physical files until final export
 4. **Instant Review**: WebCodecs-based seeking with instant merge/split operations
@@ -41,9 +41,9 @@ The system uses a **virtual clip workflow** that eliminates re-encoding during r
 ### Virtual Clip Pipeline
 
 ```
-Source Video: new → downloading → downloaded → preprocessing → preprocessed → scene_detection → virtual clips created
+Source Video: new → downloading → downloaded → preprocess → preprocessed → detect_scenes → virtual clips created
                       ↓              ↓              ↓              ↓                ↓
-               download_failed  (resumable)  preprocessing_failed  (resumable)  scene_detection_failed
+               download_failed  (resumable)  preprocess_failed  (resumable)  detect_scenes_failed
                       ↑                          ↑                              ↑
                       └──────────────────────────┼──────────────────────────────┘
                                  ↓
@@ -87,7 +87,7 @@ This reflects the fundamental difference between human review actions and automa
 
 ### Quality-First Download Architecture
 
-The ingest pipeline implements a **quality-first download strategy** with intelligent fallback to ensure optimal video quality while maintaining reliability:
+The download pipeline implements a **quality-first download strategy** with intelligent fallback to ensure optimal video quality while maintaining reliability:
 
 #### Primary Download Strategy (Best Quality)
 - **Format**: `'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b'`
@@ -108,7 +108,7 @@ The ingest pipeline implements a **quality-first download strategy** with intell
 if download_method == 'primary' and requires_normalization:
     # Apply lightweight normalization to fix yt-dlp merge issues
     # Uses fast settings: -preset fast -crf 23 -movflags +faststart
-    # Different from preprocessing.py - just ensures valid MP4
+    # Different from preprocess.py - just ensures valid MP4
     normalize_video(original_download, normalized_output)
 else:
     # Fallback downloads don't need normalization
@@ -118,7 +118,7 @@ else:
 #### Architecture Benefits
 - **Quality Preservation**: Gets best possible quality when available
 - **Reliability**: Graceful fallback when quality approach fails  
-- **Separation of Concerns**: Lightweight ingest fix vs. full preprocessing pipeline
+- **Separation of Concerns**: Lightweight download fix vs. full preprocess pipeline
 - **Performance**: Only normalizes when necessary (primary downloads)
 - **Documentation**: Extensive comments prevent accidental removal of quality logic
 
@@ -157,7 +157,7 @@ The system uses a **hybrid approach** combining native Elixir and Python process
 #### Python Scene Detection
 - **Technology**: Python OpenCV via PyRunner port communication for robust scene detection
 - **Benefits**: Leverages mature Python OpenCV ecosystem with reliable scene detection algorithms
-- **Implementation**: `Videos.Operations.Splice` with Python task execution via PyRunner
+- **Implementation**: `Videos.Operations.DetectScenes` with Python task execution via PyRunner
 - **Idempotency**: S3-based scene detection caching and clip existence checking prevents reprocessing
 
 #### Native Elixir Keyframe Extraction
@@ -283,7 +283,7 @@ The system provides comprehensive resumable processing to handle container resta
 - **Progress Preservation**: Partial work is not lost and doesn't need to be repeated
 
 **Resumable States by Stage**:
-- **Ingest**: `new`, `downloading`, `download_failed`
+- **Download**: `new`, `downloading`, `download_failed`
 - **Splice**: `downloaded`, `splicing`, `splicing_failed`
 - **Sprite**: `spliced`, `generating_sprite`, `sprite_failed`
 - **Keyframe**: `review_approved`, `keyframing`, `keyframe_failed`
@@ -296,16 +296,16 @@ This architecture ensures maximum reliability in production environments where c
 
 ### Virtual Clip Pipeline
 
-#### Video Ingestion & Preprocessing
+#### Video Download & Preprocessing
 1. `Videos.submit/1` creates source video in `new` state
-2. `Videos.Operations.Ingest.Worker` downloads/processes → `downloaded` state  
-3. `Videos.Operations.Preprocessing.Worker` creates gold master + review proxy → `preprocessed` state
+2. `Videos.Operations.Download.Worker` downloads/processes → `downloaded` state  
+3. `Videos.Operations.Preprocess.Worker` creates gold master + review proxy → `preprocessed` state
    - **Gold Master**: Lossless FFV1/MKV for final export quality
    - **Review Proxy**: All-I-frame H.264 for efficient WebCodecs seeking
    - **Keyframe Offsets**: Byte positions for frame-perfect seeking
 
 #### Scene Detection & Virtual Clips
-1. `Videos.Operations.SceneDetection.Worker` runs **Python scene detection** on proxy → virtual clips in `pending_review` state
+1. `Videos.Operations.DetectScenes.Worker` runs **Python scene detection** on proxy → virtual clips in `pending_review` state
 2. Virtual clips contain cut points (database only), no physical files created
 3. Scene detection uses proxy file for speed while preserving cut point accuracy
 
@@ -351,9 +351,9 @@ Each stage is pure configuration:
 **`Infrastructure.Orchestration.PipelineConfig`** provides complete workflow as data:
 
 #### Virtual Clip Pipeline
-1. `new videos → download` (IngestWorker)
-2. `downloaded videos → preprocessing` (PreprocessingWorker)
-3. `preprocessed videos → scene detection` (SceneDetectionWorker) ← **Creates virtual clips**
+1. `new videos → download` (DownloadWorker)
+2. `downloaded videos → preprocess` (PreprocessWorker)
+3. `preprocessed videos → detect_scenes` (DetectScenesWorker) ← **Creates virtual clips**
 4. `approved virtual clips → export` (ExportWorker) ← **Batch export from gold master**
 5. `exported clips → keyframes` (KeyframeWorker)
 6. `keyframed clips → embeddings` (EmbeddingWorker)
@@ -388,9 +388,9 @@ Each stage is pure configuration:
 ### Virtual Clip Architecture
 
 - **`Videos`**: Source video lifecycle from submission through virtual clips creation
-  - **`Videos.Operations.Ingest`**: Video download and processing workflow
-  - **`Videos.Operations.Preprocessing`**: Gold master + review proxy generation with keyframe offsets
-  - **`Videos.Operations.SceneDetection`**: Python scene detection creating virtual clips (database records only)
+  - **`Videos.Operations.Download`**: Video download and processing workflow
+  - **`Videos.Operations.Preprocess`**: Gold master + review proxy generation with keyframe offsets
+  - **`Videos.Operations.DetectScenes`**: Python scene detection creating virtual clips (database records only)
 - **`Clips.Operations`**: Clip transformations and state management (semantic Edits/Artifacts/Export organization)
   - **`Clips.Operations.VirtualClips`**: Virtual clip creation and cut point management
   - **`Clips.Operations.Export`**: Final encoding from gold master to physical clips (batch processing)
@@ -409,9 +409,9 @@ Each stage is pure configuration:
 
 - **`Infrastructure`**: I/O adapters (S3, FFmpeg, Database) and shared worker behaviors with consistent interfaces and robust error handling
 - **Python Tasks**: 
-  - **`ingest.py`**: Quality-focused video download with conditional normalization for merge issue prevention
+  - **`download.py`**: Quality-focused video download with conditional normalization for merge issue prevention
   - **`download_handler.py`**: yt-dlp integration with best-quality-first strategy and intelligent fallback
-  - **`preprocessing.py`**: FFmpeg gold master + proxy generation with progress reporting
+  - **`preprocess.py`**: FFmpeg gold master + proxy generation with progress reporting
   - **`detect_scenes.py`**: OpenCV scene detection returning cut points for virtual clips
   - **`export_clips.py`**: Batch encoding from gold master to delivery-optimized MP4s
   - **`s3_handler.py`**: Centralized S3 operations with storage class optimization
@@ -478,11 +478,11 @@ Each stage is pure configuration:
 ### ✅ Completed (Virtual Clip Backend Pipeline)
 
 - **Database Schema**: Added virtual clip support with `is_virtual`, `cut_points`, proxy architecture columns
-- **PreprocessingWorker**: Creates lossless gold master + all-I-frame proxy + keyframe offsets  
-- **SceneDetectionWorker**: Creates virtual clips (database records) from proxy file analysis
+- **PreprocessWorker**: Creates lossless gold master + all-I-frame proxy + keyframe offsets  
+- **DetectScenesWorker**: Creates virtual clips (database records) from proxy file analysis
 - **VirtualClips Module**: Cut point validation and virtual clip database operations
 - **ExportWorker**: Batch export from gold master to final delivery MP4s
-- **Python Tasks**: `preprocessing.py`, updated `detect_scenes.py`, `export_clips.py`
+- **Python Tasks**: `preprocess.py`, updated `detect_scenes.py`, `export_clips.py`
 - **Pipeline Integration**: Updated `PipelineConfig` with new virtual clip stages
 - **Type Safety**: All Dialyzer warnings resolved, production-ready code quality
 - **Enhanced Download Workflow**: Quality-first download strategy with conditional normalization

@@ -37,7 +37,8 @@ defmodule Heaters.Clips.Operations.Export.Worker do
 
   use Heaters.Infrastructure.Orchestration.WorkerBehavior,
     queue: :media_processing,
-    unique: [period: 1800, fields: [:args]]  # 30 minutes for large exports
+    # 30 minutes for large exports
+    unique: [period: 1800, fields: [:args]]
 
   alias Heaters.Clips.Clip
   alias Heaters.Clips.Operations.Export.StateManager
@@ -58,7 +59,10 @@ defmodule Heaters.Clips.Operations.Export.Worker do
 
     case virtual_clips do
       [] ->
-        Logger.info("ExportWorker: No approved virtual clips found for source_video_id: #{source_video_id}")
+        Logger.info(
+          "ExportWorker: No approved virtual clips found for source_video_id: #{source_video_id}"
+        )
+
         :ok
 
       clips ->
@@ -71,12 +75,14 @@ defmodule Heaters.Clips.Operations.Export.Worker do
     import Ecto.Query
 
     # IDEMPOTENCY: Only get virtual clips that haven't been exported yet
-    query = from(c in Clip,
-      where: c.source_video_id == ^source_video_id and
-             c.is_virtual == true and
-             c.ingest_state == "review_approved",
-      preload: [:source_video]
-    )
+    query =
+      from(c in Clip,
+        where:
+          c.source_video_id == ^source_video_id and
+            c.is_virtual == true and
+            c.ingest_state == "review_approved",
+        preload: [:source_video]
+      )
 
     Heaters.Repo.all(query)
   end
@@ -92,7 +98,10 @@ defmodule Heaters.Clips.Operations.Export.Worker do
         mark_clips_export_failed(clips, error_msg)
 
       gold_master_path ->
-        Logger.info("ExportWorker: Processing #{length(clips)} clips from gold master: #{gold_master_path}")
+        Logger.info(
+          "ExportWorker: Processing #{length(clips)} clips from gold master: #{gold_master_path}"
+        )
+
         execute_batch_export(clips, source_video, gold_master_path)
     end
   end
@@ -104,7 +113,10 @@ defmodule Heaters.Clips.Operations.Export.Worker do
         run_export_task(updated_clips, source_video, gold_master_path)
 
       {:error, reason} ->
-        Logger.error("ExportWorker: Failed to transition clips to exporting state: #{inspect(reason)}")
+        Logger.error(
+          "ExportWorker: Failed to transition clips to exporting state: #{inspect(reason)}"
+        )
+
         {:error, reason}
     end
   end
@@ -182,20 +194,22 @@ defmodule Heaters.Clips.Operations.Export.Worker do
 
   defp update_clips_to_physical(clips, exported_clips, metadata) do
     # Create a map for quick lookup
-    exported_map = Map.new(exported_clips, fn clip_data ->
-      {Map.get(clip_data, "clip_id"), clip_data}
-    end)
+    exported_map =
+      Map.new(exported_clips, fn clip_data ->
+        {Map.get(clip_data, "clip_id"), clip_data}
+      end)
 
     # Update each clip to physical state
-    results = Enum.map(clips, fn clip ->
-      case Map.get(exported_map, clip.id) do
-        nil ->
-          {:error, "No export data for clip #{clip.id}"}
+    results =
+      Enum.map(clips, fn clip ->
+        case Map.get(exported_map, clip.id) do
+          nil ->
+            {:error, "No export data for clip #{clip.id}"}
 
-        export_data ->
-          update_single_clip_to_physical(clip, export_data, metadata)
-      end
-    end)
+          export_data ->
+            update_single_clip_to_physical(clip, export_data, metadata)
+        end
+      end)
 
     case Enum.find(results, &match?({:error, _}, &1)) do
       nil ->
@@ -216,10 +230,11 @@ defmodule Heaters.Clips.Operations.Export.Worker do
       is_virtual: false,
       clip_filepath: clip_filepath,
       ingest_state: "exported",
-      processing_metadata: Map.merge(clip.processing_metadata || %{}, %{
-        export_metadata: metadata,
-        exported_duration: duration
-      })
+      processing_metadata:
+        Map.merge(clip.processing_metadata || %{}, %{
+          export_metadata: metadata,
+          exported_duration: duration
+        })
     }
 
     case StateManager.complete_export(clip.id, update_attrs) do
@@ -240,7 +255,9 @@ defmodule Heaters.Clips.Operations.Export.Worker do
           Logger.debug("ExportWorker: Marked clip #{clip.id} as export_failed")
 
         {:error, db_error} ->
-          Logger.error("ExportWorker: Failed to mark clip #{clip.id} as failed: #{inspect(db_error)}")
+          Logger.error(
+            "ExportWorker: Failed to mark clip #{clip.id} as failed: #{inspect(db_error)}"
+          )
       end
     end)
 

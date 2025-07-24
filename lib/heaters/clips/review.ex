@@ -135,12 +135,18 @@ defmodule Heaters.Clips.Review do
   end
 
   @doc "Handle a **merge** request between *prev ⇠ current* clips."
-  def request_merge_and_fetch_next(%Clip{is_virtual: true} = prev_clip, %Clip{is_virtual: true} = curr_clip) do
+  def request_merge_and_fetch_next(
+        %Clip{is_virtual: true} = prev_clip,
+        %Clip{is_virtual: true} = curr_clip
+      ) do
     # VIRTUAL CLIPS: Instant merge via database cut point update
     handle_virtual_merge(prev_clip, curr_clip)
   end
 
-  def request_merge_and_fetch_next(%Clip{is_virtual: false} = prev_clip, %Clip{is_virtual: false} = curr_clip) do
+  def request_merge_and_fetch_next(
+        %Clip{is_virtual: false} = prev_clip,
+        %Clip{is_virtual: false} = curr_clip
+      ) do
     # PHYSICAL CLIPS: Use existing worker-based merge with buffer
     handle_physical_merge(prev_clip, curr_clip)
   end
@@ -175,16 +181,26 @@ defmodule Heaters.Clips.Review do
             from(c in Clip, where: c.id in [^prev_id, ^curr_id]),
             set: [
               reviewed_at: now,
-              ingest_state: "merged_virtual", # New state for tracking
+              # New state for tracking
+              ingest_state: "merged_virtual",
               grouped_with_clip_id: merged_clip.id
             ]
           )
 
-          Logger.info("Review: Instant virtual merge of clips #{prev_id} and #{curr_id} → #{merged_clip.id}")
+          Logger.info(
+            "Review: Instant virtual merge of clips #{prev_id} and #{curr_id} → #{merged_clip.id}"
+          )
 
           # Fetch next clip
           next_clip = fetch_next_pending_clip()
-          {next_clip, %{clip_id_source: curr_id, clip_id_target: prev_id, action: "virtual_merge", merged_clip_id: merged_clip.id}}
+
+          {next_clip,
+           %{
+             clip_id_source: curr_id,
+             clip_id_target: prev_id,
+             action: "virtual_merge",
+             merged_clip_id: merged_clip.id
+           }}
 
         {:error, reason} ->
           Logger.error("Review: Failed to create merged virtual clip: #{inspect(reason)}")
@@ -218,7 +234,9 @@ defmodule Heaters.Clips.Review do
            })
            |> Oban.insert(scheduled_at: buffer_time) do
         {:ok, _job} ->
-          Logger.info("Review: Enqueued physical merge worker for clips #{prev_id} and #{curr_id}")
+          Logger.info(
+            "Review: Enqueued physical merge worker for clips #{prev_id} and #{curr_id}"
+          )
 
         {:error, reason} ->
           Logger.error("Review: Failed to enqueue merge worker: #{inspect(reason)}")
@@ -276,12 +294,14 @@ defmodule Heaters.Clips.Review do
   end
 
   @doc "Handle a **split** request on `clip` at `frame_num`."
-  def request_split_and_fetch_next(%Clip{is_virtual: true} = clip, frame_num) when is_integer(frame_num) do
+  def request_split_and_fetch_next(%Clip{is_virtual: true} = clip, frame_num)
+      when is_integer(frame_num) do
     # VIRTUAL CLIPS: Instant split via database cut point update
     handle_virtual_split(clip, frame_num)
   end
 
-  def request_split_and_fetch_next(%Clip{is_virtual: false} = clip, frame_num) when is_integer(frame_num) do
+  def request_split_and_fetch_next(%Clip{is_virtual: false} = clip, frame_num)
+      when is_integer(frame_num) do
     # PHYSICAL CLIPS: Use existing worker-based split with buffer
     handle_physical_split(clip, frame_num)
   end
@@ -306,16 +326,27 @@ defmodule Heaters.Clips.Review do
                 from(c in Clip, where: c.id == ^clip_id),
                 set: [
                   reviewed_at: now,
-                  ingest_state: "split_virtual", # New state for tracking
-                  grouped_with_clip_id: first_clip.id # Reference to first split clip
+                  # New state for tracking
+                  ingest_state: "split_virtual",
+                  # Reference to first split clip
+                  grouped_with_clip_id: first_clip.id
                 ]
               )
 
-              Logger.info("Review: Instant virtual split of clip #{clip_id} at frame #{frame_num} → #{first_clip.id}, #{second_clip.id}")
+              Logger.info(
+                "Review: Instant virtual split of clip #{clip_id} at frame #{frame_num} → #{first_clip.id}, #{second_clip.id}"
+              )
 
               # Fetch next clip
               next_clip = fetch_next_pending_clip()
-              {next_clip, %{clip_id: clip_id, action: "virtual_split", frame: frame_num, new_clip_ids: [first_clip.id, second_clip.id]}}
+
+              {next_clip,
+               %{
+                 clip_id: clip_id,
+                 action: "virtual_split",
+                 frame: frame_num,
+                 new_clip_ids: [first_clip.id, second_clip.id]
+               }}
 
             {:error, reason} ->
               Logger.error("Review: Failed to create split virtual clips: #{inspect(reason)}")
@@ -323,7 +354,10 @@ defmodule Heaters.Clips.Review do
           end
 
         {:error, reason} ->
-          Logger.error("Review: Invalid split frame #{frame_num} for virtual clip #{clip_id}: #{reason}")
+          Logger.error(
+            "Review: Invalid split frame #{frame_num} for virtual clip #{clip_id}: #{reason}"
+          )
+
           Repo.rollback(reason)
       end
     end)
@@ -349,7 +383,9 @@ defmodule Heaters.Clips.Review do
            })
            |> Oban.insert(scheduled_at: buffer_time) do
         {:ok, _job} ->
-          Logger.info("Review: Enqueued physical split worker for clip #{clip_id} at frame #{frame_num}")
+          Logger.info(
+            "Review: Enqueued physical split worker for clip #{clip_id} at frame #{frame_num}"
+          )
 
         {:error, reason} ->
           Logger.error("Review: Failed to enqueue split worker: #{inspect(reason)}")
@@ -387,7 +423,9 @@ defmodule Heaters.Clips.Review do
     end
   end
 
-  defp handle_virtual_clip_undo(%Clip{ingest_state: "merged_virtual", grouped_with_clip_id: merged_clip_id} = clip) do
+  defp handle_virtual_clip_undo(
+         %Clip{ingest_state: "merged_virtual", grouped_with_clip_id: merged_clip_id} = clip
+       ) do
     # Undo virtual merge: delete merged clip and restore original clips
     Repo.transaction(fn ->
       # Delete the merged virtual clip
@@ -398,7 +436,8 @@ defmodule Heaters.Clips.Review do
       # Find other clips that were merged (they should have the same grouped_with_clip_id)
       merged_clips =
         from(c in Clip,
-          where: c.grouped_with_clip_id == ^merged_clip_id and c.ingest_state == "merged_virtual")
+          where: c.grouped_with_clip_id == ^merged_clip_id and c.ingest_state == "merged_virtual"
+        )
         |> Repo.all()
 
       # Restore all merged clips to pending_review
@@ -418,14 +457,18 @@ defmodule Heaters.Clips.Review do
     end)
   end
 
-  defp handle_virtual_clip_undo(%Clip{ingest_state: "split_virtual", grouped_with_clip_id: _first_split_id} = clip) do
+  defp handle_virtual_clip_undo(
+         %Clip{ingest_state: "split_virtual", grouped_with_clip_id: _first_split_id} = clip
+       ) do
     # Undo virtual split: delete split clips and restore original clip
     Repo.transaction(fn ->
       # Find and delete the split clips (they should have metadata indicating they came from this clip)
       split_clips =
         from(c in Clip,
-          where: c.is_virtual == true and
-                 fragment("?->>'split_from' = ?", c.processing_metadata, ^to_string(clip.id)))
+          where:
+            c.is_virtual == true and
+              fragment("?->>'split_from' = ?", c.processing_metadata, ^to_string(clip.id))
+        )
         |> Repo.all()
 
       split_clip_ids = Enum.map(split_clips, & &1.id)
@@ -444,7 +487,10 @@ defmodule Heaters.Clips.Review do
         ]
       )
 
-      Logger.info("Review: Undid virtual split for clip #{clip.id}, deleted split clips #{inspect(split_clip_ids)}")
+      Logger.info(
+        "Review: Undid virtual split for clip #{clip.id}, deleted split clips #{inspect(split_clip_ids)}"
+      )
+
       {:ok, 1}
     end)
   end
@@ -483,7 +529,9 @@ defmodule Heaters.Clips.Review do
     total_cancelled = merge_jobs_cancelled + split_jobs_cancelled
 
     if total_cancelled > 0 do
-      Logger.info("Review: Cancelled #{total_cancelled} pending physical clip jobs for clip #{clip_id}")
+      Logger.info(
+        "Review: Cancelled #{total_cancelled} pending physical clip jobs for clip #{clip_id}"
+      )
     end
 
     {:ok, total_cancelled}
@@ -500,10 +548,10 @@ defmodule Heaters.Clips.Review do
   Results are ordered by id ASC to make pagination deterministic even when
   background workers update timestamps.
   """
-  def for_source_video_with_sprites(source_video_id, exclude_id, page, page_size) 
+  def for_source_video_with_sprites(source_video_id, exclude_id, page, page_size)
       when not is_nil(source_video_id) do
     exclude_clause = if is_nil(exclude_id), do: true, else: dynamic([c], c.id != ^exclude_id)
-    
+
     Clip
     |> join(:inner, [c], ca in assoc(c, :clip_artifacts), on: ca.artifact_type == "sprite_sheet")
     |> where([c, _ca], c.source_video_id == ^source_video_id)
@@ -570,7 +618,7 @@ defmodule Heaters.Clips.Review do
       total_frames = end_frame - start_frame
       total_duration = end_time - start_time
       frames_to_split = split_frame - start_frame
-      time_to_split = start_time + (frames_to_split / total_frames) * total_duration
+      time_to_split = start_time + frames_to_split / total_frames * total_duration
 
       first_cut_points = %{
         "start_frame" => start_frame,

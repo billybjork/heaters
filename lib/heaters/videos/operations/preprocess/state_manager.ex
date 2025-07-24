@@ -1,4 +1,4 @@
-defmodule Heaters.Videos.Operations.Preprocessing.StateManager do
+defmodule Heaters.Videos.Operations.Preprocess.StateManager do
   @moduledoc """
   State management for the preprocessing workflow.
 
@@ -39,7 +39,8 @@ defmodule Heaters.Videos.Operations.Preprocessing.StateManager do
   @spec start_preprocessing(integer()) :: {:ok, SourceVideo.t()} | {:error, any()}
   def start_preprocessing(source_video_id) do
     with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id),
-         :ok <- validate_preprocessing_state_transition(source_video.ingest_state, "preprocessing") do
+         :ok <-
+           validate_preprocessing_state_transition(source_video.ingest_state, "preprocessing") do
       update_source_video(source_video, %{
         ingest_state: "preprocessing",
         last_error: nil
@@ -71,10 +72,11 @@ defmodule Heaters.Videos.Operations.Preprocessing.StateManager do
   @spec complete_preprocessing(integer(), map()) :: {:ok, SourceVideo.t()} | {:error, any()}
   def complete_preprocessing(source_video_id, update_attrs) do
     with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
-      final_attrs = Map.merge(update_attrs, %{
-        ingest_state: "preprocessed",
-        last_error: nil
-      })
+      final_attrs =
+        Map.merge(update_attrs, %{
+          ingest_state: "preprocessed",
+          last_error: nil
+        })
 
       update_source_video(source_video, final_attrs)
     end

@@ -179,7 +179,11 @@ defmodule Heaters.Clips.Operations.Edits.Split do
         # S3.download_file returns string errors, check if it's a 404-type error
         if String.contains?(error_string, "404") or String.contains?(error_string, "not found") do
           Logger.error("Split: Original clip file not found in S3: #{clip.clip_filepath}")
-          Logger.error("Split: This may indicate the file was already deleted by a previous split operation")
+
+          Logger.error(
+            "Split: This may indicate the file was already deleted by a previous split operation"
+          )
+
           {:error, "Original clip file not found - may have been deleted by previous operation"}
         else
           Logger.error("Split: Failed to download clip file: #{error_string}")
@@ -427,7 +431,8 @@ defmodule Heaters.Clips.Operations.Edits.Split do
     end
   end
 
-  @spec fetch_existing_clips_by_identifiers(list(map())) :: {:ok, list(Clip.t())} | {:error, any()}
+  @spec fetch_existing_clips_by_identifiers(list(map())) ::
+          {:ok, list(Clip.t())} | {:error, any()}
   defp fetch_existing_clips_by_identifiers(clips_attrs) do
     identifiers = Enum.map(clips_attrs, & &1.clip_identifier)
 
@@ -512,7 +517,10 @@ defmodule Heaters.Clips.Operations.Edits.Split do
   defp check_split_idempotency(clip, split_at_frame) do
     case clip.ingest_state do
       "review_archived" ->
-        Logger.info("Split: Clip #{clip.id} already split (review_archived state), operation is idempotent")
+        Logger.info(
+          "Split: Clip #{clip.id} already split (review_archived state), operation is idempotent"
+        )
+
         {:error, :already_processed}
 
       _ ->
@@ -522,17 +530,22 @@ defmodule Heaters.Clips.Operations.Edits.Split do
             :ok
 
           {:ok, :existing_clips_found} ->
-            Logger.info("Split: Found existing split clips for clip_id: #{clip.id}, frame: #{split_at_frame}")
+            Logger.info(
+              "Split: Found existing split clips for clip_id: #{clip.id}, frame: #{split_at_frame}"
+            )
+
             {:error, :already_processed}
 
           {:error, reason} ->
             Logger.warning("Split: Error checking existing clips: #{inspect(reason)}")
-            :ok  # Continue with split operation if check fails
+            # Continue with split operation if check fails
+            :ok
         end
     end
   end
 
-  @spec check_existing_split_clips(Clip.t(), integer()) :: {:ok, :no_existing_clips | :existing_clips_found} | {:error, any()}
+  @spec check_existing_split_clips(Clip.t(), integer()) ::
+          {:ok, :no_existing_clips | :existing_clips_found} | {:error, any()}
   defp check_existing_split_clips(clip, split_at_frame) do
     # Generate expected clip identifiers for this split operation
     fps = extract_video_fps(clip)
@@ -543,7 +556,9 @@ defmodule Heaters.Clips.Operations.Edits.Split do
 
     # Expected identifiers for split segments
     before_identifier = "#{Utils.sanitize_filename(source_title)}_1_#{split_at_frame - 1}"
-    after_identifier = "#{Utils.sanitize_filename(source_title)}_#{split_at_frame}_#{total_frames}"
+
+    after_identifier =
+      "#{Utils.sanitize_filename(source_title)}_#{split_at_frame}_#{total_frames}"
 
     case DatabaseAdapter.check_clips_exist_by_identifiers([before_identifier, after_identifier]) do
       {:ok, existing_count} when existing_count > 0 ->

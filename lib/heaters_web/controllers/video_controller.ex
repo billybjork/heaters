@@ -1,9 +1,9 @@
 defmodule HeatersWeb.VideoController do
   use HeatersWeb, :controller
-  alias Heaters.Videos.Operations.Ingest
+  alias Heaters.Videos.Operations.Download
 
   def create(conn, %{"url" => url}) do
-    case Ingest.submit(url) do
+    case Download.submit(url) do
       :ok ->
         conn
         |> put_flash(:info, "Submitted!")

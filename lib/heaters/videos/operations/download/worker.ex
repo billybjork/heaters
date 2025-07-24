@@ -1,4 +1,4 @@
-defmodule Heaters.Videos.Operations.Ingest.Worker do
+defmodule Heaters.Videos.Operations.Download.Worker do
   use Heaters.Infrastructure.Orchestration.WorkerBehavior,
     queue: :media_processing,
     # 30 minutes, prevent duplicate jobs for same video
@@ -6,7 +6,7 @@ defmodule Heaters.Videos.Operations.Ingest.Worker do
 
   alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Infrastructure.PyRunner
-  alias Heaters.Videos.Operations.Ingest
+  alias Heaters.Videos.Operations.Download
   alias Heaters.Infrastructure.Orchestration.WorkerBehavior
   require Logger
 
@@ -30,12 +30,12 @@ defmodule Heaters.Videos.Operations.Ingest.Worker do
   end
 
   defp handle_ingest_work(%{"source_video_id" => source_video_id}) do
-    Logger.info("IngestWorker: Starting download for source_video_id: #{source_video_id}")
+    Logger.info("DownloadWorker: Starting download for source_video_id: #{source_video_id}")
 
     with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id),
          {:ok, updated_video} <- ensure_downloading_state(source_video) do
       Logger.info(
-        "IngestWorker: Running PyRunner for source_video_id: #{source_video_id}, URL: #{updated_video.original_url}"
+        "DownloadWorker: Running PyRunner for source_video_id: #{source_video_id}, URL: #{updated_video.original_url}"
       )
 
       # Python task constructs its own S3 path based on video title
@@ -44,49 +44,49 @@ defmodule Heaters.Videos.Operations.Ingest.Worker do
         input_source: updated_video.original_url
       }
 
-      case PyRunner.run("ingest", py_args, timeout: :timer.minutes(20)) do
+      case PyRunner.run("download", py_args, timeout: :timer.minutes(20)) do
         {:ok, result} ->
           Logger.info(
-            "IngestWorker: PyRunner succeeded for source_video_id: #{source_video_id}, result: #{inspect(result)}"
+            "DownloadWorker: PyRunner succeeded for source_video_id: #{source_video_id}, result: #{inspect(result)}"
           )
 
           # Elixir handles the state transition and metadata update
           # Convert string keys to atom keys for the metadata (recursively)
           metadata = convert_keys_to_atoms(result)
 
-          case Ingest.complete_downloading(source_video_id, metadata) do
+          case Download.complete_downloading(source_video_id, metadata) do
             {:ok, _updated_video} ->
               Logger.info(
-                "IngestWorker: Successfully completed download for source_video_id: #{source_video_id}"
+                "DownloadWorker: Successfully completed download for source_video_id: #{source_video_id}"
               )
 
               # Pipeline will automatically pick up videos in 'downloaded' state for splicing
               :ok
 
             {:error, reason} ->
-              Logger.error("IngestWorker: Failed to update video metadata: #{inspect(reason)}")
+              Logger.error("DownloadWorker: Failed to update video metadata: #{inspect(reason)}")
               {:error, reason}
           end
 
         {:error, reason} ->
           # If the python script fails, we use the new state management to record the error
           Logger.error(
-            "IngestWorker: PyRunner failed for source_video_id: #{source_video_id}, reason: #{inspect(reason)}"
+            "DownloadWorker: PyRunner failed for source_video_id: #{source_video_id}, reason: #{inspect(reason)}"
           )
 
-          case Ingest.mark_failed(updated_video, "download_failed", reason) do
+          case Download.mark_failed(updated_video, "download_failed", reason) do
             {:ok, _} ->
               {:error, reason}
 
             {:error, db_error} ->
-              Logger.error("IngestWorker: Failed to mark video as failed: #{inspect(db_error)}")
+              Logger.error("DownloadWorker: Failed to mark video as failed: #{inspect(db_error)}")
               {:error, reason}
           end
       end
     else
       {:error, reason} ->
         Logger.error(
-          "IngestWorker: Failed to prepare for download for source video #{source_video_id}: #{inspect(reason)}"
+          "DownloadWorker: Failed to prepare for download for source video #{source_video_id}: #{inspect(reason)}"
         )
 
         {:error, reason}
@@ -98,14 +98,14 @@ defmodule Heaters.Videos.Operations.Ingest.Worker do
     case source_video.ingest_state do
       "downloading" ->
         Logger.info(
-          "IngestWorker: Video #{source_video.id} already in downloading state, resuming"
+          "DownloadWorker: Video #{source_video.id} already in downloading state, resuming"
         )
 
         {:ok, source_video}
 
       _ ->
         # Transition to downloading state for new/failed videos
-        Ingest.start_downloading(source_video.id)
+        Download.start_downloading(source_video.id)
     end
   end
 

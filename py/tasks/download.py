@@ -1,5 +1,5 @@
 """
-Ingest Task - Download Only Workflow
+Download Task - Download Only Workflow
 
 This version focuses on downloading and storing original videos:
 - Downloads videos from URLs or copies local files  
@@ -24,7 +24,7 @@ from botocore.exceptions import ClientError, NoCredentialsError
 
 from py.utils.filename_utils import sanitize_filename
 # Import shared utility functions 
-from .preprocessing import validate_ffprobe_available, extract_video_metadata, validate_ffmpeg_available
+from .preprocess import validate_ffprobe_available, extract_video_metadata, validate_ffmpeg_available
 from .download_handler import (
     download_from_url,
     extract_download_metadata
@@ -111,14 +111,14 @@ def normalize_video(input_path: Path, output_path: Path) -> bool:
         return False
 
 
-def run_ingest(
+def run_download(
     source_video_id: int, 
     input_source: str, 
     **kwargs
 ):
     """
-    Ingest a source video: downloads original and stores in S3 without transcoding.
-    Transcoding happens later in preprocessing.py to avoid redundant operations.
+    Download a source video: downloads original and stores in S3 without transcoding.
+    Transcoding happens later in preprocess.py to avoid redundant operations.
     
     Args:
         source_video_id: The ID of the source video (for reference only)
@@ -128,7 +128,7 @@ def run_ingest(
     Returns:
         dict: Structured data about the original video including S3 path and metadata
     """
-    logger.info(f"RUNNING INGEST for source_video_id: {source_video_id}")
+    logger.info(f"RUNNING DOWNLOAD for source_video_id: {source_video_id}")
     logger.info(f"Input: '{input_source}'")
 
     # Get S3 resources from environment (provided by Elixir)
@@ -271,14 +271,14 @@ def run_ingest(
 
 def main():
     """Main entry point for standalone execution"""
-    parser = argparse.ArgumentParser(description="Ingest video download task")
+    parser = argparse.ArgumentParser(description="Download video task")
     parser.add_argument("--source-video-id", type=int, required=True)
     parser.add_argument("--input-source", required=True)
     
     args = parser.parse_args()
     
     try:
-        result = run_ingest(
+        result = run_download(
             args.source_video_id,
             args.input_source
         )

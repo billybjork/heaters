@@ -216,8 +216,8 @@ defmodule Heaters.Clips.Operations.Edits.Split.Calculations do
 
     Logger.debug(
       "Split: FPS calculation - sprite_fps: #{inspect(sprite_fps)}, " <>
-      "source_fps: #{inspect(source_fps)}, processing_fps: #{inspect(processing_fps)}, " <>
-      "selected_fps: #{selected_fps}"
+        "source_fps: #{inspect(source_fps)}, processing_fps: #{inspect(processing_fps)}, " <>
+        "selected_fps: #{selected_fps}"
     )
 
     selected_fps
@@ -339,14 +339,17 @@ defmodule Heaters.Clips.Operations.Edits.Split.Calculations do
         # Prioritize clip_fps_source to match sprite calculation logic
         metadata["clip_fps_source"] || metadata["clip_fps"]
 
-      _ -> nil
+      _ ->
+        nil
     end
   end
 
   defp extract_sprite_metadata_fps(_clip), do: nil
 
   @spec extract_source_video_fps(map()) :: float() | nil
-  defp extract_source_video_fps(%{source_video: %{fps: fps}}) when is_number(fps) and fps > 0, do: fps * 1.0
+  defp extract_source_video_fps(%{source_video: %{fps: fps}}) when is_number(fps) and fps > 0,
+    do: fps * 1.0
+
   defp extract_source_video_fps(_clip), do: nil
 
   @spec extract_fps_from_clip_fallback(map()) :: float() | nil

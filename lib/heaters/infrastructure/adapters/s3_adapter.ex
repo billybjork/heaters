@@ -245,8 +245,9 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
 
     # Use GLACIER storage for cost-effective cold storage of archival masters
     case S3.upload_file(local_video_path, s3_key,
-                       operation_name: "GoldMaster",
-                       storage_class: "GLACIER") do
+           operation_name: "GoldMaster",
+           storage_class: "GLACIER"
+         ) do
       {:ok, _} ->
         file_size = get_file_size(local_video_path)
 
@@ -282,8 +283,9 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
 
     # Use STANDARD storage for hot access during review
     case S3.upload_file(local_video_path, s3_key,
-                       operation_name: "ReviewProxy",
-                       storage_class: "STANDARD") do
+           operation_name: "ReviewProxy",
+           storage_class: "STANDARD"
+         ) do
       {:ok, _} ->
         file_size = get_file_size(local_video_path)
 
@@ -349,7 +351,8 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
       {:ok, binary_data} = S3Adapter.get_range("review_proxies/video.mp4", 1024, 2048)
   """
   @spec get_range(String.t(), integer(), integer()) :: {:ok, binary()} | {:error, any()}
-  def get_range(s3_key, start_byte, end_byte) when is_integer(start_byte) and is_integer(end_byte) do
+  def get_range(s3_key, start_byte, end_byte)
+      when is_integer(start_byte) and is_integer(end_byte) do
     case S3.get_bucket_name() do
       {:ok, bucket_name} ->
         clean_s3_key = String.trim_leading(s3_key, "/")
@@ -403,7 +406,9 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
           nil -> {:error, "CDN domain not configured"}
           domain -> {:ok, domain}
         end
-      domain -> {:ok, domain}
+
+      domain ->
+        {:ok, domain}
     end
   end
 end

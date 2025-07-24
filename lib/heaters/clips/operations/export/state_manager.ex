@@ -79,9 +79,10 @@ defmodule Heaters.Clips.Operations.Export.StateManager do
   @spec complete_export(integer(), map()) :: {:ok, Clip.t()} | {:error, any()}
   def complete_export(clip_id, update_attrs) do
     with {:ok, clip} <- ClipQueries.get_clip(clip_id) do
-      final_attrs = Map.merge(update_attrs, %{
-        last_error: nil
-      })
+      final_attrs =
+        Map.merge(update_attrs, %{
+          last_error: nil
+        })
 
       update_single_clip(clip, final_attrs)
     end
@@ -110,9 +111,7 @@ defmodule Heaters.Clips.Operations.Export.StateManager do
     with {:ok, clip} <- ClipQueries.get_clip(clip_id) do
       error_message = format_error_message(error_reason)
 
-      Logger.error(
-        "StateManager: Marking clip #{clip.id} as export_failed: #{error_message}"
-      )
+      Logger.error("StateManager: Marking clip #{clip.id} as export_failed: #{error_message}")
 
       update_single_clip(clip, %{
         ingest_state: "export_failed",
@@ -157,10 +156,11 @@ defmodule Heaters.Clips.Operations.Export.StateManager do
   end
 
   defp handle_batch_update_results(results) do
-    {successes, errors} = Enum.split_with(results, fn
-      {:ok, _} -> true
-      {:error, _} -> false
-    end)
+    {successes, errors} =
+      Enum.split_with(results, fn
+        {:ok, _} -> true
+        {:error, _} -> false
+      end)
 
     case errors do
       [] ->

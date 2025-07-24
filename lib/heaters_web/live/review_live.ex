@@ -321,8 +321,8 @@ defmodule HeatersWeb.ReviewLive do
 
   @doc false
   defp assign_siblings(socket, %Clip{} = clip, page) do
+    # Use virtual/physical-aware sibling query
     sibs =
-      # Use virtual/physical-aware sibling query
       for_source_video_siblings(
         clip.source_video_id,
         clip.id,
@@ -333,7 +333,7 @@ defmodule HeatersWeb.ReviewLive do
     assign(socket, siblings: sibs, sibling_page: page)
   end
 
-          @doc false
+  @doc false
   defp for_source_video_siblings(source_video_id, exclude_id, page, page_size) do
     # For now, use the original sprite-based query as fallback during transition
     # TODO: Enhance to fully support virtual clips once pipeline is stable

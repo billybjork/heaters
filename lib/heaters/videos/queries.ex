@@ -42,7 +42,8 @@ defmodule Heaters.Videos.Queries do
   """
   def get_videos_needing_preprocessing() do
     from(s in SourceVideo,
-      where: s.ingest_state == "downloaded" and is_nil(s.proxy_filepath))
+      where: s.ingest_state == "downloaded" and is_nil(s.proxy_filepath)
+    )
     |> Repo.all()
   end
 
@@ -52,7 +53,8 @@ defmodule Heaters.Videos.Queries do
   """
   def get_videos_needing_scene_detection() do
     from(s in SourceVideo,
-      where: not is_nil(s.proxy_filepath) and s.needs_splicing == true)
+      where: not is_nil(s.proxy_filepath) and s.needs_splicing == true
+    )
     |> Repo.all()
   end
 
@@ -62,11 +64,12 @@ defmodule Heaters.Videos.Queries do
   """
   def get_videos_needing_splice() do
     # Legacy splice workflow - only process videos that haven't entered the new preprocessing workflow
-    # Videos with proxy_filepath are in the new workflow and should be handled by SceneDetection instead
+    # Videos with proxy_filepath are in the new workflow and should be handled by DetectScenes instead
     states = ["downloaded", "splicing", "splicing_failed"]
 
-    from(s in SourceVideo, 
-      where: s.ingest_state in ^states and is_nil(s.proxy_filepath))
+    from(s in SourceVideo,
+      where: s.ingest_state in ^states and is_nil(s.proxy_filepath)
+    )
     |> Repo.all()
   end
 end

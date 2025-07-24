@@ -253,13 +253,14 @@ defmodule Heaters.Infrastructure.Adapters.DatabaseAdapter do
       :ok ->
         try do
           # Use ON CONFLICT DO NOTHING to handle duplicate clip_filepath gracefully
-          {_count, clips} = Repo.insert_all(
-            Clip,
-            clips_attrs,
-            returning: true,
-            on_conflict: :nothing,
-            conflict_target: :clip_filepath
-          )
+          {_count, clips} =
+            Repo.insert_all(
+              Clip,
+              clips_attrs,
+              returning: true,
+              on_conflict: :nothing,
+              conflict_target: :clip_filepath
+            )
 
           {:ok, clips}
         rescue
