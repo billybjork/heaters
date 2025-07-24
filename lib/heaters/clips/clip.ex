@@ -20,6 +20,10 @@ defmodule Heaters.Clips.Clip do
           action_committed_at: NaiveDateTime.t() | nil,
           is_virtual: boolean(),
           cut_points: map() | nil,
+          source_video_order: integer() | nil,
+          cut_point_version: integer() | nil,
+          created_by_user_id: integer() | nil,
+          last_modified_by_user_id: integer() | nil,
           source_video: Heaters.Videos.SourceVideo.t() | Ecto.Association.NotLoaded.t(),
           clip_artifacts:
             [Heaters.Clips.Operations.Artifacts.ClipArtifact.t()] | Ecto.Association.NotLoaded.t(),
@@ -48,6 +52,12 @@ defmodule Heaters.Clips.Clip do
     # Virtual clip fields
     field(:is_virtual, :boolean, default: false)
     field(:cut_points, :map)
+    
+    # MECE operation fields
+    field(:source_video_order, :integer)
+    field(:cut_point_version, :integer, default: 1)
+    field(:created_by_user_id, :integer)
+    field(:last_modified_by_user_id, :integer)
 
     belongs_to(:source_video, Heaters.Videos.SourceVideo)
     has_many(:clip_artifacts, Heaters.Clips.Operations.Artifacts.ClipArtifact)
@@ -78,7 +88,11 @@ defmodule Heaters.Clips.Clip do
       :grouped_with_clip_id,
       :action_committed_at,
       :is_virtual,
-      :cut_points
+      :cut_points,
+      :source_video_order,
+      :cut_point_version,
+      :created_by_user_id,
+      :last_modified_by_user_id
     ])
     |> validate_required([:source_video_id, :clip_identifier, :ingest_state])
     |> validate_virtual_clip_requirements()

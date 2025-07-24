@@ -82,8 +82,11 @@ defmodule Heaters.DataCase do
   end
 
   def insert(:clip, attrs) do
-    source_video = Map.get(attrs, :source_video) || insert(:source_video)
-    attrs = Map.delete(attrs, :source_video)
+    # Handle both keyword lists and maps
+    attrs_map = if is_list(attrs), do: Enum.into(attrs, %{}), else: attrs
+    
+    source_video = Map.get(attrs_map, :source_video) || insert(:source_video)
+    attrs_map = Map.delete(attrs_map, :source_video)
 
     default_attrs = %{
       clip_identifier: "test_clip_#{System.unique_integer()}",
@@ -98,7 +101,52 @@ defmodule Heaters.DataCase do
       updated_at: DateTime.utc_now()
     }
 
-    attrs = Map.merge(default_attrs, Enum.into(attrs, %{}))
+    attrs = Map.merge(default_attrs, attrs_map)
+
+    %Heaters.Clips.Clip{}
+    |> Heaters.Clips.Clip.changeset(attrs)
+    |> Heaters.Repo.insert!()
+  end
+
+  def insert(:virtual_clip, attrs) do
+    import Ecto.Query
+    
+    # Handle both keyword lists and maps
+    attrs_map = if is_list(attrs), do: Enum.into(attrs, %{}), else: attrs
+    
+    source_video = Map.get(attrs_map, :source_video) || insert(:source_video)
+    attrs_map = Map.delete(attrs_map, :source_video)
+
+    # Generate unique order if not provided
+    source_video_order = Map.get(attrs_map, :source_video_order) || 
+      (Heaters.Repo.aggregate(
+        from(c in Heaters.Clips.Clip, 
+          where: c.source_video_id == ^source_video.id and c.is_virtual == true
+        ), :count, :id
+      ) + 1)
+
+    default_attrs = %{
+      clip_identifier: "virtual_clip_#{System.unique_integer()}",
+      start_frame: 0,
+      end_frame: 300,
+      start_time_seconds: 0.0,
+      end_time_seconds: 10.0,
+      ingest_state: "pending_review",
+      source_video_id: source_video.id,
+      is_virtual: true,
+      source_video_order: source_video_order,
+      cut_point_version: 1,
+      cut_points: %{
+        "start_frame" => 0,
+        "end_frame" => 300,
+        "start_time_seconds" => 0.0,
+        "end_time_seconds" => 10.0
+      },
+      inserted_at: DateTime.utc_now(),
+      updated_at: DateTime.utc_now()
+    }
+
+    attrs = Map.merge(default_attrs, attrs_map)
 
     %Heaters.Clips.Clip{}
     |> Heaters.Clips.Clip.changeset(attrs)
