@@ -60,7 +60,7 @@ defmodule Heaters.Videos.Download.Worker do
                 "DownloadWorker: Successfully completed download for source_video_id: #{source_video_id}"
               )
 
-              # Pipeline will automatically pick up videos in 'downloaded' state for splicing
+              # Pipeline will automatically pick up videos in 'downloaded' state for preprocessing
               :ok
 
             {:error, reason} ->

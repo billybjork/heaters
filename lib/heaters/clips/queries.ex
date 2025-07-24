@@ -15,16 +15,7 @@ defmodule Heaters.Clips.Queries do
     |> Repo.all()
   end
 
-  @doc """
-  Get all clips that need sprite generation (spliced, generating_sprite, or sprite_failed).
-  This enables resumable processing of interrupted jobs.
-  """
-  def get_clips_needing_sprites() do
-    states = ["spliced", "generating_sprite", "sprite_failed"]
 
-    from(c in Clip, where: c.ingest_state in ^states)
-    |> Repo.all()
-  end
 
   @doc """
   Get all clips that need keyframe extraction (review_approved, keyframing, or keyframe_failed).

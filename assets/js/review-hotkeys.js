@@ -16,12 +16,11 @@
 //  * Press ENTER while a letter is armed → commits the action.
 //      - If ID-mode (⇧+Space) is ON and the action is merge or group,
 //        the value in the numeric input is sent as `target_id`.
-//  * Split-mode is handled in sprite-player.js; ENTER commits a split.
 //  * Press ⌘/Ctrl+Z to undo the last action.
 //  * Press ⇧+Space to toggle ID-mode (shows sibling grid + ID box).
 //  * While in ID-mode, ⇧+←/→ paginate the sibling grid (unless in split-mode).
 
-import { SplitManager } from "./split-manager";
+
 
 export const ReviewHotkeys = {
   mounted() {
@@ -46,13 +45,8 @@ export const ReviewHotkeys = {
       }
 
       // ─────────────── Pagination in ID-mode ───────────────
-      // Shift+ArrowRight/Left pages the sibling grid, but only when not splitting
+      // Shift+ArrowRight/Left pages the sibling grid
       if (this.idMode && e.shiftKey && !e.ctrlKey && !e.metaKey) {
-        // If we’re in split-mode, let split‐manager have the arrows
-        if (SplitManager.splitMode) {
-          return;
-        }
-
         const sibSection = document.getElementById("siblings");
         if (sibSection) {
           const page = parseInt(sibSection.dataset.siblingPage, 10);
@@ -111,14 +105,8 @@ export const ReviewHotkeys = {
         return;
       }
 
-      // 2) ENTER commits either split or the armed action
+      // 2) ENTER commits the armed action
       if (e.key === "Enter") {
-        // Split-mode has priority
-        if (SplitManager.splitMode) {
-          SplitManager.commit((evt, data) => this.pushEvent(evt, data));
-          e.preventDefault();
-          return;
-        }
         // If a letter is armed, commit that action
         if (this.armed) {
           const action  = this.keyMap[this.armed];

@@ -2,7 +2,6 @@ import { Socket } from "phoenix"
 import { LiveSocket } from "phoenix_live_view"
 
 import { ReviewHotkeys } from "./review-hotkeys"
-import { SpritePlayerController } from "./sprite-player"
 import { WebCodecsPlayerController } from "./webcodecs-player"
 import { HoverPlay, ThumbHoverPlayer } from "./hover-play";
 
@@ -14,7 +13,6 @@ let csrfToken = document
 // Build the hooks object matching your `phx-hook` names in templates
 let Hooks = {
   ReviewHotkeys,
-  SpritePlayer: SpritePlayerController,
   WebCodecsPlayer: WebCodecsPlayerController,
   ThumbHoverPlayer,
   HoverPlay

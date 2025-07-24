@@ -166,10 +166,10 @@ defmodule Heaters.Videos.Download do
     valid_transitions = %{
       "new" => ["downloading"],
       "downloading" => ["downloaded", "download_failed"],
-      "downloaded" => ["splicing"],
-      "splicing" => ["spliced", "splice_failed"],
+      "downloaded" => ["preprocess"],
       "download_failed" => ["downloading"],
-      "splice_failed" => ["splicing"]
+      "preprocess" => ["preprocessed", "preprocess_failed"],
+      "preprocess_failed" => ["preprocess"]
     }
 
     case Map.get(valid_transitions, current_state) do

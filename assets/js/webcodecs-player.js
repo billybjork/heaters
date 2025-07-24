@@ -9,7 +9,7 @@
  * Automatic fallback to <video> element when WebCodecs is unavailable.
  */
 
-import { SplitManager } from "./split-manager";
+
 
 /* ────────────────────────────────────────────────────────────────────────── */
 /*  Phoenix Hook – WebCodecs player controller                               */
@@ -78,14 +78,7 @@ export const WebCodecsPlayerController = {
       );
     }
 
-    /* Split-button */
-    splitBtn?.addEventListener("click", () => {
-      if (!SplitManager.splitMode) {
-        SplitManager.enter(this.player, splitBtn);
-      } else {
-        SplitManager.commit((evt, payload) => this.pushEvent(evt, payload));
-      }
-    });
+    /* Split functionality removed - transitioning to virtual clips */
 
     /* Click on player area toggles play/pause */
     this._onViewerClick = () => this.player.togglePlayback();
@@ -100,15 +93,7 @@ export const WebCodecsPlayerController = {
         return;
       }
 
-      /* Arrow keys drive split mode */
-      if (evt.key === "ArrowLeft" || evt.key === "ArrowRight") {
-        evt.preventDefault();
-        if (!SplitManager.splitMode) SplitManager.enter(this.player, splitBtn);
-        SplitManager.nudge(evt.key === "ArrowLeft" ? -1 : +1);
-        return;
-      }
-
-      if (evt.key === "Escape") SplitManager.exit();
+      /* Arrow key navigation removed - will be replaced with cut point management */
     };
     window.addEventListener("keydown", this._onKey);
 

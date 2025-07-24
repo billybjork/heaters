@@ -58,18 +58,5 @@ defmodule Heaters.Videos.Queries do
     |> Repo.all()
   end
 
-  @doc """
-  Get all source videos that need splice processing (downloaded, splicing, or splicing_failed).
-  This enables resumable processing of interrupted jobs.
-  """
-  def get_videos_needing_splice() do
-    # Legacy splice workflow - only process videos that haven't entered the new preprocessing workflow
-    # Videos with proxy_filepath are in the new workflow and should be handled by DetectScenes instead
-    states = ["downloaded", "splicing", "splicing_failed"]
 
-    from(s in SourceVideo,
-      where: s.ingest_state in ^states and is_nil(s.proxy_filepath)
-    )
-    |> Repo.all()
-  end
 end
