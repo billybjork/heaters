@@ -42,7 +42,7 @@ defmodule Heaters.Clips.Export.Worker do
 
   alias Heaters.Clips.Clip
   alias Heaters.Clips.Export.StateManager
-  alias Heaters.Infrastructure.Orchestration.WorkerBehavior
+  alias Heaters.Infrastructure.Orchestration.{WorkerBehavior, FFmpegConfig}
   alias Heaters.Infrastructure.PyRunner
   require Logger
 
@@ -122,12 +122,16 @@ defmodule Heaters.Clips.Export.Worker do
   end
 
   defp run_export_task(clips, source_video, gold_master_path) do
+    # Get FFmpeg configuration for final export
+    final_export_args = FFmpegConfig.get_args(:final_export)
+
     # Prepare export arguments for Python task
     export_args = %{
       source_video_id: source_video.id,
       gold_master_path: gold_master_path,
       clips_data: prepare_clips_data(clips),
-      video_title: source_video.title
+      video_title: source_video.title,
+      final_export_args: final_export_args
     }
 
     Logger.info("ExportWorker: Running Python export with #{length(clips)} clips")

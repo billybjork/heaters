@@ -24,9 +24,12 @@ defmodule Heaters.Clips.VirtualClipsTest do
         }
       ]
 
-      assert {:ok, clips} = VirtualClips.create_virtual_clips_from_cut_points(
-        source_video.id, cut_points, %{}
-      )
+      assert {:ok, clips} =
+               VirtualClips.create_virtual_clips_from_cut_points(
+                 source_video.id,
+                 cut_points,
+                 %{}
+               )
 
       assert length(clips) == 2
 
@@ -57,14 +60,20 @@ defmodule Heaters.Clips.VirtualClipsTest do
       ]
 
       # First call creates clips
-      assert {:ok, clips1} = VirtualClips.create_virtual_clips_from_cut_points(
-        source_video.id, cut_points, %{}
-      )
+      assert {:ok, clips1} =
+               VirtualClips.create_virtual_clips_from_cut_points(
+                 source_video.id,
+                 cut_points,
+                 %{}
+               )
 
       # Second call returns existing clips
-      assert {:ok, clips2} = VirtualClips.create_virtual_clips_from_cut_points(
-        source_video.id, cut_points, %{}
-      )
+      assert {:ok, clips2} =
+               VirtualClips.create_virtual_clips_from_cut_points(
+                 source_video.id,
+                 cut_points,
+                 %{}
+               )
 
       assert length(clips1) == 1
       assert length(clips2) == 1
@@ -83,9 +92,12 @@ defmodule Heaters.Clips.VirtualClipsTest do
         }
       ]
 
-      assert {:error, reason} = VirtualClips.create_virtual_clips_from_cut_points(
-        source_video.id, invalid_cut_points, %{}
-      )
+      assert {:error, reason} =
+               VirtualClips.create_virtual_clips_from_cut_points(
+                 source_video.id,
+                 invalid_cut_points,
+                 %{}
+               )
 
       assert reason =~ "Missing required field: end_frame"
     end
@@ -97,23 +109,27 @@ defmodule Heaters.Clips.VirtualClipsTest do
       user_id = 123
 
       # Create initial virtual clip
-      initial_clip = insert(:virtual_clip,
-        source_video: source_video,
-        start_frame: 0,
-        end_frame: 300,
-        cut_points: %{
-          "start_frame" => 0,
-          "end_frame" => 300,
-          "start_time_seconds" => 0.0,
-          "end_time_seconds" => 10.0
-        },
-        source_video_order: 1
-      )
+      initial_clip =
+        insert(:virtual_clip,
+          source_video: source_video,
+          start_frame: 0,
+          end_frame: 300,
+          cut_points: %{
+            "start_frame" => 0,
+            "end_frame" => 300,
+            "start_time_seconds" => 0.0,
+            "end_time_seconds" => 10.0
+          },
+          source_video_order: 1
+        )
 
       # Split at frame 150
-      assert {:ok, {first_clip, second_clip}} = VirtualClips.add_cut_point(
-        source_video.id, 150, user_id
-      )
+      assert {:ok, {first_clip, second_clip}} =
+               VirtualClips.add_cut_point(
+                 source_video.id,
+                 150,
+                 user_id
+               )
 
       # Original clip should be archived
       updated_original = Repo.get!(Clip, initial_clip.id)
@@ -140,28 +156,37 @@ defmodule Heaters.Clips.VirtualClipsTest do
       source_video = insert(:source_video)
       user_id = 123
 
-      clip = insert(:virtual_clip,
-        source_video: source_video,
-        start_frame: 100,
-        end_frame: 200,
-        cut_points: %{
-          "start_frame" => 100,
-          "end_frame" => 200,
-          "start_time_seconds" => 3.33,
-          "end_time_seconds" => 6.67
-        }
-      )
+      clip =
+        insert(:virtual_clip,
+          source_video: source_video,
+          start_frame: 100,
+          end_frame: 200,
+          cut_points: %{
+            "start_frame" => 100,
+            "end_frame" => 200,
+            "start_time_seconds" => 3.33,
+            "end_time_seconds" => 6.67
+          }
+        )
 
       # Try to split at start frame (should fail)
-      assert {:error, reason} = VirtualClips.add_cut_point(
-        source_video.id, 100, user_id
-      )
+      assert {:error, reason} =
+               VirtualClips.add_cut_point(
+                 source_video.id,
+                 100,
+                 user_id
+               )
+
       assert reason =~ "is at or before clip start"
 
       # Try to split at end frame (should fail)
-      assert {:error, reason} = VirtualClips.add_cut_point(
-        source_video.id, 200, user_id
-      )
+      assert {:error, reason} =
+               VirtualClips.add_cut_point(
+                 source_video.id,
+                 200,
+                 user_id
+               )
+
       assert reason =~ "is at or after clip end"
     end
 
@@ -182,9 +207,13 @@ defmodule Heaters.Clips.VirtualClipsTest do
       )
 
       # Try to split at frame outside any clip
-      assert {:error, reason} = VirtualClips.add_cut_point(
-        source_video.id, 50, user_id
-      )
+      assert {:error, reason} =
+               VirtualClips.add_cut_point(
+                 source_video.id,
+                 50,
+                 user_id
+               )
+
       assert reason =~ "No virtual clip contains frame 50"
     end
   end
@@ -195,36 +224,41 @@ defmodule Heaters.Clips.VirtualClipsTest do
       user_id = 123
 
       # Create two adjacent clips
-      first_clip = insert(:virtual_clip,
-        source_video: source_video,
-        start_frame: 0,
-        end_frame: 150,
-        cut_points: %{
-          "start_frame" => 0,
-          "end_frame" => 150,
-          "start_time_seconds" => 0.0,
-          "end_time_seconds" => 5.0
-        },
-        source_video_order: 1
-      )
+      first_clip =
+        insert(:virtual_clip,
+          source_video: source_video,
+          start_frame: 0,
+          end_frame: 150,
+          cut_points: %{
+            "start_frame" => 0,
+            "end_frame" => 150,
+            "start_time_seconds" => 0.0,
+            "end_time_seconds" => 5.0
+          },
+          source_video_order: 1
+        )
 
-      second_clip = insert(:virtual_clip,
-        source_video: source_video,
-        start_frame: 150,
-        end_frame: 300,
-        cut_points: %{
-          "start_frame" => 150,
-          "end_frame" => 300,
-          "start_time_seconds" => 5.0,
-          "end_time_seconds" => 10.0
-        },
-        source_video_order: 2
-      )
+      second_clip =
+        insert(:virtual_clip,
+          source_video: source_video,
+          start_frame: 150,
+          end_frame: 300,
+          cut_points: %{
+            "start_frame" => 150,
+            "end_frame" => 300,
+            "start_time_seconds" => 5.0,
+            "end_time_seconds" => 10.0
+          },
+          source_video_order: 2
+        )
 
       # Remove cut point at frame 150
-      assert {:ok, merged_clip} = VirtualClips.remove_cut_point(
-        source_video.id, 150, user_id
-      )
+      assert {:ok, merged_clip} =
+               VirtualClips.remove_cut_point(
+                 source_video.id,
+                 150,
+                 user_id
+               )
 
       # Original clips should be archived
       updated_first = Repo.get!(Clip, first_clip.id)
@@ -265,9 +299,13 @@ defmodule Heaters.Clips.VirtualClipsTest do
       )
 
       # Try to remove cut point that doesn't exist between clips
-      assert {:error, reason} = VirtualClips.remove_cut_point(
-        source_video.id, 100, user_id
-      )
+      assert {:error, reason} =
+               VirtualClips.remove_cut_point(
+                 source_video.id,
+                 100,
+                 user_id
+               )
+
       assert reason =~ "No clip ends at frame 100"
     end
   end
@@ -278,34 +316,40 @@ defmodule Heaters.Clips.VirtualClipsTest do
       user_id = 123
 
       # Create two adjacent clips
-      first_clip = insert(:virtual_clip,
-        source_video: source_video,
-        start_frame: 0,
-        end_frame: 150,
-        cut_points: %{
-          "start_frame" => 0,
-          "end_frame" => 150,
-          "start_time_seconds" => 0.0,
-          "end_time_seconds" => 5.0
-        }
-      )
+      first_clip =
+        insert(:virtual_clip,
+          source_video: source_video,
+          start_frame: 0,
+          end_frame: 150,
+          cut_points: %{
+            "start_frame" => 0,
+            "end_frame" => 150,
+            "start_time_seconds" => 0.0,
+            "end_time_seconds" => 5.0
+          }
+        )
 
-      second_clip = insert(:virtual_clip,
-        source_video: source_video,
-        start_frame: 150,
-        end_frame: 300,
-        cut_points: %{
-          "start_frame" => 150,
-          "end_frame" => 300,
-          "start_time_seconds" => 5.0,
-          "end_time_seconds" => 10.0
-        }
-      )
+      second_clip =
+        insert(:virtual_clip,
+          source_video: source_video,
+          start_frame: 150,
+          end_frame: 300,
+          cut_points: %{
+            "start_frame" => 150,
+            "end_frame" => 300,
+            "start_time_seconds" => 5.0,
+            "end_time_seconds" => 10.0
+          }
+        )
 
       # Move cut point from 150 to 180
-      assert {:ok, {updated_first, updated_second}} = VirtualClips.move_cut_point(
-        source_video.id, 150, 180, user_id
-      )
+      assert {:ok, {updated_first, updated_second}} =
+               VirtualClips.move_cut_point(
+                 source_video.id,
+                 150,
+                 180,
+                 user_id
+               )
 
       # First clip should be extended
       assert updated_first.id == first_clip.id
@@ -355,15 +399,25 @@ defmodule Heaters.Clips.VirtualClipsTest do
       )
 
       # Try to move cut point beyond first clip start
-      assert {:error, reason} = VirtualClips.move_cut_point(
-        source_video.id, 150, -10, user_id
-      )
+      assert {:error, reason} =
+               VirtualClips.move_cut_point(
+                 source_video.id,
+                 150,
+                 -10,
+                 user_id
+               )
+
       assert reason =~ "would be at or before first clip start"
 
       # Try to move cut point beyond second clip end
-      assert {:error, reason} = VirtualClips.move_cut_point(
-        source_video.id, 150, 350, user_id
-      )
+      assert {:error, reason} =
+               VirtualClips.move_cut_point(
+                 source_video.id,
+                 150,
+                 350,
+                 user_id
+               )
+
       assert reason =~ "would be at or after second clip end"
     end
   end
@@ -441,7 +495,8 @@ defmodule Heaters.Clips.VirtualClipsTest do
       insert(:virtual_clip,
         source_video: source_video,
         cut_points: %{
-          "start_frame" => 120,  # Gap from 100 to 120
+          # Gap from 100 to 120
+          "start_frame" => 120,
           "end_frame" => 200,
           "start_time_seconds" => 4.0,
           "end_time_seconds" => 6.67
@@ -505,7 +560,8 @@ defmodule Heaters.Clips.VirtualClipsTest do
       insert(:virtual_clip,
         source_video: source_video,
         cut_points: %{
-          "start_frame" => 30,  # Doesn't start at 0
+          # Doesn't start at 0
+          "start_frame" => 30,
           "end_frame" => 300,
           "start_time_seconds" => 1.0,
           "end_time_seconds" => 10.0
@@ -523,7 +579,8 @@ defmodule Heaters.Clips.VirtualClipsTest do
         source_video: source_video,
         cut_points: %{
           "start_frame" => 0,
-          "end_frame" => 270,  # Ends before video end
+          # Ends before video end
+          "end_frame" => 270,
           "start_time_seconds" => 0.0,
           "end_time_seconds" => 9.0
         }
@@ -536,14 +593,15 @@ defmodule Heaters.Clips.VirtualClipsTest do
 
   describe "update_virtual_clip_cut_points/2" do
     test "updates cut points for virtual clip" do
-      clip = insert(:virtual_clip,
-        cut_points: %{
-          "start_frame" => 0,
-          "end_frame" => 100,
-          "start_time_seconds" => 0.0,
-          "end_time_seconds" => 3.33
-        }
-      )
+      clip =
+        insert(:virtual_clip,
+          cut_points: %{
+            "start_frame" => 0,
+            "end_frame" => 100,
+            "start_time_seconds" => 0.0,
+            "end_time_seconds" => 3.33
+          }
+        )
 
       new_cut_points = %{
         "start_frame" => 0,
@@ -552,9 +610,11 @@ defmodule Heaters.Clips.VirtualClipsTest do
         "end_time_seconds" => 4.0
       }
 
-      assert {:ok, updated_clip} = VirtualClips.update_virtual_clip_cut_points(
-        clip.id, new_cut_points
-      )
+      assert {:ok, updated_clip} =
+               VirtualClips.update_virtual_clip_cut_points(
+                 clip.id,
+                 new_cut_points
+               )
 
       assert updated_clip.cut_points == new_cut_points
       assert updated_clip.end_frame == 120
@@ -571,9 +631,12 @@ defmodule Heaters.Clips.VirtualClipsTest do
         "end_time_seconds" => 4.0
       }
 
-      assert {:error, reason} = VirtualClips.update_virtual_clip_cut_points(
-        clip.id, new_cut_points
-      )
+      assert {:error, reason} =
+               VirtualClips.update_virtual_clip_cut_points(
+                 clip.id,
+                 new_cut_points
+               )
+
       assert reason =~ "Cannot update cut points for physical clip"
     end
   end

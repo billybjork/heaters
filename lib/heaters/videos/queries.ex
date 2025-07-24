@@ -57,6 +57,4 @@ defmodule Heaters.Videos.Queries do
     )
     |> Repo.all()
   end
-
-
 end

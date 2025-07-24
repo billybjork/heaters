@@ -15,59 +15,49 @@ defmodule Heaters.Clips.Shared.FFmpegRunner do
   import FFmpex
   use FFmpex.Options
 
+  alias Heaters.Infrastructure.Orchestration.FFmpegConfig
+
   @type ffmpeg_result :: {:ok, integer()} | {:error, any()}
   @type metadata_result :: {:ok, map()} | {:error, any()}
 
-  # Standard video encoding settings used across operations
-  # Conservative settings for 4K video to avoid resource exhaustion
-  @video_codec "libx264"
-  # Changed from "medium" to "fast" for lower CPU usage
-  @video_preset "fast"
-  # Changed from "23" to "25" for lower quality but faster encoding
-  @video_crf 25
-  @video_pix_fmt "yuv420p"
-  @audio_codec "aac"
-  @audio_bitrate "128k"
-
   @doc """
-  Creates a video clip with standardized encoding settings.
+  Creates a video clip with encoding settings from FFmpegConfig.
 
-  Replicates the FFmpeg command used in clip creation operations:
-  ffmpeg -ss start_time -i input -t duration
-    -map 0:v:0? -map 0:a:0?
-    -c:v libx264 -preset fast -crf 25 -pix_fmt yuv420p
-    -c:a aac -b:a 128k
-    -movflags +faststart -y output
-
-  Note: The -ss option is applied to the input file for efficient seeking,
-  especially important for clips that start mid-video.
+  Uses the keyframe_extraction profile by default for internal operations,
+  but can be customized with the :profile option.
 
   ## Parameters
   - `input_path`: Path to input video file
   - `output_path`: Path for output video clip
   - `start_time`: Start time in seconds (float)
   - `end_time`: End time in seconds (float)
+  - `opts`: Optional parameters
+    - `:profile` - FFmpeg profile to use (default: :keyframe_extraction)
 
   ## Returns
   - `{:ok, file_size}` on success with output file size in bytes
   - `{:error, reason}` on failure
   """
-  @spec create_video_clip(String.t(), String.t(), float(), float()) :: ffmpeg_result()
-  def create_video_clip(input_path, output_path, start_time, end_time) do
+  @spec create_video_clip(String.t(), String.t(), float(), float(), keyword()) :: ffmpeg_result()
+  def create_video_clip(input_path, output_path, start_time, end_time, opts \\ []) do
     try do
+      # Get encoding profile configuration
+      profile = Keyword.get(opts, :profile, :keyframe_extraction)
+      config = FFmpegConfig.get_profile_config(profile)
+
       # Convert float times to strings for FFmpex compatibility
       start_time_str = Float.to_string(start_time)
       duration = end_time - start_time
       duration_str = Float.to_string(duration)
 
       Logger.debug(
-        "FFmpegRunner: Creating video clip with FFmpex - start_time=#{start_time}, duration=#{duration}"
+        "FFmpegRunner: Creating video clip with profile #{profile} - start_time=#{start_time}, duration=#{duration}"
       )
 
       # Additional validation for very short clips
       if duration < 1.0 do
         Logger.debug(
-          "FFmpegRunner: Creating short clip (#{duration}s) - using optimized settings"
+          "FFmpegRunner: Creating short clip (#{duration}s) - using profile: #{profile}"
         )
       end
 
@@ -79,16 +69,7 @@ defmodule Heaters.Clips.Shared.FFmpegRunner do
         |> add_file_option(option_t(duration_str))
         |> add_file_option(option_map("0:v:0?"))
         |> add_file_option(option_map("0:a:0?"))
-        |> add_stream_specifier(stream_type: :video)
-        |> add_stream_option(option_c(@video_codec))
-        |> add_file_option(option_preset(@video_preset))
-        |> add_file_option(option_crf(to_string(@video_crf)))
-        |> add_file_option(option_pix_fmt(@video_pix_fmt))
-        |> add_stream_specifier(stream_type: :audio)
-        |> add_stream_option(option_c(@audio_codec))
-        |> add_stream_option(option_b(@audio_bitrate))
-        |> add_file_option(option_movflags("+faststart"))
-        |> add_file_option(option_threads("2"))
+        |> add_profile_encoding_options(config)
         |> add_global_option(option_y())
 
       execute_and_get_file_size(command, output_path)
@@ -98,8 +79,6 @@ defmodule Heaters.Clips.Shared.FFmpegRunner do
         {:error, "Exception creating video clip: #{inspect(e)}"}
     end
   end
-
-
 
   @doc """
   Extracts comprehensive video metadata using ffprobe.
@@ -224,6 +203,60 @@ defmodule Heaters.Clips.Shared.FFmpegRunner do
 
   ## Private helper functions
 
+  @spec add_profile_encoding_options(FFmpex.Command.t(), map()) :: FFmpex.Command.t()
+  defp add_profile_encoding_options(command, config) do
+    command
+    |> add_video_encoding_options(config.video)
+    |> add_audio_encoding_options(config[:audio])
+    |> add_web_optimization_options(config[:web_optimization])
+    |> add_threading_options(config[:threading])
+  end
+
+  defp add_video_encoding_options(command, video_config) do
+    command
+    |> add_stream_specifier(stream_type: :video)
+    |> add_stream_option(option_c(video_config.codec))
+    |> add_optional_file_option(&option_preset/1, video_config[:preset])
+    |> add_optional_file_option(&option_crf/1, video_config[:crf])
+    |> add_optional_file_option(&option_pix_fmt/1, video_config[:pix_fmt])
+    |> add_optional_file_option(&option_g/1, video_config[:gop_size])
+  end
+
+  defp add_audio_encoding_options(command, nil), do: command
+
+  defp add_audio_encoding_options(command, audio_config) do
+    command
+    |> add_stream_specifier(stream_type: :audio)
+    |> add_stream_option(option_c(audio_config.codec))
+    |> add_optional_stream_option(&option_b/1, audio_config[:bitrate])
+  end
+
+  defp add_web_optimization_options(command, nil), do: command
+
+  defp add_web_optimization_options(command, web_opts) do
+    command
+    |> add_optional_file_option(&option_movflags/1, web_opts[:movflags])
+  end
+
+  defp add_threading_options(command, nil), do: command
+
+  defp add_threading_options(command, threading_opts) do
+    command
+    |> add_optional_file_option(&option_threads/1, threading_opts[:threads])
+  end
+
+  defp add_optional_file_option(command, _option_func, nil), do: command
+
+  defp add_optional_file_option(command, option_func, value) do
+    add_file_option(command, option_func.(value))
+  end
+
+  defp add_optional_stream_option(command, _option_func, nil), do: command
+
+  defp add_optional_stream_option(command, option_func, value) do
+    add_stream_option(command, option_func.(value))
+  end
+
   @spec execute_and_get_file_size(FFmpex.Command.t(), String.t()) :: ffmpeg_result()
   defp execute_and_get_file_size(command, output_path) do
     case FFmpex.execute(command) do
@@ -242,8 +275,6 @@ defmodule Heaters.Clips.Shared.FFmpegRunner do
         {:error, "FFmpeg error: #{inspect(reason)}"}
     end
   end
-
-
 
   @spec parse_video_metadata(map()) :: metadata_result()
   defp parse_video_metadata(probe_data) do
@@ -335,12 +366,9 @@ defmodule Heaters.Clips.Shared.FFmpegRunner do
   defp extract_height(_), do: {:error, "Could not determine video height"}
 
   @doc """
-  Extracts keyframes from video at specific timestamps.
+  Extracts keyframes from video at specific timestamps using FFmpegConfig.
 
-  Uses FFmpeg to extract individual frames at precise timestamps:
-  ffmpeg -ss timestamp -i input.mp4 -vframes 1 -q:v 2 output.jpg
-
-  Note: The -ss option is applied to the input file for efficient seeking.
+  Uses the single_frame profile for consistent JPEG quality settings.
 
   ## Parameters
   - `video_path`: Path to input video file
@@ -348,7 +376,7 @@ defmodule Heaters.Clips.Shared.FFmpegRunner do
   - `timestamps`: List of timestamps in seconds (floats)
   - `opts`: Optional parameters
     - `:prefix` - Filename prefix (default: "keyframe")
-    - `:quality` - JPEG quality 1-31, lower is better (default: 2)
+    - `:quality` - JPEG quality override (default: from single_frame profile)
 
   ## Returns
   - `{:ok, keyframe_data}` with list of keyframe info maps
@@ -367,8 +395,11 @@ defmodule Heaters.Clips.Shared.FFmpegRunner do
   @spec extract_keyframes_by_timestamp(String.t(), String.t(), [float()], keyword()) ::
           {:ok, [map()]} | {:error, any()}
   def extract_keyframes_by_timestamp(video_path, output_dir, timestamps, opts \\ []) do
+    # Get single frame profile for consistent settings
+    config = FFmpegConfig.get_profile_config(:single_frame)
+
     prefix = Keyword.get(opts, :prefix, "keyframe")
-    quality = Keyword.get(opts, :quality, 2)
+    quality = Keyword.get(opts, :quality, config.video[:quality] || "2")
 
     # Ensure output directory exists
     case File.mkdir_p(output_dir) do

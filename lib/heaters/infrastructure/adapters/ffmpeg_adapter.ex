@@ -22,6 +22,33 @@ defmodule Heaters.Infrastructure.Adapters.FFmpegAdapter do
     FFmpegRunner.get_video_metadata(video_path)
   end
 
+  @doc """
+  Create a video clip with configurable encoding profile.
+
+  ## Parameters
+  - `input_path`: Path to input video file
+  - `output_path`: Path for output video clip
+  - `start_time`: Start time in seconds (float)
+  - `end_time`: End time in seconds (float)
+  - `opts`: Optional parameters
+    - `:profile` - Encoding profile to use (default: :keyframe_extraction)
+
+  ## Returns
+  - `{:ok, file_size}` on success with output file size in bytes
+  - `{:error, reason}` on failure
+
+  ## Examples
+
+      {:ok, file_size} = FFmpegAdapter.create_video_clip("/tmp/input.mp4", "/tmp/clip.mp4", 30.0, 60.0)
+      {:ok, file_size} = FFmpegAdapter.create_video_clip("/tmp/input.mp4", "/tmp/clip.mp4", 30.0, 60.0, profile: :final_export)
+  """
+  @spec create_video_clip(String.t(), String.t(), float(), float(), keyword()) ::
+          {:ok, integer()} | {:error, any()}
+  def create_video_clip(input_path, output_path, start_time, end_time, opts \\ [])
+      when is_binary(input_path) and is_binary(output_path) and is_float(start_time) and
+             is_float(end_time) do
+    FFmpegRunner.create_video_clip(input_path, output_path, start_time, end_time, opts)
+  end
 
   @doc """
   Extract keyframes from a video at specific timestamps.
@@ -30,7 +57,9 @@ defmodule Heaters.Infrastructure.Adapters.FFmpegAdapter do
   - `video_path`: Path to the input video file
   - `output_dir`: Directory to save keyframe images
   - `timestamps`: List of timestamps in seconds to extract
-  - `opts`: Optional parameters (passed to FFmpegRunner)
+  - `opts`: Optional parameters
+    - `:prefix` - Filename prefix (default: "keyframe")
+    - `:quality` - JPEG quality override (uses FFmpegConfig single_frame profile by default)
 
   ## Returns
   - `{:ok, keyframe_data}` with list of keyframe info maps
@@ -92,6 +121,4 @@ defmodule Heaters.Infrastructure.Adapters.FFmpegAdapter do
       {:error, reason} -> {:error, reason}
     end
   end
-
-
 end

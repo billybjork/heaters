@@ -49,7 +49,10 @@ defmodule Heaters.Clips.VirtualClips.CutPointOperations do
 
               # 4. Create new clips and archive original
               create_split_clips_and_archive_original(
-                source_video_id, [first_cut_points, second_cut_points], target_clip, user_id
+                source_video_id,
+                [first_cut_points, second_cut_points],
+                target_clip,
+                user_id
               )
 
             {:error, reason} ->
@@ -86,13 +89,18 @@ defmodule Heaters.Clips.VirtualClips.CutPointOperations do
       case find_adjacent_clips_at_frame(source_video_id, frame_number) do
         {:ok, {first_clip, second_clip}} ->
           # 2. Combine their cut points
-          merged_cut_points = combine_adjacent_cut_points(
-            first_clip.cut_points, second_clip.cut_points
-          )
+          merged_cut_points =
+            combine_adjacent_cut_points(
+              first_clip.cut_points,
+              second_clip.cut_points
+            )
 
           # 3. Create new merged clip and archive originals
           create_merged_clip_and_archive_originals(
-            source_video_id, merged_cut_points, [first_clip, second_clip], user_id
+            source_video_id,
+            merged_cut_points,
+            [first_clip, second_clip],
+            user_id
           )
 
         {:error, reason} ->
@@ -130,11 +138,19 @@ defmodule Heaters.Clips.VirtualClips.CutPointOperations do
             :ok ->
               # 3. Create updated cut points for both clips
               {updated_first_cut_points, updated_second_cut_points} =
-                adjust_cut_points_for_move(first_clip.cut_points, second_clip.cut_points, new_frame)
+                adjust_cut_points_for_move(
+                  first_clip.cut_points,
+                  second_clip.cut_points,
+                  new_frame
+                )
 
               # 4. Update both clips with new boundaries
               update_adjacent_clips_for_move(
-                first_clip, second_clip, updated_first_cut_points, updated_second_cut_points, user_id
+                first_clip,
+                second_clip,
+                updated_first_cut_points,
+                updated_second_cut_points,
+                user_id
               )
 
             {:error, reason} ->
@@ -149,17 +165,19 @@ defmodule Heaters.Clips.VirtualClips.CutPointOperations do
 
   # Private helper functions for cut point operations
 
-  @spec find_virtual_clip_containing_frame(integer(), integer()) :: {:ok, Clip.t()} | {:error, String.t()}
+  @spec find_virtual_clip_containing_frame(integer(), integer()) ::
+          {:ok, Clip.t()} | {:error, String.t()}
   defp find_virtual_clip_containing_frame(source_video_id, frame_number) do
     virtual_clips = get_virtual_clips_for_source(source_video_id)
 
     case Enum.find(virtual_clips, fn clip ->
-      start_frame = clip.cut_points["start_frame"]
-      end_frame = clip.cut_points["end_frame"]
-      frame_number > start_frame and frame_number < end_frame
-    end) do
+           start_frame = clip.cut_points["start_frame"]
+           end_frame = clip.cut_points["end_frame"]
+           frame_number > start_frame and frame_number < end_frame
+         end) do
       nil ->
         {:error, "No virtual clip contains frame #{frame_number}"}
+
       clip ->
         {:ok, clip}
     end
@@ -173,8 +191,10 @@ defmodule Heaters.Clips.VirtualClips.CutPointOperations do
     cond do
       frame_number <= start_frame ->
         {:error, "Frame #{frame_number} is at or before clip start (#{start_frame})"}
+
       frame_number >= end_frame ->
         {:error, "Frame #{frame_number} is at or after clip end (#{end_frame})"}
+
       true ->
         :ok
     end
@@ -211,57 +231,85 @@ defmodule Heaters.Clips.VirtualClips.CutPointOperations do
 
   @spec create_split_clips_and_archive_original(integer(), [map()], Clip.t(), integer()) ::
           {:ok, {Clip.t(), Clip.t()}} | {:error, any()}
-  defp create_split_clips_and_archive_original(source_video_id, [first_cut_points, second_cut_points], original_clip, user_id) do
+  defp create_split_clips_and_archive_original(
+         source_video_id,
+         [first_cut_points, second_cut_points],
+         original_clip,
+         user_id
+       ) do
     # Archive original clip
     original_clip
     |> Clip.changeset(%{
       ingest_state: "archived",
-      processing_metadata: Map.put(original_clip.processing_metadata || %{}, "archived_reason", "split_operation")
+      processing_metadata:
+        Map.put(original_clip.processing_metadata || %{}, "archived_reason", "split_operation")
     })
     |> Repo.update!()
 
     # Create first new clip
-    {:ok, first_clip} = create_virtual_clip_from_cut_points(
-      source_video_id, first_cut_points, user_id, "split_first"
-    )
+    {:ok, first_clip} =
+      create_virtual_clip_from_cut_points(
+        source_video_id,
+        first_cut_points,
+        user_id,
+        "split_first"
+      )
 
     # Create second new clip
-    {:ok, second_clip} = create_virtual_clip_from_cut_points(
-      source_video_id, second_cut_points, user_id, "split_second"
-    )
+    {:ok, second_clip} =
+      create_virtual_clip_from_cut_points(
+        source_video_id,
+        second_cut_points,
+        user_id,
+        "split_second"
+      )
 
     # Log audit trail
-    log_cut_point_operation("add", source_video_id, first_cut_points["end_frame"], nil, user_id,
-      [original_clip.id, first_clip.id, second_clip.id], %{
+    log_cut_point_operation(
+      "add",
+      source_video_id,
+      first_cut_points["end_frame"],
+      nil,
+      user_id,
+      [original_clip.id, first_clip.id, second_clip.id],
+      %{
         "original_clip_id" => original_clip.id,
         "operation" => "split_clip",
         "split_frame" => first_cut_points["end_frame"]
-      })
+      }
+    )
 
-    Logger.info("Cut point added: Split clip #{original_clip.id} into #{first_clip.id} and #{second_clip.id}")
+    Logger.info(
+      "Cut point added: Split clip #{original_clip.id} into #{first_clip.id} and #{second_clip.id}"
+    )
 
     {:ok, {first_clip, second_clip}}
   end
 
-  @spec find_adjacent_clips_at_frame(integer(), integer()) :: {:ok, {Clip.t(), Clip.t()}} | {:error, String.t()}
+  @spec find_adjacent_clips_at_frame(integer(), integer()) ::
+          {:ok, {Clip.t(), Clip.t()}} | {:error, String.t()}
   defp find_adjacent_clips_at_frame(source_video_id, frame_number) do
     virtual_clips = get_virtual_clips_for_source(source_video_id)
 
     # Find clip that ends at this frame
-    first_clip = Enum.find(virtual_clips, fn clip ->
-      clip.cut_points["end_frame"] == frame_number
-    end)
+    first_clip =
+      Enum.find(virtual_clips, fn clip ->
+        clip.cut_points["end_frame"] == frame_number
+      end)
 
     # Find clip that starts at this frame
-    second_clip = Enum.find(virtual_clips, fn clip ->
-      clip.cut_points["start_frame"] == frame_number
-    end)
+    second_clip =
+      Enum.find(virtual_clips, fn clip ->
+        clip.cut_points["start_frame"] == frame_number
+      end)
 
     case {first_clip, second_clip} do
       {%Clip{} = first, %Clip{} = second} ->
         {:ok, {first, second}}
+
       {nil, _} ->
         {:error, "No clip ends at frame #{frame_number}"}
+
       {_, nil} ->
         {:error, "No clip starts at frame #{frame_number}"}
     end
@@ -279,31 +327,50 @@ defmodule Heaters.Clips.VirtualClips.CutPointOperations do
 
   @spec create_merged_clip_and_archive_originals(integer(), map(), [Clip.t()], integer()) ::
           {:ok, Clip.t()} | {:error, any()}
-  defp create_merged_clip_and_archive_originals(source_video_id, merged_cut_points, [first_clip, second_clip], user_id) do
+  defp create_merged_clip_and_archive_originals(
+         source_video_id,
+         merged_cut_points,
+         [first_clip, second_clip],
+         user_id
+       ) do
     # Archive both original clips
     Enum.each([first_clip, second_clip], fn clip ->
       clip
       |> Clip.changeset(%{
         ingest_state: "archived",
-        processing_metadata: Map.put(clip.processing_metadata || %{}, "archived_reason", "merge_operation")
+        processing_metadata:
+          Map.put(clip.processing_metadata || %{}, "archived_reason", "merge_operation")
       })
       |> Repo.update!()
     end)
 
     # Create merged clip
-    {:ok, merged_clip} = create_virtual_clip_from_cut_points(
-      source_video_id, merged_cut_points, user_id, "merge_result"
-    )
+    {:ok, merged_clip} =
+      create_virtual_clip_from_cut_points(
+        source_video_id,
+        merged_cut_points,
+        user_id,
+        "merge_result"
+      )
 
     # Log audit trail
-    log_cut_point_operation("remove", source_video_id, first_clip.cut_points["end_frame"], nil, user_id,
-      [first_clip.id, second_clip.id, merged_clip.id], %{
+    log_cut_point_operation(
+      "remove",
+      source_video_id,
+      first_clip.cut_points["end_frame"],
+      nil,
+      user_id,
+      [first_clip.id, second_clip.id, merged_clip.id],
+      %{
         "original_clip_ids" => [first_clip.id, second_clip.id],
         "operation" => "merge_clips",
         "removed_frame" => first_clip.cut_points["end_frame"]
-      })
+      }
+    )
 
-    Logger.info("Cut point removed: Merged clips #{first_clip.id} and #{second_clip.id} into #{merged_clip.id}")
+    Logger.info(
+      "Cut point removed: Merged clips #{first_clip.id} and #{second_clip.id} into #{merged_clip.id}"
+    )
 
     {:ok, merged_clip}
   end
@@ -316,8 +383,10 @@ defmodule Heaters.Clips.VirtualClips.CutPointOperations do
     cond do
       new_frame <= first_start ->
         {:error, "New frame #{new_frame} would be at or before first clip start (#{first_start})"}
+
       new_frame >= second_end ->
         {:error, "New frame #{new_frame} would be at or after second clip end (#{second_end})"}
+
       true ->
         :ok
     end
@@ -335,7 +404,7 @@ defmodule Heaters.Clips.VirtualClips.CutPointOperations do
     total_frames = second_end_frame - first_start_frame
     total_time = second_end_time - first_start_time
     frame_offset = new_frame - first_start_frame
-    new_time = first_start_time + (total_time * frame_offset / total_frames)
+    new_time = first_start_time + total_time * frame_offset / total_frames
 
     updated_first_cut_points = %{
       "start_frame" => first_start_frame,
@@ -356,39 +425,57 @@ defmodule Heaters.Clips.VirtualClips.CutPointOperations do
 
   @spec update_adjacent_clips_for_move(Clip.t(), Clip.t(), map(), map(), integer()) ::
           {:ok, {Clip.t(), Clip.t()}} | {:error, any()}
-  defp update_adjacent_clips_for_move(first_clip, second_clip, updated_first_cut_points, updated_second_cut_points, user_id) do
+  defp update_adjacent_clips_for_move(
+         first_clip,
+         second_clip,
+         updated_first_cut_points,
+         updated_second_cut_points,
+         user_id
+       ) do
     # Update first clip
-    {:ok, updated_first} = first_clip
-    |> Clip.changeset(%{
-      cut_points: updated_first_cut_points,
-      start_frame: updated_first_cut_points["start_frame"],
-      end_frame: updated_first_cut_points["end_frame"],
-      start_time_seconds: updated_first_cut_points["start_time_seconds"],
-      end_time_seconds: updated_first_cut_points["end_time_seconds"],
-      processing_metadata: Map.put(first_clip.processing_metadata || %{}, "last_modified_by_user_id", user_id)
-    })
-    |> Repo.update()
+    {:ok, updated_first} =
+      first_clip
+      |> Clip.changeset(%{
+        cut_points: updated_first_cut_points,
+        start_frame: updated_first_cut_points["start_frame"],
+        end_frame: updated_first_cut_points["end_frame"],
+        start_time_seconds: updated_first_cut_points["start_time_seconds"],
+        end_time_seconds: updated_first_cut_points["end_time_seconds"],
+        processing_metadata:
+          Map.put(first_clip.processing_metadata || %{}, "last_modified_by_user_id", user_id)
+      })
+      |> Repo.update()
 
     # Update second clip
-    {:ok, updated_second} = second_clip
-    |> Clip.changeset(%{
-      cut_points: updated_second_cut_points,
-      start_frame: updated_second_cut_points["start_frame"],
-      end_frame: updated_second_cut_points["end_frame"],
-      start_time_seconds: updated_second_cut_points["start_time_seconds"],
-      end_time_seconds: updated_second_cut_points["end_time_seconds"],
-      processing_metadata: Map.put(second_clip.processing_metadata || %{}, "last_modified_by_user_id", user_id)
-    })
-    |> Repo.update()
+    {:ok, updated_second} =
+      second_clip
+      |> Clip.changeset(%{
+        cut_points: updated_second_cut_points,
+        start_frame: updated_second_cut_points["start_frame"],
+        end_frame: updated_second_cut_points["end_frame"],
+        start_time_seconds: updated_second_cut_points["start_time_seconds"],
+        end_time_seconds: updated_second_cut_points["end_time_seconds"],
+        processing_metadata:
+          Map.put(second_clip.processing_metadata || %{}, "last_modified_by_user_id", user_id)
+      })
+      |> Repo.update()
 
     # Log audit trail
     old_frame = first_clip.cut_points["end_frame"]
-    log_cut_point_operation("move", first_clip.source_video_id, updated_first_cut_points["end_frame"], old_frame, user_id,
-      [first_clip.id, second_clip.id], %{
+
+    log_cut_point_operation(
+      "move",
+      first_clip.source_video_id,
+      updated_first_cut_points["end_frame"],
+      old_frame,
+      user_id,
+      [first_clip.id, second_clip.id],
+      %{
         "operation" => "move_cut_point",
         "old_frame" => old_frame,
         "new_frame" => updated_first_cut_points["end_frame"]
-      })
+      }
+    )
 
     Logger.info("Cut point moved: Updated clips #{first_clip.id} and #{second_clip.id}")
 
@@ -433,7 +520,9 @@ defmodule Heaters.Clips.VirtualClips.CutPointOperations do
   @spec get_virtual_clips_for_source(integer()) :: [Clip.t()]
   defp get_virtual_clips_for_source(source_video_id) do
     from(c in Clip,
-      where: c.source_video_id == ^source_video_id and c.is_virtual == true and c.ingest_state != "archived",
+      where:
+        c.source_video_id == ^source_video_id and c.is_virtual == true and
+          c.ingest_state != "archived",
       order_by: [asc: c.start_frame]
     )
     |> Repo.all()
@@ -442,7 +531,9 @@ defmodule Heaters.Clips.VirtualClips.CutPointOperations do
   @spec get_next_source_video_order(integer()) :: integer()
   defp get_next_source_video_order(source_video_id) do
     from(c in Clip,
-      where: c.source_video_id == ^source_video_id and c.is_virtual == true and c.ingest_state != "archived",
+      where:
+        c.source_video_id == ^source_video_id and c.is_virtual == true and
+          c.ingest_state != "archived",
       select: max(c.source_video_order)
     )
     |> Repo.one()
@@ -452,8 +543,24 @@ defmodule Heaters.Clips.VirtualClips.CutPointOperations do
     end
   end
 
-  @spec log_cut_point_operation(String.t(), integer(), integer(), integer() | nil, integer(), [integer()], map()) :: :ok | :error
-  defp log_cut_point_operation(operation_type, source_video_id, frame_number, old_frame_number, user_id, affected_clip_ids, metadata) do
+  @spec log_cut_point_operation(
+          String.t(),
+          integer(),
+          integer(),
+          integer() | nil,
+          integer(),
+          [integer()],
+          map()
+        ) :: :ok | :error
+  defp log_cut_point_operation(
+         operation_type,
+         source_video_id,
+         frame_number,
+         old_frame_number,
+         user_id,
+         affected_clip_ids,
+         metadata
+       ) do
     attrs = %{
       source_video_id: source_video_id,
       operation_type: operation_type,
@@ -471,6 +578,7 @@ defmodule Heaters.Clips.VirtualClips.CutPointOperations do
       {:ok, _operation} ->
         Logger.debug("Logged cut point operation: #{operation_type} at frame #{frame_number}")
         :ok
+
       {:error, changeset} ->
         Logger.error("Failed to log cut point operation: #{inspect(changeset.errors)}")
         :error

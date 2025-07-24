@@ -26,8 +26,4 @@ defmodule Heaters.Clips.Embeddings do
   defdelegate complete_embedding(clip_id, embedding_data), to: Workflow
   defdelegate mark_failed(clip_or_id, failure_state, error_reason), to: Workflow
   defdelegate process_embedding_success(clip, result), to: Workflow
-
-
-
-
 end

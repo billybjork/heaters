@@ -37,15 +37,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Lightweight normalization for downloaded videos (different from preprocessing)
-NORMALIZE_ARGS = [
-    "-map", "0", "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-    "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", 
-    "-movflags", "+faststart", "-f", "mp4"
-]
+# Normalization arguments are now provided by Elixir FFmpegConfig
+# This eliminates hardcoded settings and centralizes configuration
 
 
-def normalize_video(input_path: Path, output_path: Path) -> bool:
+def normalize_video(input_path: Path, output_path: Path, normalize_args: list = None) -> bool:
     """
     Lightweight normalization of downloaded video to fix merge issues from primary downloads.
     
@@ -60,12 +56,19 @@ def normalize_video(input_path: Path, output_path: Path) -> bool:
     Args:
         input_path: Path to the downloaded video file that may have merge issues
         output_path: Path where the normalized video should be saved
+        normalize_args: FFmpeg arguments for normalization (from FFmpegConfig, defaults to basic settings)
         
     Returns:
         bool: True if normalization succeeded, False otherwise
     """
     try:
-        cmd = ["ffmpeg", "-i", str(input_path)] + NORMALIZE_ARGS + ["-y", str(output_path)]
+        # Use provided normalize_args or fallback to basic settings
+        if normalize_args is None:
+            normalize_args = ["-map", "0", "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", 
+                            "-movflags", "+faststart", "-f", "mp4"]
+        
+        cmd = ["ffmpeg", "-i", str(input_path)] + normalize_args + ["-y", str(output_path)]
         
         logger.info(f"Starting normalization for primary download: {input_path.name}")
         logger.info(f"Input file size: {input_path.stat().st_size:,} bytes")

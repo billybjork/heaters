@@ -33,6 +33,7 @@ The system uses a **virtual clip workflow** that eliminates re-encoding during r
 - **Direct Action Execution**: Human review actions execute immediately with 60-second undo buffer for complex operations
 - **Structured Results**: Type-safe Result structs with rich metadata and performance timing
 - **Centralized Worker Behavior**: Standardized Oban worker patterns with shared lifecycle management, error handling, and idempotent state validation
+- **Centralized FFmpeg Configuration**: Declarative encoding profiles with consistent settings across all video processing operations
 - **Hybrid Processing**: Native Elixir for performance-critical operations (scene detection), Python for ML/media processing
 - **Robust Error Handling**: Graceful degradation with comprehensive logging and state recovery
 
@@ -91,6 +92,45 @@ The `Clips` context is organized by **operation type** and **domain responsibili
 
 This reflects the transition from file-based operations to virtual clip database operations, with clear separation between user actions (instant cut point operations) and automated processing stages.
 
+### Centralized FFmpeg Configuration
+
+The system uses **`Infrastructure.Orchestration.FFmpegConfig`** to provide consistent, maintainable FFmpeg encoding settings across all video processing operations:
+
+#### Encoding Profiles
+
+Six distinct profiles optimize for different use cases:
+- **`gold_master`**: Lossless FFV1/MKV archival for final export source
+- **`review_proxy`**: All-I-frame H.264 optimized for WebCodecs seeking
+- **`final_export`**: Streaming-optimized MP4 delivery to end users
+- **`download_normalization`**: Lightweight fixing of yt-dlp merge issues
+- **`keyframe_extraction`**: Efficient encoding for internal clip operations
+- **`single_frame`**: JPEG extraction for keyframe generation
+
+#### Architecture Benefits
+
+- **Single Source of Truth**: All FFmpeg settings centralized in Elixir orchestration layer
+- **Semantic Clarity**: Each profile has clear purpose and optimization strategy
+- **Python Simplification**: Eliminates hardcoded FFmpeg constants from Python tasks
+- **Runtime Flexibility**: Supports per-operation customization (`get_args(:final_export, crf: 20)`)
+- **"I/O at the Edges"**: Configuration logic stays in Elixir, Python receives pre-built arguments
+
+#### Usage Pattern
+
+```elixir
+# In Elixir workers
+gold_master_args = FFmpegConfig.get_args(:gold_master)
+PyRunner.run_task("preprocess", %{
+  gold_master_args: gold_master_args,
+  # ... other parameters
+})
+
+# Python tasks receive arguments
+def run_preprocess(source_path, gold_master_args, **kwargs):
+    cmd = ["ffmpeg", "-i", source_path] + gold_master_args + ["-y", output_path]
+```
+
+This approach maintains architectural consistency while providing optimal encoding settings for each stage of the video processing pipeline.
+
 ### Quality-First Download Architecture
 
 The download pipeline implements a **quality-first download strategy** with intelligent fallback to ensure optimal video quality while maintaining reliability:
@@ -113,9 +153,9 @@ The download pipeline implements a **quality-first download strategy** with inte
 # CRITICAL: This step preserves the best-quality-first approach
 if download_method == 'primary' and requires_normalization:
     # Apply lightweight normalization to fix yt-dlp merge issues
-    # Uses fast settings: -preset fast -crf 23 -movflags +faststart
+    # Uses download_normalization profile from FFmpegConfig
     # Different from preprocess.py - just ensures valid MP4
-    normalize_video(original_download, normalized_output)
+    normalize_video(original_download, normalized_output, normalize_args)
 else:
     # Fallback downloads don't need normalization
     use_original_download()
@@ -421,7 +461,9 @@ Each stage is pure configuration:
 
 ### Infrastructure
 
-- **`Infrastructure`**: I/O adapters (S3, FFmpeg, Database) and shared worker behaviors with consistent interfaces and robust error handling
+- **`Infrastructure`**: I/O adapters (S3, FFmpeg, Database), centralized FFmpeg configuration, and shared worker behaviors with consistent interfaces and robust error handling
+  - **`Infrastructure.Orchestration.FFmpegConfig`**: Centralized encoding profiles for all video processing operations
+  - **`Infrastructure.Adapters.FFmpegAdapter`**: Clean I/O interface for FFmpeg operations with profile support
 - **Python Tasks**: 
   - **`download.py`**: Quality-focused video download with conditional normalization for merge issue prevention
   - **`download_handler.py`**: yt-dlp integration with best-quality-first strategy and intelligent fallback
@@ -484,7 +526,8 @@ Each stage is pure configuration:
 13. **Comprehensive Testing**: Pure functions enable thorough testing without I/O dependencies
 14. **Focused Modules**: Enhanced organization with single-responsibility modules and clean delegation
 15. **Maintainable Codebase**: Eliminated deprecated code, clear module boundaries, comprehensive audit trails
-16. **Scalable Design**: Robust orchestration patterns support production workloads with container resilience
+16. **Centralized Media Configuration**: Consistent FFmpeg encoding profiles eliminate hardcoded settings and enable easy optimization
+17. **Scalable Design**: Robust orchestration patterns support production workloads with container resilience
 
 ---
 
@@ -508,6 +551,7 @@ Each stage is pure configuration:
 - **Pipeline Integration**: Updated `PipelineConfig` with new virtual clip stages
 - **Code Quality**: All Dialyzer warnings resolved, deprecated functions removed, production-ready
 - **Enhanced Download Workflow**: Quality-first download strategy with conditional normalization
+- **Centralized FFmpeg Configuration**: Declarative encoding profiles eliminating hardcoded settings across Python/Elixir
 - **S3 Integration**: Centralized S3 operations with storage class optimization
 - **Organizational Cleanup**: Flattened directory structure, removed ~85 lines of deprecated code
 

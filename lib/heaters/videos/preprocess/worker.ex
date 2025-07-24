@@ -35,7 +35,7 @@ defmodule Heaters.Videos.Preprocess.Worker do
 
   alias Heaters.Videos.{SourceVideo, Queries}
   alias Heaters.Videos.Preprocess.StateManager
-  alias Heaters.Infrastructure.Orchestration.WorkerBehavior
+  alias Heaters.Infrastructure.Orchestration.{WorkerBehavior, FFmpegConfig}
   alias Heaters.Infrastructure.PyRunner
   require Logger
 
@@ -87,10 +87,16 @@ defmodule Heaters.Videos.Preprocess.Worker do
   end
 
   defp execute_preprocessing(source_video) do
+    # Get FFmpeg configuration for preprocessing
+    gold_master_args = FFmpegConfig.get_args(:gold_master)
+    proxy_args = FFmpegConfig.get_args(:review_proxy)
+
     preprocessing_args = %{
       source_video_id: source_video.id,
       source_video_path: source_video.filepath,
-      video_title: source_video.title
+      video_title: source_video.title,
+      gold_master_args: gold_master_args,
+      proxy_args: proxy_args
     }
 
     Logger.info(

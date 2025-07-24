@@ -20,36 +20,12 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Gold master settings (lossless archival)
-GOLD_MASTER_ARGS = [
-    "-c:v", "ffv1",      # Lossless video codec
-    "-level", "3",       # FFV1 level 3 for better compression
-    "-coder", "1",       # Range coder for better compression  
-    "-context", "1",     # Large context for better compression
-    "-g", "1",           # GOP size 1 (all intraframes)
-    "-slices", "4",      # Multi-threading
-    "-slicecrc", "1",    # Error detection
-    "-c:a", "pcm_s16le", # Lossless audio
-    "-f", "matroska"     # MKV container
-]
-
-# Review proxy settings (all I-frame for seeking)
-PROXY_ARGS = [
-    "-c:v", "libx264",   # H.264 video codec
-    "-preset", "medium", # Encoding speed vs compression
-    "-crf", "20",        # Quality setting (18-23 is good range)
-    "-g", "1",           # GOP size 1 (all intraframes for seeking)
-    "-keyint_min", "1",  # Minimum keyframe interval
-    "-sc_threshold", "0", # Disable scene change detection
-    "-pix_fmt", "yuv420p", # Pixel format for compatibility
-    "-c:a", "aac",       # Audio codec
-    "-b:a", "192k",      # Audio bitrate
-    "-movflags", "+faststart", # Web optimization
-    "-f", "mp4"          # MP4 container
-]
+# FFmpeg arguments are now provided by Elixir FFmpegConfig
+# This eliminates hardcoded settings and centralizes configuration
 
 
-def run_preprocess(source_video_path: str, source_video_id: int, video_title: str, **kwargs) -> Dict[str, Any]:
+def run_preprocess(source_video_path: str, source_video_id: int, video_title: str, 
+                  gold_master_args: list, proxy_args: list, **kwargs) -> Dict[str, Any]:
     """
     Create gold master and review proxy from original source video.
     
@@ -60,6 +36,8 @@ def run_preprocess(source_video_path: str, source_video_id: int, video_title: st
         source_video_path: S3 path to original source video (from download task)
         source_video_id: Database ID of the source video
         video_title: Title for generating output filenames
+        gold_master_args: FFmpeg arguments for gold master encoding (from FFmpegConfig)
+        proxy_args: FFmpeg arguments for review proxy encoding (from FFmpegConfig)
         
     Returns:
         {
@@ -100,11 +78,11 @@ def run_preprocess(source_video_path: str, source_video_id: int, video_title: st
             
             # Create gold master (lossless)
             gold_master_local = temp_dir_path / "gold_master.mkv"
-            create_gold_master(local_source_path, gold_master_local, metadata)
+            create_gold_master(local_source_path, gold_master_local, metadata, gold_master_args)
             
             # Create review proxy (all I-frame)
             proxy_local = temp_dir_path / "proxy.mp4"
-            keyframe_offsets = create_review_proxy(local_source_path, proxy_local, metadata)
+            keyframe_offsets = create_review_proxy(local_source_path, proxy_local, metadata, proxy_args)
             
             # Upload both files to S3
             upload_to_s3(gold_master_local, gold_master_s3_key, storage_class="GLACIER")
@@ -204,11 +182,11 @@ def parse_frame_rate(fps_str: str) -> float:
         return 0.0
 
 
-def create_gold_master(source_path: Path, output_path: Path, metadata: Dict[str, Any]) -> None:
+def create_gold_master(source_path: Path, output_path: Path, metadata: Dict[str, Any], gold_master_args: list) -> None:
     """Create lossless gold master for archival and final export"""
     logger.info(f"Creating gold master: {output_path}")
     
-    cmd = ["ffmpeg", "-i", str(source_path)] + GOLD_MASTER_ARGS + ["-y", str(output_path)]
+    cmd = ["ffmpeg", "-i", str(source_path)] + gold_master_args + ["-y", str(output_path)]
     
     duration = metadata.get("duration_seconds", 0)
     success = run_ffmpeg_with_progress(cmd, duration, "Gold Master Creation")
@@ -222,11 +200,11 @@ def create_gold_master(source_path: Path, output_path: Path, metadata: Dict[str,
     logger.info(f"Gold master created successfully: {output_path.stat().st_size} bytes")
 
 
-def create_review_proxy(source_path: Path, output_path: Path, metadata: Dict[str, Any]) -> List[int]:
+def create_review_proxy(source_path: Path, output_path: Path, metadata: Dict[str, Any], proxy_args: list) -> List[int]:
     """Create all-I-frame proxy and extract keyframe offsets"""
     logger.info(f"Creating review proxy: {output_path}")
     
-    cmd = ["ffmpeg", "-i", str(source_path)] + PROXY_ARGS + ["-y", str(output_path)]
+    cmd = ["ffmpeg", "-i", str(source_path)] + proxy_args + ["-y", str(output_path)]
     
     duration = metadata.get("duration_seconds", 0)
     success = run_ffmpeg_with_progress(cmd, duration, "Proxy Creation")

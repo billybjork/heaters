@@ -118,12 +118,15 @@ defmodule Heaters.DataCase do
     attrs_map = Map.delete(attrs_map, :source_video)
 
     # Generate unique order if not provided
-    source_video_order = Map.get(attrs_map, :source_video_order) ||
-      (Heaters.Repo.aggregate(
-        from(c in Heaters.Clips.Clip,
-          where: c.source_video_id == ^source_video.id and c.is_virtual == true
-        ), :count, :id
-      ) + 1)
+    source_video_order =
+      Map.get(attrs_map, :source_video_order) ||
+        Heaters.Repo.aggregate(
+          from(c in Heaters.Clips.Clip,
+            where: c.source_video_id == ^source_video.id and c.is_virtual == true
+          ),
+          :count,
+          :id
+        ) + 1
 
     default_attrs = %{
       clip_identifier: "virtual_clip_#{System.unique_integer()}",

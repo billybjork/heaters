@@ -20,6 +20,7 @@ This document tracks the comprehensive refactor of the video processing system's
   - `virtual_clips/mece_validation.ex` (MECE validation)
   - `virtual_clips/cut_point_operation.ex` (audit trail schema)
 - ✅ **Artifacts/Shared Organization**: Artifact utilities moved to `artifacts/operations.ex`. Shared error handling in `shared/error_handling.ex`.
+- ✅ **Centralized FFmpeg Configuration**: Declarative encoding profiles eliminating hardcoded settings across Python/Elixir with consistent `gold_master`, `review_proxy`, and `final_export` profiles.
 - ✅ **Organizational Cleanup**: Directory structure flattened, all module references updated, deprecated code (~85 lines) removed.
 - 🔄 **Current State**: Clean, maintainable foundation ready for Phase 2 (Rolling Export System).
 
@@ -30,7 +31,7 @@ This document tracks the comprehensive refactor of the video processing system's
 1. **Virtual-First**: All clips start as virtual cut points, only materialized when exported
 2. **MECE Guarantee**: Cut points across source videos are mutually exclusive, collectively exhaustive  
 3. **Rolling Export**: Individual clip export rather than batch processing
-4. **Clean Abstractions**: No legacy merge/split/splice/sprite concepts
+4. **Clean Abstractions**: No legacy merge/split/splice/sprite concepts, centralized FFmpeg configuration
 5. **WebCodecs Native**: Frame-perfect seeking without sprite dependencies
 
 ---
@@ -155,6 +156,12 @@ end
 - Full audit trail for all cut point operations
 - Comprehensive test suite for all edge cases
 
+### ✅ Infrastructure Enhancement: Centralized FFmpeg Configuration (COMPLETE)
+- Declarative encoding profiles (`Infrastructure.Orchestration.FFmpegConfig`) for all video operations
+- Eliminated hardcoded FFmpeg settings across Python tasks and Elixir modules
+- Six semantic profiles: `gold_master`, `review_proxy`, `final_export`, `download_normalization`, `keyframe_extraction`, `single_frame`
+- Maintained "I/O at the edges" architecture with Python receiving pre-built arguments
+
 ### Phase 2: Rolling Export System (Next)
 - [ ] Individual clip export worker enhancement
 - [ ] Gold master resource sharing manager
@@ -193,7 +200,8 @@ end
 1. **Reduced Complexity**: Fewer concepts and code paths to maintain
 2. **Better Testing**: Pure functions enable comprehensive unit testing
 3. **Clear Semantics**: Cut point operations have obvious, predictable behavior
-4. **Future-Proof**: Architecture supports advanced cut point features
-5. **Frontend Modularity**: WebCodecs player code is split into focused modules, making future updates and debugging easier.
+4. **Centralized Configuration**: Single source of truth for all FFmpeg encoding settings eliminates hardcoded constants
+5. **Future-Proof**: Architecture supports advanced cut point features and easy encoding optimization
+6. **Frontend Modularity**: WebCodecs player code is split into focused modules, making future updates and debugging easier.
 
 ---

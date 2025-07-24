@@ -17,21 +17,12 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Final clip encoding settings (optimized for streaming/delivery)
-FINAL_CLIP_ARGS = [
-    "-c:v", "libx264",   # H.264 video codec
-    "-preset", "fast",   # Encoding speed vs compression balance
-    "-crf", "23",        # Quality setting (18-28 range, 23 is good default)
-    "-pix_fmt", "yuv420p", # Pixel format for compatibility
-    "-c:a", "aac",       # Audio codec
-    "-b:a", "128k",      # Audio bitrate (lower than proxy since these are clips)
-    "-movflags", "+faststart", # Web optimization
-    "-avoid_negative_ts", "make_zero", # Avoid timestamp issues
-    "-f", "mp4"          # MP4 container
-]
+# Final clip encoding arguments are now provided by Elixir FFmpegConfig
+# This eliminates hardcoded settings and centralizes configuration
 
 
-def run_export_clips(gold_master_path: str, clips_data: list, source_video_id: int, video_title: str, **kwargs) -> Dict[str, Any]:
+def run_export_clips(gold_master_path: str, clips_data: list, source_video_id: int, video_title: str, 
+                    final_export_args: list, **kwargs) -> Dict[str, Any]:
     """
     Export final clips from gold master using approved virtual cut points
     
@@ -40,6 +31,7 @@ def run_export_clips(gold_master_path: str, clips_data: list, source_video_id: i
         clips_data: List of clip data with cut points
         source_video_id: Database ID of the source video
         video_title: Title for generating output filenames
+        final_export_args: FFmpeg arguments for final clip encoding (from FFmpegConfig)
         
     Returns:
         {
@@ -78,7 +70,8 @@ def run_export_clips(gold_master_path: str, clips_data: list, source_video_id: i
                         clip_data, 
                         temp_dir_path, 
                         video_title, 
-                        metadata
+                        metadata,
+                        final_export_args
                     )
                     exported_clips.append(exported_clip)
                 except Exception as e:
@@ -113,7 +106,7 @@ def run_export_clips(gold_master_path: str, clips_data: list, source_video_id: i
         }
 
 
-def export_single_clip(gold_master_path: Path, clip_data: dict, temp_dir: Path, video_title: str, metadata: dict) -> Dict[str, Any]:
+def export_single_clip(gold_master_path: Path, clip_data: dict, temp_dir: Path, video_title: str, metadata: dict, final_export_args: list) -> Dict[str, Any]:
     """Export a single clip from the gold master using cut points"""
     
     clip_id = clip_data["clip_id"]
@@ -138,7 +131,7 @@ def export_single_clip(gold_master_path: Path, clip_data: dict, temp_dir: Path, 
         "-ss", str(start_time),           # Start time
         "-t", str(duration),              # Duration (not end time)
         "-map", "0",                      # Map all streams
-    ] + FINAL_CLIP_ARGS + ["-y", str(local_output)]
+    ] + final_export_args + ["-y", str(local_output)]
     
     logger.debug(f"FFmpeg command: {' '.join(cmd)}")
     

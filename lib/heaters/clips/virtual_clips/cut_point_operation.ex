@@ -38,8 +38,15 @@ defmodule Heaters.Clips.VirtualClips.CutPointOperation do
   @doc false
   def changeset(operation, attrs) do
     operation
-    |> cast(attrs, [:source_video_id, :operation_type, :frame_number, :old_frame_number,
-                    :user_id, :affected_clip_ids, :metadata])
+    |> cast(attrs, [
+      :source_video_id,
+      :operation_type,
+      :frame_number,
+      :old_frame_number,
+      :user_id,
+      :affected_clip_ids,
+      :metadata
+    ])
     |> validate_required([:source_video_id, :operation_type, :frame_number, :user_id])
     |> validate_inclusion(:operation_type, ["add", "remove", "move"])
   end

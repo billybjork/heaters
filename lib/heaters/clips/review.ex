@@ -251,7 +251,6 @@ defmodule Heaters.Clips.Review do
     end)
   end
 
-
   @doc """
   Cancel pending merge/split jobs for a clip to enable undo.
 
@@ -324,7 +323,6 @@ defmodule Heaters.Clips.Review do
     # Physical clip jobs no longer exist in enhanced virtual clips architecture
     {:ok, 0}
   end
-
 
   # -------------------------------------------------------------------------
   # Private helpers for virtual clip operations

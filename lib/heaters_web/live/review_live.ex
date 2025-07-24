@@ -6,7 +6,6 @@ defmodule HeatersWeb.ReviewLive do
   import HeatersWeb.WebCodecsPlayer, only: [webcodecs_player: 1, proxy_video_url: 1]
 
   alias Heaters.Clips.Review, as: ClipReview
-  alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Clips.Clip
 
   # 1 current + 5 future

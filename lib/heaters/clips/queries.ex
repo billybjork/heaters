@@ -15,8 +15,6 @@ defmodule Heaters.Clips.Queries do
     |> Repo.all()
   end
 
-
-
   @doc """
   Get all clips that need keyframe extraction (review_approved, keyframing, or keyframe_failed).
   This enables resumable processing of interrupted jobs.

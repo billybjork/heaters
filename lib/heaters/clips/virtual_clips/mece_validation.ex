@@ -88,7 +88,9 @@ defmodule Heaters.Clips.VirtualClips.MeceValidation do
   @spec get_virtual_clips_for_source(integer()) :: [Clip.t()]
   defp get_virtual_clips_for_source(source_video_id) do
     from(c in Clip,
-      where: c.source_video_id == ^source_video_id and c.is_virtual == true and c.ingest_state != "archived",
+      where:
+        c.source_video_id == ^source_video_id and c.is_virtual == true and
+          c.ingest_state != "archived",
       order_by: [asc: c.start_frame]
     )
     |> Repo.all()
@@ -96,7 +98,7 @@ defmodule Heaters.Clips.VirtualClips.MeceValidation do
 
   @spec ensure_no_overlaps(list(map())) :: :ok | {:error, String.t()}
   defp ensure_no_overlaps(cut_points_list) do
-    sorted_clips = Enum.sort_by(cut_points_list, &(&1["start_frame"]))
+    sorted_clips = Enum.sort_by(cut_points_list, & &1["start_frame"])
 
     case find_overlap_in_sorted_clips(sorted_clips) do
       nil -> :ok
@@ -107,6 +109,7 @@ defmodule Heaters.Clips.VirtualClips.MeceValidation do
   @spec find_overlap_in_sorted_clips(list(map())) :: map() | nil
   defp find_overlap_in_sorted_clips([]), do: nil
   defp find_overlap_in_sorted_clips([_single]), do: nil
+
   defp find_overlap_in_sorted_clips([first, second | rest]) do
     first_end = first["end_frame"]
     second_start = second["start_frame"]
@@ -124,7 +127,7 @@ defmodule Heaters.Clips.VirtualClips.MeceValidation do
 
   @spec ensure_no_gaps(list(map())) :: :ok | {:error, String.t()}
   defp ensure_no_gaps(cut_points_list) do
-    sorted_clips = Enum.sort_by(cut_points_list, &(&1["start_frame"]))
+    sorted_clips = Enum.sort_by(cut_points_list, & &1["start_frame"])
 
     case find_gap_in_sorted_clips(sorted_clips) do
       nil -> :ok
@@ -135,6 +138,7 @@ defmodule Heaters.Clips.VirtualClips.MeceValidation do
   @spec find_gap_in_sorted_clips(list(map())) :: map() | nil
   defp find_gap_in_sorted_clips([]), do: nil
   defp find_gap_in_sorted_clips([_single]), do: nil
+
   defp find_gap_in_sorted_clips([first, second | rest]) do
     first_end = first["end_frame"]
     second_start = second["start_frame"]
@@ -152,7 +156,7 @@ defmodule Heaters.Clips.VirtualClips.MeceValidation do
 
   @spec ensure_complete_coverage_internal(list(map()), float()) :: :ok | {:error, String.t()}
   defp ensure_complete_coverage_internal(cut_points_list, total_duration_seconds) do
-    sorted_clips = Enum.sort_by(cut_points_list, &(&1["start_frame"]))
+    sorted_clips = Enum.sort_by(cut_points_list, & &1["start_frame"])
 
     case sorted_clips do
       [] ->
@@ -164,10 +168,12 @@ defmodule Heaters.Clips.VirtualClips.MeceValidation do
 
         cond do
           first_clip["start_time_seconds"] > 0.0 ->
-            {:error, "Coverage gap at start: clips start at #{first_clip["start_time_seconds"]}s, not 0.0s"}
+            {:error,
+             "Coverage gap at start: clips start at #{first_clip["start_time_seconds"]}s, not 0.0s"}
 
           last_clip["end_time_seconds"] < total_duration_seconds ->
-            {:error, "Coverage gap at end: clips end at #{last_clip["end_time_seconds"]}s, video ends at #{total_duration_seconds}s"}
+            {:error,
+             "Coverage gap at end: clips end at #{last_clip["end_time_seconds"]}s, video ends at #{total_duration_seconds}s"}
 
           true ->
             :ok

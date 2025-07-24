@@ -48,12 +48,16 @@ defmodule Heaters.Clips.VirtualClips do
   # Delegate cut point operations to specialized module
   defdelegate add_cut_point(source_video_id, frame_number, user_id), to: CutPointOperations
   defdelegate remove_cut_point(source_video_id, frame_number, user_id), to: CutPointOperations
-  defdelegate move_cut_point(source_video_id, old_frame, new_frame, user_id), to: CutPointOperations
+
+  defdelegate move_cut_point(source_video_id, old_frame, new_frame, user_id),
+    to: CutPointOperations
 
   # Delegate MECE validation to specialized module
   defdelegate validate_mece_for_source_video(source_video_id), to: MeceValidation
   defdelegate get_cut_points_for_source_video(source_video_id), to: MeceValidation
-  defdelegate ensure_complete_coverage(source_video_id, total_duration_seconds), to: MeceValidation
+
+  defdelegate ensure_complete_coverage(source_video_id, total_duration_seconds),
+    to: MeceValidation
 
   @doc """
   Create virtual clip records from scene detection cut points.
