@@ -21,25 +21,15 @@
     
 <!-- Reviewing --------------------------------------------------------- -->
   <% else %>
-    <%!-- Preload next clip assets based on clip type --%>
+    <%!-- Preload next clip proxy video metadata --%>
     <%= if @future != [] do %>
       <% next_clip = List.first(@future) %>
-      <%= if next_clip.is_virtual do %>
-        <%!-- Virtual clips: preload proxy video metadata --%>
-        <link rel="preload" as="fetch" href={proxy_video_url(next_clip)} crossorigin="anonymous" />
-      <% else %>
-        <%!-- Physical clips: preload sprite image --%>
-        <link rel="preload" as="image" href={sprite_url(next_clip)} />
-      <% end %>
+      <link rel="preload" as="fetch" href={proxy_video_url(next_clip)} crossorigin="anonymous" />
     <% end %>
 
     <article class="stack-center gap-4">
-      <%!-- Conditionally render player based on clip type --%>
-      <%= if @current.is_virtual do %>
-        <.webcodecs_player clip={@current} />
-      <% else %>
-      <.sprite_player clip={@current} />
-      <% end %>
+      <%!-- Enhanced virtual clips - WebCodecs player for all clips --%>
+      <.webcodecs_player clip={@current} />
       
 <!-- Action buttons ------------------------------------------------ -->
       <nav
@@ -149,13 +139,7 @@
               id={"thumb-viewer-#{sib.id}"}
               class="thumb-viewer"
               phx-hook="ThumbHoverPlayer"
-              data-player={
-                if sib.is_virtual do
-                  HeatersWeb.WebCodecsPlayer.thumb_meta_json(sib)
-                else
-                  HeatersWeb.SpritePlayer.thumb_meta_json(sib)
-                end
-              }
+              data-player={HeatersWeb.WebCodecsPlayer.thumb_meta_json(sib)}
             >
             </div>
             <figcaption>

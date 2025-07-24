@@ -1,26 +1,24 @@
 defmodule Heaters.Clips.Operations do
   @moduledoc """
-  Main coordination context for video clip processing operations.
+  Main coordination context for enhanced virtual clip processing operations.
 
   This module serves as a clean delegation facade providing shared utilities
   and coordination functions used across all video processing operations.
 
-  ## Architecture
+  ## Enhanced Virtual Clips Architecture
 
-  This context is organized into two main subcontexts based on operation type:
+  This context supports the enhanced virtual clips workflow:
 
-  ### Clip Edits (User Actions → New Clips)
-  - **`Operations.Edits.Merge`** - Clip merging using FFmpeg concat
-  - **`Operations.Edits.Split`** - Clip splitting using FFmpeg
-  - Triggered by user review actions
-  - Creates new clip records that re-enter the pipeline
-  - Writes to the `clips` table
+  ### Virtual Clip Operations
+  - **`Operations.VirtualClips`** - Cut point management and MECE validation
+  - **`Operations.Export`** - Rolling export of virtual clips to physical files
+  - Triggered by scene detection and user review actions
+  - Creates database records with cut points (virtual) then physical files (export)
 
   ### Artifact Generation (Pipeline Stages → Supplementary Data)
-  - **`Operations.Artifacts.Keyframe`** - Keyframe extraction using Python OpenCV
-  - **`Operations.Artifacts.Sprite`** - Sprite sheet generation using FFmpeg
-  - Triggered by pipeline state transitions
-  - Creates supplementary data for existing clips
+  - **`Operations.Artifacts.Keyframe`** - Keyframe extraction for exported clips
+  - Triggered by pipeline state transitions after export
+  - Creates supplementary data for existing physical clips
   - Writes to the `clip_artifacts` table
 
   ### Shared Infrastructure
@@ -39,30 +37,26 @@ defmodule Heaters.Clips.Operations do
   - **Error handling** - `mark_failed/3` for consistent failure tracking
   - **Artifact management** - `create_artifacts/3` for database artifact creation
   - **S3 path management** - `build_artifact_prefix/2` for consistent S3 paths
-  - **Sprite workflow** - State management functions for sprite generation workflow
 
   ## Usage
 
-  For clip edits (review workflow):
+  For virtual clip operations:
 
-      # Clip merging
-      {:ok, result} = Operations.Edits.Merge.run_merge(target_clip_id, source_clip_id)
+      # Cut point management
+      {:ok, clips} = VirtualClips.add_cut_point(source_video_id, frame_num, user_id)
 
-      # Clip splitting
-      {:ok, result} = Operations.Edits.Split.run_split(clip_id, split_at_frame)
+      # Rolling export
+      {:ok, result} = Export.Worker.handle_work(%{clip_id: clip_id})
 
   For artifact generation (pipeline stages):
 
-      # Keyframe extraction
+      # Keyframe extraction (after export)
       {:ok, result} = Operations.Artifacts.Keyframe.run_keyframe_extraction(clip_id, "multi")
-
-      # Sprite generation
-      {:ok, result} = Operations.Artifacts.Sprite.run_sprite(clip_id, %{})
 
   For shared utilities (used internally by operation modules):
 
       # Error handling
-      Operations.mark_failed(clip_id, "keyframe_failed", "OpenCV error")
+      Operations.mark_failed(clip_id, "export_failed", "FFmpeg error")
 
       # Artifact creation
       Operations.create_artifacts(clip_id, "keyframe", artifacts_data)
@@ -76,7 +70,6 @@ defmodule Heaters.Clips.Operations do
   alias Heaters.Clips.Queries, as: ClipQueries
   alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Clips.Operations.Artifacts.ClipArtifact
-  alias Heaters.Clips.Operations.Shared.Types
   require Logger
 
   @doc """
@@ -221,72 +214,6 @@ defmodule Heaters.Clips.Operations do
       {:error, Exception.message(e)}
   end
 
-  ## Sprite Workflow Functions
-  ##
-  ## These functions manage the sprite generation workflow state transitions.
-  ## They are used by the SpriteWorker to coordinate sprite generation.
-
-  @doc """
-  Transition a clip to "generating_sprite" state for sprite generation.
-  """
-  @spec start_sprite_generation(integer()) :: {:ok, Clip.t()} | {:error, any()}
-  def start_sprite_generation(clip_id) do
-    with {:ok, clip} <- ClipQueries.get_clip(clip_id),
-         :ok <- validate_sprite_transition(clip.ingest_state) do
-      update_clip(clip, %{
-        ingest_state: "generating_sprite",
-        last_error: nil
-      })
-    end
-  end
-
-  @doc """
-  Mark sprite generation as complete and transition to pending_review.
-
-  This function handles the successful completion of sprite generation,
-  creates sprite artifacts, and transitions the clip to pending_review state.
-  """
-  @spec complete_sprite_generation(integer(), map()) :: {:ok, Clip.t()} | {:error, any()}
-  def complete_sprite_generation(clip_id, sprite_data \\ %{}) do
-    Repo.transaction(fn ->
-      with {:ok, clip} <- ClipQueries.get_clip(clip_id),
-           {:ok, updated_clip} <-
-             update_clip(clip, %{
-               ingest_state: "pending_review",
-               last_error: nil
-             }),
-           {:ok, _artifacts} <- maybe_create_sprite_artifacts(clip_id, sprite_data) do
-        updated_clip
-      else
-        {:error, reason} -> Repo.rollback(reason)
-      end
-    end)
-  end
-
-  @doc """
-  Mark sprite generation as failed.
-
-  This is a convenience function that calls the generic mark_failed/3
-  with sprite-specific parameters.
-  """
-  @spec mark_sprite_failed(integer(), any()) :: {:ok, Clip.t()} | {:error, any()}
-  def mark_sprite_failed(clip_id, error_reason) do
-    mark_failed(clip_id, "sprite_failed", error_reason)
-  end
-
-  @doc """
-  Process successful sprite generation results.
-
-  This is a convenience function for processing sprite success results
-  from workers or direct calls.
-  """
-  @spec process_sprite_success(Clip.t(), Types.SpriteResult.t()) ::
-          {:ok, Clip.t()} | {:error, any()}
-  def process_sprite_success(%Clip{} = clip, %Types.SpriteResult{artifacts: artifacts}) do
-    # Convert SpriteResult to the map format expected by complete_sprite_generation
-    sprite_data = %{"artifacts" => artifacts}
-    complete_sprite_generation(clip.id, sprite_data)
-  end
 
   ## Private Helper Functions
 
@@ -339,25 +266,4 @@ defmodule Heaters.Clips.Operations do
   defp format_error_message(error_reason) when is_binary(error_reason), do: error_reason
   defp format_error_message(error_reason), do: inspect(error_reason)
 
-  defp validate_sprite_transition(current_state) do
-    case current_state do
-      "spliced" -> :ok
-      # Allow resuming interrupted sprite generation
-      "generating_sprite" -> :ok
-      "sprite_failed" -> :ok
-      _ -> {:error, :invalid_state_transition}
-    end
-  end
-
-  defp maybe_create_sprite_artifacts(clip_id, sprite_data) when map_size(sprite_data) > 0 do
-    artifacts_data = Map.get(sprite_data, "artifacts", [])
-
-    if Enum.any?(artifacts_data) do
-      create_artifacts(clip_id, "sprite_sheet", artifacts_data)
-    else
-      {:ok, []}
-    end
-  end
-
-  defp maybe_create_sprite_artifacts(_clip_id, _sprite_data), do: {:ok, []}
 end

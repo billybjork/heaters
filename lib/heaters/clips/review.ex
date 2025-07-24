@@ -10,8 +10,6 @@ defmodule Heaters.Clips.Review do
   alias Ecto.Query, as: Q
   alias Heaters.Repo
   alias Heaters.Clips.Clip
-  alias Heaters.Clips.Operations.Edits.Split.Worker, as: SplitWorker
-  alias Heaters.Clips.Operations.Edits.Merge.Worker, as: MergeWorker
   alias Heaters.Clips.Operations.VirtualClips
 
   require Logger
@@ -22,11 +20,10 @@ defmodule Heaters.Clips.Review do
 
   @action_map %{
     "approve" => "selected_approve",
-    "skip" => "selected_skip",
+    "skip" => "selected_skip", 
     "archive" => "selected_archive",
     "undo" => "selected_undo",
-    "group" => "selected_group_source",
-    "split" => "selected_split"
+    "group" => "selected_group_source"
   }
 
   # -------------------------------------------------------------------------
@@ -143,17 +140,9 @@ defmodule Heaters.Clips.Review do
     handle_virtual_merge(prev_clip, curr_clip)
   end
 
-  def request_merge_and_fetch_next(
-        %Clip{is_virtual: false} = prev_clip,
-        %Clip{is_virtual: false} = curr_clip
-      ) do
-    # PHYSICAL CLIPS: Use existing worker-based merge with buffer
-    handle_physical_merge(prev_clip, curr_clip)
-  end
-
   def request_merge_and_fetch_next(%Clip{} = _prev_clip, %Clip{} = _curr_clip) do
-    # MIXED VIRTUAL/PHYSICAL: Not supported
-    {:error, "Cannot merge virtual and physical clips - incompatible clip types"}
+    # MIXED OR PHYSICAL CLIPS: Not supported in enhanced virtual clips architecture
+    {:error, "Merge operation only supported for virtual clips"}
   end
 
   # Virtual clip merge: instant database operation
@@ -209,45 +198,6 @@ defmodule Heaters.Clips.Review do
     end)
   end
 
-  # Physical clip merge: existing worker-based approach
-  defp handle_physical_merge(%Clip{id: prev_id}, %Clip{id: curr_id}) do
-    now = DateTime.utc_now()
-
-    Repo.transaction(fn ->
-      # Mark both clips as reviewed
-      Repo.update_all(
-        from(c in Clip, where: c.id == ^prev_id),
-        set: [reviewed_at: now]
-      )
-
-      Repo.update_all(
-        from(c in Clip, where: c.id == ^curr_id),
-        set: [reviewed_at: now]
-      )
-
-      # Enqueue merge worker with 60-second buffer for undo
-      buffer_time = DateTime.add(DateTime.utc_now(), 60, :second)
-
-      case MergeWorker.new(%{
-             clip_id_source: curr_id,
-             clip_id_target: prev_id
-           })
-           |> Oban.insert(scheduled_at: buffer_time) do
-        {:ok, _job} ->
-          Logger.info(
-            "Review: Enqueued physical merge worker for clips #{prev_id} and #{curr_id}"
-          )
-
-        {:error, reason} ->
-          Logger.error("Review: Failed to enqueue merge worker: #{inspect(reason)}")
-          Repo.rollback(reason)
-      end
-
-      # Fetch next clip
-      next_clip = fetch_next_pending_clip()
-      {next_clip, %{clip_id_source: curr_id, clip_id_target: prev_id, action: "physical_merge"}}
-    end)
-  end
 
   @doc "Handle a **group** request between *prev ⇠ current* clips."
   def request_group_and_fetch_next(%Clip{id: prev_id}, %Clip{id: curr_id}) do
@@ -300,10 +250,9 @@ defmodule Heaters.Clips.Review do
     handle_virtual_split(clip, frame_num)
   end
 
-  def request_split_and_fetch_next(%Clip{is_virtual: false} = clip, frame_num)
-      when is_integer(frame_num) do
-    # PHYSICAL CLIPS: Use existing worker-based split with buffer
-    handle_physical_split(clip, frame_num)
+  def request_split_and_fetch_next(%Clip{} = _clip, _frame_num) do
+    # PHYSICAL CLIPS: Not supported in enhanced virtual clips architecture
+    {:error, "Split operation only supported for virtual clips"}
   end
 
   # Virtual clip split: instant database operation
@@ -363,40 +312,6 @@ defmodule Heaters.Clips.Review do
     end)
   end
 
-  # Physical clip split: existing worker-based approach
-  defp handle_physical_split(%Clip{id: clip_id}, frame_num) do
-    now = DateTime.utc_now()
-
-    Repo.transaction(fn ->
-      # Mark clip as reviewed
-      Repo.update_all(
-        from(c in Clip, where: c.id == ^clip_id),
-        set: [reviewed_at: now]
-      )
-
-      # Enqueue split worker with 60-second buffer for undo
-      buffer_time = DateTime.add(DateTime.utc_now(), 60, :second)
-
-      case SplitWorker.new(%{
-             clip_id: clip_id,
-             split_at_frame: frame_num
-           })
-           |> Oban.insert(scheduled_at: buffer_time) do
-        {:ok, _job} ->
-          Logger.info(
-            "Review: Enqueued physical split worker for clip #{clip_id} at frame #{frame_num}"
-          )
-
-        {:error, reason} ->
-          Logger.error("Review: Failed to enqueue split worker: #{inspect(reason)}")
-          Repo.rollback(reason)
-      end
-
-      # Fetch next clip
-      next_clip = fetch_next_pending_clip()
-      {next_clip, %{clip_id: clip_id, action: "physical_split", frame: frame_num}}
-    end)
-  end
 
   @doc """
   Cancel pending merge/split jobs for a clip to enable undo.
@@ -500,72 +415,11 @@ defmodule Heaters.Clips.Review do
     {:ok, 0}
   end
 
-  defp cancel_physical_clip_jobs(clip_id) do
-    import Ecto.Query
-
-    # Find and cancel merge jobs where this clip is involved
-    merge_jobs_query =
-      from(job in Oban.Job,
-        where:
-          job.worker == "Heaters.Clips.Operations.Edits.Merge.Worker" and
-            job.state == "scheduled" and
-            (fragment("?->>'clip_id_source' = ?", job.args, ^to_string(clip_id)) or
-               fragment("?->>'clip_id_target' = ?", job.args, ^to_string(clip_id)))
-      )
-
-    {:ok, merge_jobs_cancelled} = Oban.cancel_all_jobs(merge_jobs_query)
-
-    # Find and cancel split jobs for this clip
-    split_jobs_query =
-      from(job in Oban.Job,
-        where:
-          job.worker == "Heaters.Clips.Operations.Edits.Split.Worker" and
-            job.state == "scheduled" and
-            fragment("?->>'clip_id' = ?", job.args, ^to_string(clip_id))
-      )
-
-    {:ok, split_jobs_cancelled} = Oban.cancel_all_jobs(split_jobs_query)
-
-    total_cancelled = merge_jobs_cancelled + split_jobs_cancelled
-
-    if total_cancelled > 0 do
-      Logger.info(
-        "Review: Cancelled #{total_cancelled} pending physical clip jobs for clip #{clip_id}"
-      )
-    end
-
-    {:ok, total_cancelled}
+  defp cancel_physical_clip_jobs(_clip_id) do
+    # Physical clip jobs no longer exist in enhanced virtual clips architecture
+    {:ok, 0}
   end
 
-  @doc """
-  Paged list of **other** clips that belong to the same source_video.
-
-  * sv_id       – the source_video.id that all clips must share
-  * exclude_id  – the *current* clip (will be omitted from the result)
-  * page        – 1-based page index
-  * per         – page size (defaults to 24 thumbnails)
-
-  Results are ordered by id ASC to make pagination deterministic even when
-  background workers update timestamps.
-  """
-  def for_source_video_with_sprites(source_video_id, exclude_id, page, page_size)
-      when not is_nil(source_video_id) do
-    exclude_clause = if is_nil(exclude_id), do: true, else: dynamic([c], c.id != ^exclude_id)
-
-    Clip
-    |> join(:inner, [c], ca in assoc(c, :clip_artifacts), on: ca.artifact_type == "sprite_sheet")
-    |> where([c, _ca], c.source_video_id == ^source_video_id)
-    |> where(^exclude_clause)
-    |> distinct([c, _ca], c.id)
-    |> order_by([c, _ca], asc: c.id)
-    |> offset(^(((page || 1) - 1) * (page_size || 24)))
-    |> limit(^(page_size || 24))
-    |> preload(:clip_artifacts)
-    |> Repo.all()
-  end
-
-  # Handle nil source_video_id case
-  def for_source_video_with_sprites(nil, _exclude_id, _page, _page_size), do: []
 
   # -------------------------------------------------------------------------
   # Private helpers for virtual clip operations

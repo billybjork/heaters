@@ -20,8 +20,7 @@ defmodule HeatersWeb.ReviewLive do
   use HeatersWeb, :live_view
   import Phoenix.LiveView, only: [put_flash: 3, clear_flash: 1]
 
-  # Components / helpers
-  import HeatersWeb.SpritePlayer, only: [sprite_player: 1, sprite_url: 1]
+  # Components / helpers  
   import HeatersWeb.WebCodecsPlayer, only: [webcodecs_player: 1, proxy_video_url: 1]
 
   alias Heaters.Clips.Review, as: ClipReview
@@ -335,14 +334,21 @@ defmodule HeatersWeb.ReviewLive do
 
   @doc false
   defp for_source_video_siblings(source_video_id, exclude_id, page, page_size) do
-    # For now, use the original sprite-based query as fallback during transition
-    # TODO: Enhance to fully support virtual clips once pipeline is stable
-    ClipReview.for_source_video_with_sprites(
-      source_video_id,
-      exclude_id,
-      page,
-      page_size
+    # Enhanced virtual clips: Get clips from same source video (both virtual and physical)
+    # This replaces the old sprite-based query with a more flexible approach
+    import Ecto.Query
+    
+    exclude_clause = if is_nil(exclude_id), do: true, else: dynamic([c], c.id != ^exclude_id)
+
+    from(c in Heaters.Clips.Clip,
+      where: c.source_video_id == ^source_video_id,
+      where: ^exclude_clause,
+      order_by: [asc: c.id],
+      offset: ^((page - 1) * page_size),
+      limit: ^page_size,
+      preload: [:source_video]
     )
+    |> Heaters.Repo.all()
   end
 
   # -------------------------------------------------------------------------
