@@ -13,7 +13,8 @@ defmodule Heaters.Clips.Artifacts.Keyframe do
 
   alias Heaters.Repo
   alias Heaters.Clips.Clip
-  alias Heaters.Clips.Operations
+  alias Heaters.Clips.Artifacts.Operations, as: ArtifactOperations
+  alias Heaters.Clips.Shared.ErrorHandling
   alias Heaters.Clips.Shared.Types
 
   # Domain modules (pure business logic)
@@ -63,7 +64,7 @@ defmodule Heaters.Clips.Artifacts.Keyframe do
         )
 
         error_message = ErrorFormatting.format_domain_error(:keyframe_extraction_failed, reason)
-        Operations.mark_failed(clip_id, "keyframe_failed", error_message)
+        ErrorHandling.mark_failed(clip_id, "keyframe_failed", error_message)
     end
   end
 
@@ -138,7 +139,7 @@ defmodule Heaters.Clips.Artifacts.Keyframe do
 
   @spec build_artifact_prefix(Clip.t()) :: String.t()
   defp build_artifact_prefix(clip) do
-    Operations.build_artifact_prefix(clip, "keyframes")
+    ArtifactOperations.build_artifact_prefix(clip, "keyframes")
   end
 
   @spec execute_elixir_keyframe_extraction(Clip.t(), String.t(), Strategy.strategy_config()) ::
@@ -264,7 +265,7 @@ defmodule Heaters.Clips.Artifacts.Keyframe do
     case Repo.transaction(fn ->
            with {:ok, updated_clip} <- complete_keyframing(clip.id),
                 {:ok, artifacts} <-
-                  Operations.create_artifacts(
+                  ArtifactOperations.create_artifacts(
                     clip.id,
                     "keyframe",
                     Map.get(keyframe_result, "artifacts", [])

@@ -39,9 +39,22 @@ defmodule Heaters.Clips do
   # Delegated functions for common operations
   alias Heaters.Clips.{Review, Operations, Embeddings, Queries}
 
-  # Review operations (enhanced for virtual clips)
+  ## Review delegation
+
+  @doc """
+  Fetch clips awaiting review.
+
+  ## Examples
+
+      # Get next 10 clips for review
+      clips = Clips.next_pending_review_clips(10)
+
+      # Get next 5 clips, excluding some IDs
+      clips = Clips.next_pending_review_clips(5, [123, 456])
+  """
   defdelegate next_pending_review_clips(limit, exclude_ids \\ []), to: Review
-  defdelegate next_pending_review_clip(), to: Review
+
+  # Review operations (enhanced for virtual clips)
   defdelegate select_clip_and_fetch_next(clip, action), to: Review
   defdelegate request_group_and_fetch_next(prev_clip, curr_clip), to: Review
 

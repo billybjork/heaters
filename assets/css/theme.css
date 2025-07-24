@@ -9,9 +9,7 @@
     --approve: #48bb78;
     --skip:    #a0aec0;
     --archive: #f56565;
-    --merge:   #9f7aea;
     --group:   #ed8936;
-    --split:   #ecc94b;
 }
   
 /* ------------- Dark mode ---------------------------------------------- */
@@ -63,9 +61,7 @@ html {
 .btn.approve:hover { background: var(--approve); color: #fff; }
 .btn.skip:hover    { background: var(--skip);    color: #000; }
 .btn.archive:hover { background: var(--archive); color: #fff; }
-.btn.merge:hover   { background: var(--merge);   color: #fff; }
 .btn.group:hover   { background: var(--group);   color: #000; }
-.btn.split:hover   { background: var(--split);   color: #000; }
   
 /* ------------- Flash messages ----------------------------------------- */
 .flash {
@@ -78,9 +74,7 @@ html {
 .flash--approve { background: var(--approve); color: #fff; }
 .flash--skip    { background: var(--skip);    color: #000; }
 .flash--archive { background: var(--archive); color: #fff; }
-.flash--merge   { background: var(--merge);   color: #fff; }
 .flash--group   { background: var(--group);   color: #000; }
-.flash--split   { background: var(--split);   color: #000; }
   
 /* ------------- Clip & actions wrapper --------------------------------- */
 .clip {

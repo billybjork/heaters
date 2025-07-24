@@ -36,8 +36,6 @@
         role="group"
         aria-label="Review actions"
         class="actions"
-        data-id-mode={to_string(@id_mode?)}
-        id="review-actions"
       >
         <!-- Undo -->
         <button
@@ -59,51 +57,6 @@
         </button>
         <button id="btn-archive" class="btn archive" phx-click="select" phx-value-action="archive">
           🗑️ Archive
-        </button>
-        
-<!-- Merge / Group (default ↔ previous or by ID in ID-mode) -->
-        <button
-          id="btn-merge"
-          class="btn merge"
-          phx-click="select"
-          phx-value-action="merge"
-          disabled={@history == [] && !@id_mode?}
-          title={
-            if(@id_mode?,
-              do: "Merge by specified clip ID",
-              else:
-                if(@history == [],
-                  do: "No previous clip to merge with",
-                  else: "Merge with previous clip"
-                )
-            )
-          }
-        >
-          🔗 Merge
-        </button>
-        <button
-          id="btn-group"
-          class="btn group"
-          phx-click="select"
-          phx-value-action="group"
-          disabled={@history == [] && !@id_mode?}
-          title={
-            if(@id_mode?,
-              do: "Group by specified clip ID",
-              else:
-                if(@history == [],
-                  do: "No previous clip to group with",
-                  else: "Group with previous clip"
-                )
-            )
-          }
-        >
-          🖇️ Group
-        </button>
-        
-<!-- Split (handled by JS hook) -->
-        <button id={"split-#{@current.id}"} class="btn split" data-clip-id={@current.id}>
-          ✂️ Split
         </button>
         
 <!-- Target-ID input (only visible in ID-mode and while a letter key is armed) -->
@@ -128,7 +81,6 @@
       
 <!-- Sibling thumbnails (ID-mode only) ----------------------------- -->
       <section
-        :if={@id_mode?}
         id="siblings"
         class="thumbnail-grid"
         data-sibling-page={@sibling_page}

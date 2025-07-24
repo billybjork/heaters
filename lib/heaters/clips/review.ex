@@ -46,25 +46,32 @@ defmodule Heaters.Clips.Review do
   # -------------------------------------------------------------------------
 
   @doc """
-  Return up to `limit` clips still awaiting review, excluding any IDs in
-  `exclude_ids`.
+  Fetch the next `limit` clips pending review, excluding specific clip IDs.
 
-  Clips are ordered by *id* to remain stable even if background workers update
-  timestamps.
+  This is the primary function for batch-fetching pending review clips,
+  used by the review interface for efficient prefetching.
+
+  ## Parameters
+  - `limit`: Maximum number of clips to return
+  - `exclude_ids`: List of clip IDs to exclude from results (default: [])
+
+  ## Examples
+
+      # Get next 10 clips for review
+      clips = Review.next_pending_review_clips(10)
+
+      # Get next 5 clips, excluding currently loaded ones
+      clips = Review.next_pending_review_clips(5, [123, 456, 789])
   """
+  @spec next_pending_review_clips(integer(), list(integer())) :: list(Clip.t())
   def next_pending_review_clips(limit, exclude_ids \\ []) when is_integer(limit) do
-    Clip
-    |> where([c], c.ingest_state == "pending_review" and is_nil(c.reviewed_at))
-    |> where([c], c.id not in ^exclude_ids)
-    |> order_by([c], asc: c.id)
+    from(c in Clip,
+      where: c.ingest_state == "pending_review" and c.id not in ^exclude_ids,
+      order_by: [asc: c.id]
+    )
     |> limit(^limit)
     |> preload([:source_video, :clip_artifacts])
     |> Repo.all()
-  end
-
-  @doc "Legacy single-row wrapper kept for tests / scripts."
-  def next_pending_review_clip do
-    next_pending_review_clips(1) |> List.first()
   end
 
   @doc "Execute `ui_action` for `clip`, mark it reviewed (or *un-review* on undo), and return the next clip to review in one SQL round-trip."
@@ -130,74 +137,6 @@ defmodule Heaters.Clips.Review do
       {next_clip, %{clip_id: clip_id, action: db_action}}
     end)
   end
-
-  @doc "Handle a **merge** request between *prev ⇠ current* clips."
-  def request_merge_and_fetch_next(
-        %Clip{is_virtual: true} = prev_clip,
-        %Clip{is_virtual: true} = curr_clip
-      ) do
-    # VIRTUAL CLIPS: Instant merge via database cut point update
-    handle_virtual_merge(prev_clip, curr_clip)
-  end
-
-  def request_merge_and_fetch_next(%Clip{} = _prev_clip, %Clip{} = _curr_clip) do
-    # MIXED OR PHYSICAL CLIPS: Not supported in enhanced virtual clips architecture
-    {:error, "Merge operation only supported for virtual clips"}
-  end
-
-  # Virtual clip merge: instant database operation
-  defp handle_virtual_merge(%Clip{id: prev_id} = prev_clip, %Clip{id: curr_id} = curr_clip) do
-    now = DateTime.utc_now()
-
-    Repo.transaction(fn ->
-      # Validate that both clips are from the same source video
-      if prev_clip.source_video_id != curr_clip.source_video_id do
-        Repo.rollback("Cannot merge clips from different source videos")
-      end
-
-      # Combine cut points to create merged virtual clip
-      merged_cut_points = combine_virtual_cut_points(prev_clip.cut_points, curr_clip.cut_points)
-
-      # Create new merged virtual clip
-      case VirtualClips.create_virtual_clips_from_cut_points(
-             prev_clip.source_video_id,
-             [merged_cut_points],
-             %{"merged_from" => [prev_id, curr_id]}
-           ) do
-        {:ok, [merged_clip]} ->
-          # Mark original clips as merged/reviewed
-          Repo.update_all(
-            from(c in Clip, where: c.id in [^prev_id, ^curr_id]),
-            set: [
-              reviewed_at: now,
-              # New state for tracking
-              ingest_state: "merged_virtual",
-              grouped_with_clip_id: merged_clip.id
-            ]
-          )
-
-          Logger.info(
-            "Review: Instant virtual merge of clips #{prev_id} and #{curr_id} → #{merged_clip.id}"
-          )
-
-          # Fetch next clip
-          next_clip = fetch_next_pending_clip()
-
-          {next_clip,
-           %{
-             clip_id_source: curr_id,
-             clip_id_target: prev_id,
-             action: "virtual_merge",
-             merged_clip_id: merged_clip.id
-           }}
-
-        {:error, reason} ->
-          Logger.error("Review: Failed to create merged virtual clip: #{inspect(reason)}")
-          Repo.rollback(reason)
-      end
-    end)
-  end
-
 
   @doc "Handle a **group** request between *prev ⇠ current* clips."
   def request_group_and_fetch_next(%Clip{id: prev_id}, %Clip{id: curr_id}) do
@@ -328,7 +267,7 @@ defmodule Heaters.Clips.Review do
     clip = Repo.get(Clip, clip_id)
 
     case clip do
-      %Clip{ingest_state: state} when state in ["merged_virtual", "split_virtual"] ->
+      %Clip{ingest_state: state} when state in ["split_virtual"] ->
         # Virtual clip operations are instant - handle undo by reversing database changes
         handle_virtual_clip_undo(clip)
 
@@ -336,40 +275,6 @@ defmodule Heaters.Clips.Review do
         # Physical clip operations - cancel pending Oban jobs
         cancel_physical_clip_jobs(clip_id)
     end
-  end
-
-  defp handle_virtual_clip_undo(
-         %Clip{ingest_state: "merged_virtual", grouped_with_clip_id: merged_clip_id} = clip
-       ) do
-    # Undo virtual merge: delete merged clip and restore original clips
-    Repo.transaction(fn ->
-      # Delete the merged virtual clip
-      if merged_clip_id do
-        Repo.delete_all(from(c in Clip, where: c.id == ^merged_clip_id))
-      end
-
-      # Find other clips that were merged (they should have the same grouped_with_clip_id)
-      merged_clips =
-        from(c in Clip,
-          where: c.grouped_with_clip_id == ^merged_clip_id and c.ingest_state == "merged_virtual"
-        )
-        |> Repo.all()
-
-      # Restore all merged clips to pending_review
-      clip_ids = [clip.id | Enum.map(merged_clips, & &1.id)]
-
-      Repo.update_all(
-        from(c in Clip, where: c.id in ^clip_ids),
-        set: [
-          reviewed_at: nil,
-          ingest_state: "pending_review",
-          grouped_with_clip_id: nil
-        ]
-      )
-
-      Logger.info("Review: Undid virtual merge for clips #{inspect(clip_ids)}")
-      {:ok, length(clip_ids)}
-    end)
   end
 
   defp handle_virtual_clip_undo(
@@ -437,24 +342,6 @@ defmodule Heaters.Clips.Review do
       |> Repo.one()
 
     if next_id, do: load_clip_with_assocs(next_id)
-  end
-
-  defp combine_virtual_cut_points(prev_cut_points, curr_cut_points) do
-    # Combine two adjacent virtual clips into one merged cut point
-    # prev_clip should end where curr_clip begins (or close to it)
-
-    prev_start_frame = prev_cut_points["start_frame"]
-    prev_start_time = prev_cut_points["start_time_seconds"]
-
-    curr_end_frame = curr_cut_points["end_frame"]
-    curr_end_time = curr_cut_points["end_time_seconds"]
-
-    %{
-      "start_frame" => prev_start_frame,
-      "end_frame" => curr_end_frame,
-      "start_time_seconds" => prev_start_time,
-      "end_time_seconds" => curr_end_time
-    }
   end
 
   defp split_virtual_cut_points(cut_points, split_frame) do

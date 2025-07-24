@@ -15,7 +15,6 @@ defmodule Heaters.Clips.Embeddings do
 
   alias Heaters.Clips.Embeddings.Search
   alias Heaters.Clips.Embeddings.Workflow
-  alias Heaters.Clips.Embeddings.Types.EmbedResult
 
   # Re-export functions from specialized modules
   defdelegate embedded_filter_opts(), to: Search
@@ -28,24 +27,7 @@ defmodule Heaters.Clips.Embeddings do
   defdelegate mark_failed(clip_or_id, failure_state, error_reason), to: Workflow
   defdelegate process_embedding_success(clip, result), to: Workflow
 
-  # Re-export the EmbedResult type for backward compatibility
-  defmodule EmbedResult do
-    @moduledoc """
-    Legacy alias for Heaters.Clips.Embeddings.Types.EmbedResult.
-    Use Heaters.Clips.Embeddings.Types.EmbedResult directly for new code.
-    """
-    defstruct [
-      :status,
-      :clip_id,
-      :embedding_id,
-      :model_name,
-      :generation_strategy,
-      :embedding_dim,
-      :metadata,
-      :duration_ms,
-      :processed_at
-    ]
 
-    @type t :: Heaters.Clips.Embeddings.Types.EmbedResult.t()
-  end
+
+
 end

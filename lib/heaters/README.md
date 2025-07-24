@@ -72,18 +72,24 @@ Clips: spliced → generating_sprite → pending_review → review_approved → 
 
 ## Key Design Decisions
 
-### Semantic Operations Organization
+### Enhanced Virtual Clips Organization
 
-The `Clips` context is organized by **operation type**, not file type:
+The `Clips` context is organized by **operation type** and **domain responsibility**, leveraging the enhanced virtual clips architecture:
 
-- **`edits/`**: User actions that create new clips and enter review workflow
-  - `Merge`, `Split` operations (write to `clips` table)
-- **`artifacts/`**: Pipeline stages that generate supplementary data  
-  - `Sprite`, `Keyframe`, `ClipArtifact` operations (write to `clip_artifacts` table)
-- **`archive/`**: Cleanup operations for archived clips
-  - `Archive` worker (S3 deletion and database cleanup)
+- **`virtual_clips/`**: Virtual clip management with focused modules
+  - `VirtualClips` - Core creation and management
+  - `CutPointOperations` - Add/remove/move cut point operations (instant database transactions)
+  - `MeceValidation` - MECE validation and coverage checking  
+  - `CutPointOperation` - Audit trail schema for cut point history
+- **`artifacts/`**: Pipeline stages that generate supplementary data
+  - `Operations` - Artifact utilities and S3 path management
+  - `Keyframe` operations (write to `clip_artifacts` table)
+- **`shared/`**: Cross-context utilities
+  - `ErrorHandling` - Centralized error handling and failure tracking
+- **`export/`**: Final encoding from gold master to physical clips
+  - `Worker` - Batch export operations
 
-This reflects the fundamental difference between human review actions and automated processing stages.
+This reflects the transition from file-based operations to virtual clip database operations, with clear separation between user actions (instant cut point operations) and automated processing stages.
 
 ### Quality-First Download Architecture
 
@@ -126,11 +132,11 @@ This architecture ensures we maintain the **best quality first** principle while
 
 ### Direct Action Execution with Buffer Time
 
-Human review actions execute immediately with undo support:
+Human review actions execute immediately with enhanced virtual clip support:
 - **Simple Actions**: `approve`, `skip`, `archive`, `group` execute immediately
-- **Complex Actions**: `merge`, `split` use 60-second buffer via Oban scheduling
-- **Undo Support**: Cancels pending jobs and resets clip states within buffer window
-- **Benefits**: Immediate feedback, reliable Oban job management, flexible undo
+- **Cut Point Operations**: `add_cut_point`, `remove_cut_point`, `move_cut_point` execute as instant database transactions with full audit trail
+- **Virtual Clip Benefits**: No file re-encoding, MECE validation, complete operation history, instant feedback
+- **Legacy Complex Actions**: Traditional `merge`, `split` (when applicable) use 60-second buffer via Oban scheduling with undo support
 
 ### Functional Architecture with "I/O at the Edges"
 
@@ -315,9 +321,10 @@ This architecture ensures maximum reliability in production environments where c
    - **approve** → `review_approved` (ready for export)
    - **skip** → `review_skipped` (terminal state)
    - **archive** → `review_archived` (cleanup via archive worker)
-   - **group** → both clips → `review_approved` with `grouped_with_clip_id` metadata
-   - **merge/split** → **instant database operations** update cut points → new virtual clips
+   - **group** → group clips for review/metadata purposes
+   - **add/remove/move cut point** → instant cut point operations via `VirtualClips.CutPointOperations` → new virtual clips with full audit trail
 3. Actions execute immediately with database transactions, no file re-encoding
+4. **Undo:** Only a simple UI-level undo (e.g., Control+Z) for the most recent action is supported. No buffer/Oban undo or multi-step undo remains.
 
 #### Export & Post-Processing
 1. `Clips.Export.Worker` encodes approved virtual clips from gold master → physical clips in `exported` state
@@ -365,7 +372,8 @@ Each stage is pure configuration:
 
 **Review Actions** are handled directly in the UI with immediate execution:
 - Simple actions (approve/skip/archive/group) update states immediately
-- Complex actions (merge/split) use 60-second Oban scheduling for undo support
+- Virtual clip cut point operations (add/remove/move) execute as instant database transactions
+- Legacy complex actions (merge/split) use 60-second Oban scheduling for undo support when applicable
 
 ### Key Architectural Decision: Single Source of Truth
 
@@ -391,11 +399,17 @@ Each stage is pure configuration:
   - **`Videos.Download`**: Video download and processing workflow
   - **`Videos.Preprocess`**: Gold master + review proxy generation with keyframe offsets
   - **`Videos.DetectScenes`**: Python scene detection creating virtual clips (database records only)
-- **`Clips`**: Clip transformations and state management (semantic Edits/Artifacts/Export organization)
-  - **`Clips.VirtualClips`**: Virtual clip creation and cut point management
+- **`Clips`**: Clip transformations and state management (enhanced virtual clips organization)
+  - **`Clips.VirtualClips`**: Core virtual clip creation and management with delegation to specialized modules:
+    - **`VirtualClips.CutPointOperations`**: Add/remove/move cut point operations (instant database transactions)
+    - **`VirtualClips.MeceValidation`**: MECE validation and coverage checking
+    - **`VirtualClips.CutPointOperation`**: Audit trail schema for operation history
   - **`Clips.Export`**: Final encoding from gold master to physical clips (batch processing)
-  - **`Clips.Edits`**: User-driven transformations (Split, Merge) - **now instant database operations on virtual clips**
-  - **`Clips.Artifacts`**: Pipeline-driven processing (Keyframe) that create supplementary data
+  - **`Clips.Artifacts`**: Pipeline-driven processing with focused module organization:
+    - **`Artifacts.Operations`**: Centralized artifact utilities and S3 path management
+    - **`Artifacts.Keyframe`**: Keyframe extraction for exported clips
+  - **`Clips.Shared.ErrorHandling`**: Centralized error handling and failure tracking across all contexts
+  - **`Clips.Operations`**: Clean delegation facade maintaining API compatibility
 - **`Clips.Review`**: Human review workflow with **WebCodecs-based seeking** and instant virtual clip operations
 - **`Clips.Embeddings`**: ML embedding generation and queries (operates on exported physical clips)
 
@@ -461,15 +475,16 @@ Each stage is pure configuration:
 ### Production Architecture Benefits
 
 6. **Production Reliable**: Resumable processing handles container restarts gracefully with automatic recovery
-7. **Clear Architecture**: Functional domain modeling with "I/O at the edges" and semantic organization
+7. **Clear Architecture**: Functional domain modeling with "I/O at the edges" and focused module organization
 8. **Type-Safe**: Structured result types with compile-time validation and rich metadata
 9. **Hybrid Efficient**: Elixir orchestration with Python for CV/ML/media processing - optimal performance
 10. **Zero Boilerplate**: Centralized WorkerBehavior eliminates repetitive code while maintaining full functionality
 11. **Declarative Pipeline**: Single source of truth for workflow orchestration with clear separation of concerns
 12. **Idempotent Operations**: All workers implement robust idempotency patterns for safe retries
 13. **Comprehensive Testing**: Pure functions enable thorough testing without I/O dependencies
-14. **Semantic Organization**: Operations organized by business purpose for improved maintainability
-15. **Scalable Design**: Robust orchestration patterns support production workloads with container resilience
+14. **Focused Modules**: Enhanced organization with single-responsibility modules and clean delegation
+15. **Maintainable Codebase**: Eliminated deprecated code, clear module boundaries, comprehensive audit trails
+16. **Scalable Design**: Robust orchestration patterns support production workloads with container resilience
 
 ---
 
@@ -480,20 +495,26 @@ Each stage is pure configuration:
 - **Database Schema**: Added virtual clip support with `is_virtual`, `cut_points`, proxy architecture columns
 - **PreprocessWorker**: Creates lossless gold master + all-I-frame proxy + keyframe offsets  
 - **DetectScenesWorker**: Creates virtual clips (database records) from proxy file analysis
-- **VirtualClips Module**: Cut point validation and virtual clip database operations
+- **Enhanced VirtualClips Architecture**: Complete refactoring into focused, maintainable modules:
+  - **`VirtualClips`**: Core creation and management with clean delegation
+  - **`VirtualClips.CutPointOperations`**: Add/remove/move operations with MECE validation
+  - **`VirtualClips.MeceValidation`**: Comprehensive coverage and overlap detection
+  - **`VirtualClips.CutPointOperation`**: Full audit trail schema for operation history
+- **Artifacts Module Organization**: Specialized artifact management:
+  - **`Artifacts.Operations`**: Centralized artifact utilities and S3 path management
+  - **`Shared.ErrorHandling`**: Unified error handling across all contexts
 - **ExportWorker**: Batch export from gold master to final delivery MP4s
 - **Python Tasks**: `preprocess.py`, updated `detect_scenes.py`, `export_clips.py`
 - **Pipeline Integration**: Updated `PipelineConfig` with new virtual clip stages
-- **Type Safety**: All Dialyzer warnings resolved, production-ready code quality
+- **Code Quality**: All Dialyzer warnings resolved, deprecated functions removed, production-ready
 - **Enhanced Download Workflow**: Quality-first download strategy with conditional normalization
 - **S3 Integration**: Centralized S3 operations with storage class optimization
-- **Organizational Cleanup**: Flattened directory structure, removed legacy Events functionality
+- **Organizational Cleanup**: Flattened directory structure, removed ~85 lines of deprecated code
 
 ### 🚧 In Progress / Next Steps
 
 - **WebCodecs Player**: JavaScript player using keyframe offsets for frame-perfect seeking
-- **Review UI Updates**: LiveView integration with virtual clip operations  
-- **Review Module**: Update `Clips.Review` for instant virtual merge/split operations
+- **Review UI Updates**: LiveView integration with enhanced virtual clip cut point operations
 - **S3 Integration**: Connect Python tasks to real S3 download/upload operations
 - **Legacy Migration**: Gradual transition from sprite-based to WebCodecs-based review
 

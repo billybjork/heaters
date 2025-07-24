@@ -1,26 +1,8 @@
 defmodule HeatersWeb.ReviewLive do
-  @moduledoc """
-  Optimistic-UI review queue for `pending_review` clips.
-
-  ## Queue terms
-
-  * **current**  – clip on screen
-  * **future**   – pre-fetched queue  (max 5 after the current one)
-  * **history**  – last 5 reviewed clips (undo support)
-
-  ## "ID-mode"
-
-  * **`id_mode?`**      – boolean; toggled by ⌘+Space (sent by JS)
-  * **`sibling_page`**  – current page in the sibling-grid pagination
-  * **`siblings`**      – list of *other* clips from the same `source_video`
-                          (lazy-loaded one page at a time)
-
-  """
-
   use HeatersWeb, :live_view
   import Phoenix.LiveView, only: [put_flash: 3, clear_flash: 1]
 
-  # Components / helpers  
+  # Components / helpers
   import HeatersWeb.WebCodecsPlayer, only: [webcodecs_player: 1, proxy_video_url: 1]
 
   alias Heaters.Clips.Review, as: ClipReview
@@ -80,14 +62,6 @@ defmodule HeatersWeb.ReviewLive do
   # -------------------------------------------------------------------------
 
   # ─────────────────────────────────────────────────────────────────────────
-  # "ID-mode" toggle sent by JS (⌘ + Space)
-  # ─────────────────────────────────────────────────────────────────────────
-  @impl true
-  def handle_event("toggle-id-mode", _params, socket) do
-    {:noreply, assign(socket, id_mode?: !socket.assigns.id_mode?)}
-  end
-
-  # ─────────────────────────────────────────────────────────────────────────
   # Pagination for sibling grid
   # ─────────────────────────────────────────────────────────────────────────
   @impl true
@@ -99,107 +73,6 @@ defmodule HeatersWeb.ReviewLive do
       |> assign(:sibling_page, page_int)
       |> assign_siblings(cur, page_int)
 
-    {:noreply, socket}
-  end
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # SPLIT (must precede generic "select" clause)
-  # ─────────────────────────────────────────────────────────────────────────
-  @impl true
-  def handle_event(
-        "select",
-        %{"action" => "split", "frame" => frame_val},
-        %{assigns: %{current: clip}} = socket
-      ) do
-    frame =
-      case frame_val do
-        v when is_integer(v) -> v
-        v when is_binary(v) -> Integer.parse(v) |> elem(0)
-      end
-
-    socket =
-      socket
-      |> assign(flash_action: "split")
-      |> push_history(clip)
-      |> advance_queue()
-      |> refill_future()
-      |> put_flash(:info, "#{flash_verb("split")} clip #{clip.id}")
-
-    {:noreply, persist_split_async(socket, clip, frame)}
-  end
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # MERGE & GROUP – explicit target_id variant ("ID-mode")
-  # ─────────────────────────────────────────────────────────────────────────
-  for action <- ["merge", "group"] do
-    @impl true
-    def handle_event(
-          "select",
-          %{"action" => unquote(action), "target_id" => tgt_str},
-          %{assigns: %{current: curr}} = socket
-        )
-        when is_binary(tgt_str) and tgt_str != "" do
-      with {tgt_id, ""} <- Integer.parse(tgt_str),
-           %Clip{} = tgt <- ClipQueries.get_clip!(tgt_id),
-           true <- tgt.source_video_id == curr.source_video_id do
-        socket =
-          socket
-          |> assign(flash_action: unquote(action))
-          |> push_history(curr)
-          |> advance_queue()
-          |> refill_future()
-          |> assign(id_mode?: false)
-          |> put_flash(:info, "#{flash_verb(unquote(action))} #{tgt.id} ↔ #{curr.id}")
-
-        {:noreply, persist_async(socket, {String.to_atom(unquote(action)), tgt, curr})}
-      else
-        _ ->
-          {:noreply, put_flash(socket, :error, "Invalid target clip ID for #{unquote(action)}")}
-      end
-    end
-  end
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # MERGE & GROUP (original "with previous clip" behaviour)
-  # ─────────────────────────────────────────────────────────────────────────
-  @impl true
-  def handle_event(
-        "select",
-        %{"action" => "merge"},
-        %{assigns: %{current: curr, history: [prev | _]}} = socket
-      ) do
-    socket =
-      socket
-      |> assign(flash_action: "merge")
-      |> push_history(curr)
-      |> advance_queue()
-      |> refill_future()
-      |> put_flash(:info, "#{flash_verb("merge")} #{prev.id} ↔ #{curr.id}")
-
-    {:noreply, persist_async(socket, {:merge, prev, curr})}
-  end
-
-  @impl true
-  def handle_event(
-        "select",
-        %{"action" => "group"},
-        %{assigns: %{current: curr, history: [prev | _]}} = socket
-      ) do
-    socket =
-      socket
-      |> assign(flash_action: "group")
-      |> push_history(curr)
-      |> advance_queue()
-      |> refill_future()
-      |> put_flash(:info, "#{flash_verb("group")} #{prev.id} ↔ #{curr.id}")
-
-    {:noreply, persist_async(socket, {:group, prev, curr})}
-  end
-
-  # Ignore merge / group if no previous clip (defence-in-depth)
-  @impl true
-  def handle_event("select", %{"action" => action}, %{assigns: %{history: []}} = socket)
-      when action in ["merge", "group"] do
     {:noreply, socket}
   end
 
@@ -251,24 +124,6 @@ defmodule HeatersWeb.ReviewLive do
   # -------------------------------------------------------------------------
   # Async persistence helpers
   # -------------------------------------------------------------------------
-
-  defp persist_split_async(socket, clip, frame) do
-    Phoenix.LiveView.start_async(socket, {:split, clip.id}, fn ->
-      ClipReview.request_split_and_fetch_next(clip, frame)
-    end)
-  end
-
-  defp persist_async(socket, {:merge, prev, curr}) do
-    Phoenix.LiveView.start_async(socket, {:merge_pair, {prev.id, curr.id}}, fn ->
-      ClipReview.request_merge_and_fetch_next(prev, curr)
-    end)
-  end
-
-  defp persist_async(socket, {:group, prev, curr}) do
-    Phoenix.LiveView.start_async(socket, {:group_pair, {prev.id, curr.id}}, fn ->
-      ClipReview.request_group_and_fetch_next(prev, curr)
-    end)
-  end
 
   defp persist_async(socket, clip_id, action) do
     Phoenix.LiveView.start_async(socket, {:persist, clip_id}, fn ->
@@ -334,10 +189,10 @@ defmodule HeatersWeb.ReviewLive do
 
   @doc false
   defp for_source_video_siblings(source_video_id, exclude_id, page, page_size) do
-    # Enhanced virtual clips: Get clips from same source video (both virtual and physical)
-    # This replaces the old sprite-based query with a more flexible approach
+    # Get clips from same source video (both virtual and physical)
+    # Used for sibling navigation in the review interface
     import Ecto.Query
-    
+
     exclude_clause = if is_nil(exclude_id), do: true, else: dynamic([c], c.id != ^exclude_id)
 
     from(c in Heaters.Clips.Clip,
@@ -371,66 +226,11 @@ defmodule HeatersWeb.ReviewLive do
     {:noreply, put_flash(socket, :error, "Action crashed: #{inspect(reason)}")}
   end
 
-  @impl true
-  def handle_async({:merge_pair, _}, {:ok, {_next_clip, _metadata}}, socket),
-    do: {:noreply, socket}
-
-  @impl true
-  def handle_async({:merge_pair, {prev_id, curr_id}}, {:error, reason}, socket) do
-    require Logger
-    Logger.error("Merge #{prev_id}→#{curr_id} failed: #{inspect(reason)}")
-    {:noreply, put_flash(socket, :error, "Merge failed: #{inspect(reason)}")}
-  end
-
-  @impl true
-  def handle_async({:merge_pair, {prev_id, curr_id}}, {:exit, reason}, socket) do
-    require Logger
-    Logger.error("Merge #{prev_id}→#{curr_id} crashed: #{inspect(reason)}")
-    {:noreply, put_flash(socket, :error, "Merge crashed: #{inspect(reason)}")}
-  end
-
-  @impl true
-  def handle_async({:group_pair, _}, {:ok, {_next_clip, _metadata}}, socket),
-    do: {:noreply, socket}
-
-  @impl true
-  def handle_async({:group_pair, {prev_id, curr_id}}, {:error, reason}, socket) do
-    require Logger
-    Logger.error("Group #{prev_id}→#{curr_id} failed: #{inspect(reason)}")
-    {:noreply, put_flash(socket, :error, "Group failed: #{inspect(reason)}")}
-  end
-
-  @impl true
-  def handle_async({:group_pair, {prev_id, curr_id}}, {:exit, reason}, socket) do
-    require Logger
-    Logger.error("Group #{prev_id}→#{curr_id} crashed: #{inspect(reason)}")
-    {:noreply, put_flash(socket, :error, "Group crashed: #{inspect(reason)}")}
-  end
-
-  @impl true
-  def handle_async({:split, _}, {:ok, {_next_clip, _metadata}}, socket), do: {:noreply, socket}
-  @impl true
-  def handle_async({:split, clip_id}, {:error, reason}, socket) do
-    require Logger
-    Logger.error("Split for clip #{clip_id} failed: #{inspect(reason)}")
-    {:noreply, put_flash(socket, :error, "Split failed: #{inspect(reason)}")}
-  end
-
-  @impl true
-  def handle_async({:split, clip_id}, {:exit, reason}, socket) do
-    require Logger
-    Logger.error("Split for clip #{clip_id} crashed: #{inspect(reason)}")
-    {:noreply, put_flash(socket, :error, "Split crashed: #{inspect(reason)}")}
-  end
-
   # -------------------------------------------------------------------------
   # Flash verb helper
   # -------------------------------------------------------------------------
   defp flash_verb("approve"), do: "Approved"
   defp flash_verb("skip"), do: "Skipped"
   defp flash_verb("archive"), do: "Archived"
-  defp flash_verb("merge"), do: "Merged"
-  defp flash_verb("group"), do: "Grouped"
-  defp flash_verb("split"), do: "Split"
   defp flash_verb(other), do: String.capitalize(other)
 end
