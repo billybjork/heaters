@@ -1,9 +1,9 @@
 defmodule Heaters.Clips.Operations.Shared.TempManager do
   @moduledoc """
-  Centralized temporary directory management for transformation operations.
+  Centralized temporary directory management for clip operations.
 
   This module provides consistent temporary directory creation, cleanup, and
-  management patterns across all transformation operations, eliminating
+  management patterns across keyframe extraction, export, and other clip operations, eliminating
   duplicate implementations.
 
   ## Startup Cleanup
@@ -44,14 +44,14 @@ defmodule Heaters.Clips.Operations.Shared.TempManager do
   end
 
   @doc """
-  Create a temporary directory for transformation operations.
+  Create a temporary directory for clip operations.
 
   Creates a unique temporary directory with an optional prefix to help
   identify which operation created it.
 
   ## Parameters
   - `prefix` (optional): String prefix for the temp directory name.
-    Defaults to "heaters_transform"
+    Defaults to "heaters_operation"
 
   ## Examples
 
@@ -59,18 +59,18 @@ defmodule Heaters.Clips.Operations.Shared.TempManager do
       {:ok, temp_dir} = TempManager.create_temp_directory()
 
       # Create with operation-specific prefix
-      {:ok, temp_dir} = TempManager.create_temp_directory("split")
-      # Creates: /tmp/heaters_split_123456789
+      {:ok, temp_dir} = TempManager.create_temp_directory("keyframe")
+      # Creates: /tmp/heaters_keyframe_123456789
 
-      {:ok, temp_dir} = TempManager.create_temp_directory("sprite")
-      # Creates: /tmp/heaters_sprite_987654321
+      {:ok, temp_dir} = TempManager.create_temp_directory("export")
+      # Creates: /tmp/heaters_export_987654321
 
   ## Returns
   - `{:ok, temp_dir_path}` on success
   - `{:error, reason}` on failure
   """
   @spec create_temp_directory(String.t()) :: {:ok, String.t()} | {:error, any()}
-  def create_temp_directory(prefix \\ "transform") do
+  def create_temp_directory(prefix \\ "operation") do
     case System.tmp_dir() do
       nil ->
         Logger.error("TempManager: Could not access system temp directory")
@@ -101,7 +101,7 @@ defmodule Heaters.Clips.Operations.Shared.TempManager do
 
   ## Examples
 
-      TempManager.cleanup_temp_directory("/tmp/heaters_split_123456789")
+      TempManager.cleanup_temp_directory("/tmp/heaters_keyframe_123456789")
 
   ## Returns
   - `:ok` on success (even if directory doesn't exist)
@@ -139,10 +139,10 @@ defmodule Heaters.Clips.Operations.Shared.TempManager do
 
   ## Examples
 
-      result = TempManager.with_temp_directory("split", fn temp_dir ->
+      result = TempManager.with_temp_directory("keyframe", fn temp_dir ->
         # Your processing logic here
         # temp_dir is automatically cleaned up after this function
-        process_video(temp_dir)
+        extract_keyframes(temp_dir)
       end)
 
   ## Returns

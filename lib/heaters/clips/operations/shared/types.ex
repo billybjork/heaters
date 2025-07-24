@@ -1,16 +1,16 @@
 defmodule Heaters.Clips.Operations.Shared.Types do
   @moduledoc """
-  Shared type definitions for the Transform context.
+  Shared type definitions for clip operations.
 
   This module consolidates all result structs and type definitions used across
-  transformation operations, providing consistent patterns and eliminating duplication.
+  keyframe extraction and other clip operations, providing consistent patterns and eliminating duplication.
   """
 
   defmodule TransformResult do
     @moduledoc """
-    Base result type for all transformation operations.
+    Base result type for clip operations.
 
-    Contains common fields shared across all transform results.
+    Contains common fields shared across operation results.
     """
 
     @enforce_keys [:status, :operation_type]
@@ -31,63 +31,9 @@ defmodule Heaters.Clips.Operations.Shared.Types do
           }
   end
 
-  defmodule SplitResult do
-    @moduledoc """
-    Structured result type for Split transform operations.
-    """
-
-    @enforce_keys [:status, :original_clip_id, :new_clip_ids]
-    defstruct [
-      :status,
-      :original_clip_id,
-      :new_clip_ids,
-      :created_clips,
-      :cleanup,
-      :metadata,
-      :duration_ms,
-      :processed_at
-    ]
-
-    @type t :: %__MODULE__{
-            status: String.t(),
-            original_clip_id: integer(),
-            new_clip_ids: [integer()],
-            created_clips: [map()] | nil,
-            cleanup: map() | nil,
-            metadata: map() | nil,
-            duration_ms: integer() | nil,
-            processed_at: DateTime.t() | nil
-          }
-  end
-
-  defmodule SpriteResult do
-    @moduledoc """
-    Structured result type for Sprite transform operations.
-    """
-
-    @enforce_keys [:status, :clip_id, :artifacts]
-    defstruct [
-      :status,
-      :clip_id,
-      :artifacts,
-      :metadata,
-      :duration_ms,
-      :processed_at
-    ]
-
-    @type t :: %__MODULE__{
-            status: String.t(),
-            clip_id: integer(),
-            artifacts: [map()],
-            metadata: map() | nil,
-            duration_ms: integer() | nil,
-            processed_at: DateTime.t() | nil
-          }
-  end
-
   defmodule KeyframeResult do
     @moduledoc """
-    Structured result type for Keyframe transform operations.
+    Structured result type for Keyframe operations.
     """
 
     @enforce_keys [:status, :clip_id, :artifacts]
@@ -114,86 +60,7 @@ defmodule Heaters.Clips.Operations.Shared.Types do
           }
   end
 
-  defmodule MergeResult do
-    @moduledoc """
-    Structured result type for Merge transform operations.
-    """
-
-    @enforce_keys [:status, :merged_clip_id, :source_clip_ids]
-    defstruct [
-      :status,
-      :merged_clip_id,
-      :source_clip_ids,
-      :cleanup,
-      :metadata,
-      :duration_ms,
-      :processed_at
-    ]
-
-    @type t :: %__MODULE__{
-            status: String.t(),
-            merged_clip_id: integer(),
-            source_clip_ids: [integer()],
-            cleanup: map() | nil,
-            metadata: map() | nil,
-            duration_ms: integer() | nil,
-            processed_at: DateTime.t() | nil
-          }
-  end
-
-  defmodule SpliceResult do
-    @moduledoc """
-    Structured result type for Splice (video-to-clips) operations.
-
-    Used for the native Elixir scene detection workflow to replace
-    the Python subprocess approach.
-    """
-
-    @enforce_keys [:status, :source_video_id, :clips_data]
-    defstruct [
-      :status,
-      :source_video_id,
-      :clips_data,
-      :total_scenes_detected,
-      :clips_created,
-      :detection_params,
-      :metadata,
-      :duration_ms,
-      :processed_at
-    ]
-
-    @type t :: %__MODULE__{
-            status: String.t(),
-            source_video_id: integer(),
-            clips_data: [map()],
-            total_scenes_detected: integer() | nil,
-            clips_created: integer() | nil,
-            detection_params: map() | nil,
-            metadata: map() | nil,
-            duration_ms: integer() | nil,
-            processed_at: DateTime.t() | nil
-          }
-  end
-
-  # Parameter types used across different transformation operations
-
-  @type split_params :: %{
-          split_at_frame: integer(),
-          original_start_time: float(),
-          original_end_time: float(),
-          original_start_frame: integer(),
-          original_end_frame: integer(),
-          source_title: String.t(),
-          fps: float() | nil,
-          source_video_id: integer()
-        }
-
-  @type sprite_params :: %{
-          tile_width: integer(),
-          tile_height: integer(),
-          fps: integer(),
-          cols: integer()
-        }
+  # Parameter types used for keyframe operations
 
   @type keyframe_params :: %{
           strategy: String.t(),

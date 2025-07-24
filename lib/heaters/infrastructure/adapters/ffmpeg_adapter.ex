@@ -22,45 +22,6 @@ defmodule Heaters.Infrastructure.Adapters.FFmpegAdapter do
     FFmpegRunner.get_video_metadata(video_path)
   end
 
-  @doc """
-  Create a sprite sheet from a video file.
-
-  ## Examples
-
-      {:ok, file_size} = FFmpegAdapter.create_sprite_sheet(
-        "/tmp/video.mp4",
-        "/tmp/sprite.jpg",
-        24.0,  # fps
-        480,   # tile_width
-        -1,    # tile_height (preserve aspect ratio)
-        5,     # cols
-        10     # rows
-      )
-  """
-  @spec create_sprite_sheet(
-          String.t(),
-          String.t(),
-          float(),
-          integer(),
-          integer(),
-          integer(),
-          integer()
-        ) ::
-          {:ok, integer()} | {:error, any()}
-  def create_sprite_sheet(video_path, output_path, fps, tile_width, tile_height, cols, rows)
-      when is_binary(video_path) and is_binary(output_path) and is_float(fps) and
-             is_integer(tile_width) and is_integer(tile_height) and
-             is_integer(cols) and is_integer(rows) do
-    FFmpegRunner.create_sprite_sheet(
-      video_path,
-      output_path,
-      fps,
-      tile_width,
-      tile_height,
-      cols,
-      rows
-    )
-  end
 
   @doc """
   Extract keyframes from a video at specific timestamps.
@@ -132,48 +93,5 @@ defmodule Heaters.Infrastructure.Adapters.FFmpegAdapter do
     end
   end
 
-  @doc """
-  Merge multiple video files into a single video.
 
-  ## Parameters
-  - `video_paths`: List of video file paths to merge
-  - `output_path`: Path for the merged video file
-
-  ## Returns
-  - `{:ok, file_size}` on success
-  - `{:error, reason}` on failure
-  """
-  @spec merge_videos([String.t()], String.t()) :: {:ok, integer()} | {:error, any()}
-  def merge_videos(video_paths, output_path)
-      when is_list(video_paths) and is_binary(output_path) do
-    # Create a temporary concat list file
-    concat_list_path = Path.join(Path.dirname(output_path), "concat_list.txt")
-
-    try do
-      # Build concat list content
-      concat_content =
-        video_paths
-        |> Enum.map(fn path -> "file '#{path}'" end)
-        |> Enum.join("\n")
-
-      # Write concat list file
-      case File.write(concat_list_path, concat_content) do
-        :ok ->
-          # Use FFmpegRunner to merge videos
-          result = FFmpegRunner.merge_videos(concat_list_path, output_path)
-
-          # Clean up concat list file
-          File.rm(concat_list_path)
-
-          result
-
-        error ->
-          error
-      end
-    rescue
-      e ->
-        File.rm(concat_list_path)
-        {:error, "Exception during video merge: #{inspect(e)}"}
-    end
-  end
 end

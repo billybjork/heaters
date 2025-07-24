@@ -13,57 +13,25 @@ defmodule Heaters.Clips.Operations.Shared.ErrorFormatting do
 
   ## Examples
 
-      iex> ErrorFormatting.format_domain_error(:invalid_state_for_sprite, "pending_review")
-      "Clip state 'pending_review' is not valid for sprite generation. Valid states: [\"spliced\"]"
+      iex> ErrorFormatting.format_domain_error(:invalid_state_for_keyframe, "pending_review")
+      "Clip state 'pending_review' is not valid for keyframe extraction. Valid states: [\"review_approved\", \"keyframe_failed\"]"
 
       iex> ErrorFormatting.format_domain_error(:video_too_short, 0.05)
       "Video too short for processing: 0.05s"
   """
   @spec format_domain_error(atom(), any()) :: String.t()
-  def format_domain_error(:invalid_state_for_sprite, state) do
-    valid_states = ClipValidation.valid_states_for_operation(:sprite)
-
-    "Clip state '#{state}' is not valid for sprite generation. Valid states: #{inspect(valid_states)}"
-  end
-
   def format_domain_error(:invalid_state_for_keyframe, state) do
     valid_states = ClipValidation.valid_states_for_operation(:keyframe)
 
     "Clip state '#{state}' is not valid for keyframe extraction. Valid states: #{inspect(valid_states)}"
   end
 
-  def format_domain_error(:invalid_state_for_split, state) do
-    valid_states = ClipValidation.valid_states_for_operation(:split)
-    "Clip state '#{state}' is not valid for splitting. Valid states: #{inspect(valid_states)}"
-  end
-
-  def format_domain_error(:invalid_state_for_merge, state) do
-    valid_states = ClipValidation.valid_states_for_operation(:merge)
-    "Clip state '#{state}' is not valid for merging. Valid states: #{inspect(valid_states)}"
-  end
-
   def format_domain_error(:video_too_short, duration) do
     "Video too short for processing: #{duration}s"
   end
 
-  def format_domain_error(:invalid_sprite_params, details) do
-    "Invalid sprite parameters: #{inspect(details)}"
-  end
-
   def format_domain_error(:invalid_keyframe_strategy, strategy) do
     "Invalid keyframe strategy: #{strategy}"
-  end
-
-  def format_domain_error(:invalid_split_frame, frame_num) do
-    "Invalid split frame number: #{frame_num}"
-  end
-
-  def format_domain_error(:split_frame_out_of_bounds, {split_frame, start_frame, end_frame}) do
-    "Split frame #{split_frame} is outside clip range (#{start_frame}-#{end_frame})"
-  end
-
-  def format_domain_error(:invalid_split_frame_type, frame_value) do
-    "Split frame must be an integer, got: #{inspect(frame_value)}"
   end
 
   def format_domain_error(:clip_missing_video_file, clip_id) do
@@ -74,32 +42,12 @@ defmodule Heaters.Clips.Operations.Shared.ErrorFormatting do
     "Clip #{clip_id} does not have an associated source video"
   end
 
-  def format_domain_error(:invalid_merge_clips, details) do
-    "Invalid clips for merging: #{inspect(details)}"
-  end
-
   def format_domain_error(:invalid_clip_id_type, {clip_type, clip_id}) do
     "#{String.capitalize(clip_type)} clip ID must be an integer, got: #{inspect(clip_id)}"
   end
 
   def format_domain_error(:invalid_clip_id_value, {clip_type, clip_id}) do
     "#{String.capitalize(clip_type)} clip ID must be positive, got: #{clip_id}"
-  end
-
-  def format_domain_error(:identical_clip_ids, clip_id) do
-    "Target and source clip IDs cannot be the same: #{clip_id}"
-  end
-
-  def format_domain_error(:clips_different_source_videos, {target_video_id, source_video_id}) do
-    "Clips must belong to the same source video. Target: #{target_video_id}, Source: #{source_video_id}"
-  end
-
-  def format_domain_error(:clips_not_different, {target_clip_id, source_clip_id}) do
-    "Cannot merge a clip with itself. Target: #{target_clip_id}, Source: #{source_clip_id}"
-  end
-
-  def format_domain_error(:clips_missing_video_files, missing_clips) do
-    "The following clips are missing video files: #{Enum.join(missing_clips, ", ")}"
   end
 
   def format_domain_error(error_type, details) do
@@ -112,11 +60,11 @@ defmodule Heaters.Clips.Operations.Shared.ErrorFormatting do
   ## Examples
 
       iex> errors = [
-      ...>   {:invalid_state_for_sprite, "pending_review"},
+      ...>   {:invalid_state_for_keyframe, "pending_review"},
       ...>   {:video_too_short, 0.05}
       ...> ]
       iex> ErrorFormatting.format_multiple_errors(errors)
-              "Multiple errors: Clip state 'pending_review' is not valid for sprite generation. Valid states: [\"spliced\"]; Video too short for processing: 0.05s"
+      "Multiple errors: Clip state 'pending_review' is not valid for keyframe extraction. Valid states: [\"review_approved\", \"keyframe_failed\"]; Video too short for processing: 0.05s"
   """
   @spec format_multiple_errors([{atom(), any()}]) :: String.t()
   def format_multiple_errors(errors) when is_list(errors) do
@@ -133,11 +81,11 @@ defmodule Heaters.Clips.Operations.Shared.ErrorFormatting do
 
   ## Examples
 
-      iex> ErrorFormatting.format_validation_context(:split, :readiness_check)
-      "Split operation readiness validation failed"
+      iex> ErrorFormatting.format_validation_context(:keyframe, :readiness_check)
+      "Keyframe operation readiness validation failed"
 
-      iex> ErrorFormatting.format_validation_context(:merge, :requirement_check)
-      "Merge operation requirement validation failed"
+      iex> ErrorFormatting.format_validation_context(:export, :requirement_check)
+      "Export operation requirement validation failed"
   """
   @spec format_validation_context(atom(), atom()) :: String.t()
   def format_validation_context(operation, context) do

@@ -1,14 +1,12 @@
 defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
   @moduledoc """
-  Centralized FFmpeg operations for video transformations.
+  Centralized FFmpeg operations for video processing.
 
   This module consolidates FFmpeg command construction and execution patterns
-  used across video splitting, sprite generation, merging, and metadata extraction.
+  used for video clip creation, video concatenation, and metadata extraction.
 
   Key functions:
   - Video clip creation with standardized encoding settings
-  - Sprite sheet generation with configurable parameters
-  - Video concatenation with copy codec
   - Keyframe extraction at specific timestamps or percentages
   - Video metadata extraction via ffprobe
   """
@@ -30,12 +28,11 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
   @video_pix_fmt "yuv420p"
   @audio_codec "aac"
   @audio_bitrate "128k"
-  @jpeg_quality 3
 
   @doc """
   Creates a video clip with standardized encoding settings.
 
-  Replicates the FFmpeg command used in split operations:
+  Replicates the FFmpeg command used in clip creation operations:
   ffmpeg -ss start_time -i input -t duration
     -map 0:v:0? -map 0:a:0?
     -c:v libx264 -preset fast -crf 25 -pix_fmt yuv420p
@@ -102,101 +99,12 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
     end
   end
 
-  @doc """
-  Generates a sprite sheet from video with configurable parameters.
 
-  Replicates the FFmpeg command used in sprite operations:
-  ffmpeg -y -i input -vf "fps=X,scale=W:H:flags=neighbor,tile=CxR" -an -qscale:v 3 output.jpg
-
-  ## Parameters
-  - `input_path`: Path to input video file
-  - `output_path`: Path for output sprite sheet
-  - `sprite_fps`: Target FPS for sprite sampling
-  - `tile_width`: Width of individual tiles in pixels
-  - `tile_height`: Height of individual tiles in pixels
-  - `cols`: Number of columns in sprite grid
-  - `num_rows`: Number of rows in sprite grid
-
-  ## Returns
-  - `{:ok, file_size}` on success with output file size in bytes
-  - `{:error, reason}` on failure
-  """
-  @spec create_sprite_sheet(
-          String.t(),
-          String.t(),
-          float(),
-          integer(),
-          integer(),
-          integer(),
-          integer()
-        ) :: ffmpeg_result()
-  def create_sprite_sheet(
-        input_path,
-        output_path,
-        sprite_fps,
-        tile_width,
-        tile_height,
-        cols,
-        num_rows
-      ) do
-    try do
-      # Build video filter: fps=X,scale=W:H:flags=neighbor,tile=CxR
-      vf_filter =
-        "fps=#{sprite_fps},scale=#{tile_width}:#{tile_height}:flags=neighbor,tile=#{cols}x#{num_rows}"
-
-      command =
-        FFmpex.new_command()
-        |> add_global_option(option_y())
-        |> add_input_file(input_path)
-        |> add_output_file(output_path)
-        |> add_file_option(option_vf(vf_filter))
-        |> add_file_option(option_an())
-        |> add_stream_specifier(stream_type: :video)
-        |> add_stream_option(option_q("#{@jpeg_quality}"))
-
-      execute_and_get_file_size_with_fallback(command, output_path)
-    rescue
-      e ->
-        {:error, "Exception creating sprite sheet: #{inspect(e)}"}
-    end
-  end
-
-  @doc """
-  Merges multiple video files using FFmpeg concat demuxer.
-
-  Replicates the FFmpeg command used in merge operations:
-  ffmpeg -f concat -i concat_list.txt -c copy -y output.mp4
-
-  ## Parameters
-  - `concat_list_path`: Path to concat list file containing input videos
-  - `output_path`: Path for merged output video
-
-  ## Returns
-  - `{:ok, file_size}` on success with output file size in bytes
-  - `{:error, reason}` on failure
-  """
-  @spec merge_videos(String.t(), String.t()) :: ffmpeg_result()
-  def merge_videos(concat_list_path, output_path) do
-    try do
-      command =
-        FFmpex.new_command()
-        |> add_global_option(option_f("concat"))
-        |> add_input_file(concat_list_path)
-        |> add_output_file(output_path)
-        |> add_file_option(option_c("copy"))
-        |> add_file_option(option_y())
-
-      execute_and_get_file_size(command, output_path)
-    rescue
-      e ->
-        {:error, "Exception merging videos: #{inspect(e)}"}
-    end
-  end
 
   @doc """
   Extracts comprehensive video metadata using ffprobe.
 
-  Replicates the ffprobe command used in sprite operations:
+  Replicates the ffprobe command used for video analysis:
   ffprobe -v error -select_streams v:0 -show_entries stream=duration,r_frame_rate,nb_frames,width,height -count_frames -of json video_path
 
   ## Parameters
@@ -246,7 +154,7 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
   end
 
   @doc """
-  Extracts video frame rate using ffprobe (simpler version for split operations).
+  Extracts video frame rate using ffprobe.
 
   Used when only FPS is needed rather than full metadata.
 
@@ -335,46 +243,7 @@ defmodule Heaters.Clips.Operations.Shared.FFmpegRunner do
     end
   end
 
-  @spec execute_and_get_file_size_with_fallback(FFmpex.Command.t(), String.t()) :: ffmpeg_result()
-  defp execute_and_get_file_size_with_fallback(command, output_path) do
-    case FFmpex.execute(command) do
-      {:ok, _output} ->
-        # Verify the file was created and get its size
-        case File.stat(output_path) do
-          {:ok, %File.Stat{size: file_size}} ->
-            Logger.debug(
-              "FFmpegRunner: Successfully created file: #{output_path} (#{file_size} bytes)"
-            )
 
-            {:ok, file_size}
-
-          {:error, reason} ->
-            {:error, "Created file not found: #{inspect(reason)}"}
-        end
-
-      {:error, reason} ->
-        # For sprite generation, check if file was created despite stderr warnings
-        case File.stat(output_path) do
-          {:ok, %File.Stat{size: file_size}} when file_size > 0 ->
-            Logger.info(
-              "FFmpegRunner: File created successfully despite stderr warnings: #{output_path} (#{file_size} bytes)"
-            )
-
-            {:ok, file_size}
-
-          {:ok, %File.Stat{size: 0}} ->
-            Logger.error("FFmpegRunner: Created file is empty: #{output_path}")
-            {:error, "Created file is empty"}
-
-          {:error, _} ->
-            Logger.error(
-              "FFmpegRunner: FFmpeg execution failed and no output file created: #{inspect(reason)}"
-            )
-
-            {:error, "FFmpeg error: #{inspect(reason)}"}
-        end
-    end
-  end
 
   @spec parse_video_metadata(map()) :: metadata_result()
   defp parse_video_metadata(probe_data) do
