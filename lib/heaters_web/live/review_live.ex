@@ -12,8 +12,6 @@ defmodule HeatersWeb.ReviewLive do
   @prefetch 6
   @refill_threshold 3
   @history_limit 5
-  # thumbnails per page in the grid
-  @sibling_page_size 24
 
   # -------------------------------------------------------------------------
   # Mount – build initial queue
@@ -26,11 +24,7 @@ defmodule HeatersWeb.ReviewLive do
     socket =
       socket
       |> assign(
-        flash_action: nil,
-        id_mode?: false,
-        sibling_page: 1,
-        sibling_page_size: @sibling_page_size,
-        siblings: []
+        flash_action: nil
       )
 
     case clips do
@@ -51,8 +45,7 @@ defmodule HeatersWeb.ReviewLive do
            future: fut,
            history: [],
            page_state: :reviewing
-         )
-         |> assign_siblings(cur, 1)}
+         )}
     end
   end
 
@@ -60,20 +53,7 @@ defmodule HeatersWeb.ReviewLive do
   # Event handlers
   # -------------------------------------------------------------------------
 
-  # ─────────────────────────────────────────────────────────────────────────
-  # Pagination for sibling grid
-  # ─────────────────────────────────────────────────────────────────────────
-  @impl true
-  def handle_event("change-page", %{"page" => page_str}, %{assigns: %{current: cur}} = socket) do
-    {page_int, _} = Integer.parse(page_str)
 
-    socket =
-      socket
-      |> assign(:sibling_page, page_int)
-      |> assign_siblings(cur, page_int)
-
-    {:noreply, socket}
-  end
 
   # ─────────────────────────────────────────────────────────────────────────
   # Generic SELECT (approve, skip, archive, …)
@@ -114,7 +94,6 @@ defmodule HeatersWeb.ReviewLive do
         page_state: :reviewing
       )
       |> refill_future()
-      |> assign_siblings(prev, 1)
       |> clear_flash()
 
     {:noreply, persist_async(socket, prev.id, "undo")}
@@ -159,51 +138,15 @@ defmodule HeatersWeb.ReviewLive do
   end
 
   defp advance_queue(%{assigns: %{future: []}} = socket) do
-    assign(socket, current: nil, page_state: :empty, siblings: [])
+    assign(socket, current: nil, page_state: :empty)
   end
 
   defp advance_queue(%{assigns: %{future: [next | rest]}} = socket) do
     socket
     |> assign(current: next, future: rest, page_state: :reviewing)
-    |> assign_siblings(next, 1)
   end
 
-  # -------------------------------------------------------------------------
-  # Sibling-grid helpers
-  # -------------------------------------------------------------------------
 
-  @doc false
-  defp assign_siblings(socket, %Clip{} = clip, page) do
-    # Use virtual/physical-aware sibling query
-    sibs =
-      for_source_video_siblings(
-        clip.source_video_id,
-        clip.id,
-        page,
-        @sibling_page_size
-      )
-
-    assign(socket, siblings: sibs, sibling_page: page)
-  end
-
-  @doc false
-  defp for_source_video_siblings(source_video_id, exclude_id, page, page_size) do
-    # Get clips from same source video (both virtual and physical)
-    # Used for sibling navigation in the review interface
-    import Ecto.Query
-
-    exclude_clause = if is_nil(exclude_id), do: true, else: dynamic([c], c.id != ^exclude_id)
-
-    from(c in Heaters.Clips.Clip,
-      where: c.source_video_id == ^source_video_id,
-      where: ^exclude_clause,
-      order_by: [asc: c.id],
-      offset: ^((page - 1) * page_size),
-      limit: ^page_size,
-      preload: [:source_video]
-    )
-    |> Heaters.Repo.all()
-  end
 
   # -------------------------------------------------------------------------
   # Async callbacks (unchanged except for flash_verb)

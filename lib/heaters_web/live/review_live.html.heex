@@ -58,16 +58,6 @@
         <button id="btn-archive" class="btn archive" phx-click="select" phx-value-action="archive">
           🗑️ Archive
         </button>
-        
-<!-- Target-ID input (only visible in ID-mode and while a letter key is armed) -->
-        <input
-          id="target-id"
-          type="number"
-          inputmode="numeric"
-          phx-debounce="blur"
-          class="target-id-input"
-          placeholder="clip-id"
-        />
       </nav>
       
 <!-- Flash message -->
@@ -78,55 +68,6 @@
       >
         {msg}
       </p>
-      
-<!-- Sibling thumbnails (ID-mode only) ----------------------------- -->
-      <section
-        id="siblings"
-        class="thumbnail-grid"
-        data-sibling-page={@sibling_page}
-      >
-        <%= for sib <- @siblings do %>
-          <figure class="thumbnail" id={"thumb-#{sib.id}"}>
-            <div
-              id={"thumb-viewer-#{sib.id}"}
-              class="thumb-viewer"
-              phx-hook="ThumbHoverPlayer"
-              data-player={HeatersWeb.WebCodecsPlayer.thumb_meta_json(sib)}
-            >
-            </div>
-            <figcaption>
-              {sib.id}
-              <%!-- Show clip type indicator --%>
-              <%= if sib.is_virtual do %>
-                <span style="color: #0066cc; font-size: 10px;">⚡</span>
-              <% else %>
-                <span style="color: #666; font-size: 10px;">📹</span>
-              <% end %>
-            </figcaption>
-          </figure>
-        <% end %>
-        
-<!-- Pagination controls -->
-        <div class="pagination">
-          <button
-            :if={@sibling_page > 1}
-            class="btn-ghost"
-            phx-click="change-page"
-            phx-value-page={@sibling_page - 1}
-          >
-            ◀︎ Prev
-          </button>
-          <span>page {@sibling_page}</span>
-          <button
-            :if={Enum.count(@siblings) == @sibling_page_size}
-            class="btn-ghost"
-            phx-click="change-page"
-            phx-value-page={@sibling_page + 1}
-          >
-            Next ▶︎
-          </button>
-        </div>
-      </section>
     </article>
   <% end %>
 </main>

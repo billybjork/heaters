@@ -37,7 +37,7 @@
     column-gap: var(--space-2);
     max-width: 100%;
 
-    /* lock height so icon toggles don’t shift navigation below */
+    /* lock height so icon toggles don't shift navigation below */
     min-height: 3rem;
 }
 
@@ -138,79 +138,3 @@
     outline-offset: 2px;
 }
 
-/*───────────────────────────────────────────────────────────────────────────
-  Merge/Group-by-ID mode
-  ─────────────────────────────────────────────────────────────────────────*/
-
-/* Hide in two cases only:
-   ① ID-mode is off   ② JS hasn’t removed the .hidden helper class */
-.actions[data-id-mode="false"] .target-id-input,
-.target-id-input.hidden {
-    display: none;
-}
-   
-/* When visible it appears inline with buttons */
-.target-id-input {
-    display: inline-block;
-    width: 8ch;
-}
-
-/* remove ↑↓ spinners (WebKit / Blink) */
-.target-id-input::-webkit-outer-spin-button,
-.target-id-input::-webkit-inner-spin-button {
-    -webkit-appearance: none;
-    margin: 0;
-}
-   
-/* Base styling for the numeric box when it *is* shown ------------------- */
-.target-id-input {
-    width: 8ch;
-    padding: var(--space-2) var(--space-2);
-    margin-left: var(--space-3);
-    font: inherit;
-    color: var(--fg);
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    text-align: left;
-}
-
-/* focus ring matches Tailwind default ----------------------------------- */
-.target-id-input:focus {
-    outline: 2px solid var(--focus);
-    outline-offset: 2px;
-}
-
-/* Thumbnail grid of sibling clips --------------------------------------- */
-.thumbnail-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: var(--space-3);
-    margin-top: var(--space-4);
-    width: 100%;
-}
-
-.thumbnail-grid .thumbnail {
-    text-align: center;
-    font-size: 0.75rem;
-    line-height: 1;
-    color: var(--muted);
-}
-
-.thumb-viewer:hover {
-    opacity: 0.8;
-}
-
-/* Pagination controls under the grid ------------------------------------ */
-.pagination {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: var(--space-3);
-    margin: var(--space-4) 0 0;   /* always sits *below* the grid */
-    grid-column: 1 / -1;          /* span full width when inside grid */
-}
-
-.pagination .btn-ghost {
-    padding: var(--space-1) var(--space-3);
-}
