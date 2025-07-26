@@ -1,7 +1,7 @@
 // Phoenix LiveView hook for virtual clip review
 // Extracted from webcodecs-player.js
 
-import { WebCodecsPlayer } from "./webcodecs-player-core";
+import { MSEPlayer } from "./mse-player";
 import { FallbackVideoPlayer } from "./fallback-video-player";
 
 export const WebCodecsPlayerController = {
@@ -41,18 +41,36 @@ export const WebCodecsPlayerController = {
     const supportsWebCodecs = this._detectWebCodecsSupport();
     console.log(`[WebCodecsPlayer] WebCodecs support: ${supportsWebCodecs}`);
 
-    if (supportsWebCodecs && meta.isVirtual && meta.keyframeOffsets && meta.keyframeOffsets.length > 0) {
-      /* use WebCodecs player for virtual clips with keyframe data */
-      this.player = new WebCodecsPlayer(
-        clipId,
-        this.el,
-        scrub,
-        playPause,
-        frameLabel,
-        meta,
-        speedBtn
-      );
-    } else {
+    /* initialize player with fallback logic */
+    this._initializePlayer(supportsWebCodecs, meta, clipId, scrub, playPause, frameLabel, speedBtn);
+  },
+
+  async _initializePlayer(supportsWebCodecs, meta, clipId, scrub, playPause, frameLabel, speedBtn) {
+    let useWebCodecs = supportsWebCodecs && meta.isVirtual && meta.keyframeOffsets && meta.keyframeOffsets.length > 0;
+    
+    if (useWebCodecs) {
+      try {
+        /* attempt to use WebCodecs player for virtual clips with keyframe data */
+        console.log(`[WebCodecsPlayer] Attempting WebCodecs player - WebCodecs: ${supportsWebCodecs}, Virtual: ${meta.isVirtual}, Keyframes: ${meta.keyframeOffsets?.length || 0}`);
+        this.player = new MSEPlayer(
+          clipId,
+          this.el,
+          scrub,
+          playPause,
+          frameLabel,
+          meta,
+          speedBtn
+        );
+        
+        await this.player.initialize();
+        console.log(`[WebCodecsPlayer] WebCodecs player initialized successfully`);
+      } catch (error) {
+        console.warn(`[WebCodecsPlayer] WebCodecs initialization failed, falling back to traditional player:`, error);
+        useWebCodecs = false;
+      }
+    }
+    
+    if (!useWebCodecs) {
       /* fallback to traditional video player */
       console.log(`[WebCodecsPlayer] Using fallback player - WebCodecs: ${supportsWebCodecs}, Virtual: ${meta.isVirtual}, Keyframes: ${meta.keyframeOffsets?.length || 0}`);
       this.player = new FallbackVideoPlayer(
@@ -64,6 +82,7 @@ export const WebCodecsPlayerController = {
         meta,
         speedBtn
       );
+      await this.player.initialize();
     }
 
     /* Click on player area toggles play/pause */
@@ -80,9 +99,6 @@ export const WebCodecsPlayerController = {
       }
     };
     window.addEventListener("keydown", this._onKey);
-
-    /* initialize player */
-    this.player.initialize();
   },
 
   updated() {

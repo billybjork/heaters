@@ -148,7 +148,10 @@ defmodule Heaters.Infrastructure.Orchestration.FFmpegConfig do
           # Minimum keyframe interval
           keyint_min: "1",
           # Disable scene change detection
-          sc_threshold: "0"
+          sc_threshold: "0",
+          # Force baseline profile for WebCodecs compatibility
+          profile: "baseline",
+          level: "3.0"
         },
         audio: %{
           codec: "aac",
@@ -157,7 +160,12 @@ defmodule Heaters.Infrastructure.Orchestration.FFmpegConfig do
         },
         container: "mp4",
         web_optimization: %{
-          movflags: "+faststart"
+          # MSE-compatible fragmentation: dash creates proper fragments with moof+mdat
+          movflags: "+dash+delay_moov",
+          # Fragment duration for seeking (1 second fragments)
+          frag_duration: "1000000",
+          # Ensure proper segment boundaries
+          min_frag_duration: "1000000"
         }
       },
 
@@ -281,6 +289,7 @@ defmodule Heaters.Infrastructure.Orchestration.FFmpegConfig do
     |> add_if_present(["-g", video_config[:gop_size]])
     |> add_if_present(["-keyint_min", video_config[:keyint_min]])
     |> add_if_present(["-sc_threshold", video_config[:sc_threshold]])
+    |> add_if_present(["-profile:v", video_config[:profile]])
     |> add_if_present(["-level", video_config[:level]])
     |> add_if_present(["-coder", video_config[:coder]])
     |> add_if_present(["-context", video_config[:context]])
@@ -308,6 +317,8 @@ defmodule Heaters.Infrastructure.Orchestration.FFmpegConfig do
     args
     |> add_if_present(["-movflags", web_opts[:movflags]])
     |> add_if_present(["-avoid_negative_ts", web_opts[:avoid_negative_ts]])
+    |> add_if_present(["-frag_duration", web_opts[:frag_duration]])
+    |> add_if_present(["-min_frag_duration", web_opts[:min_frag_duration]])
   end
 
   defp add_threading_args(args, nil), do: args

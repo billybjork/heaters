@@ -229,7 +229,7 @@ def extract_keyframe_offsets(video_path: Path) -> List[int]:
     try:
         cmd = [
             "ffprobe", "-v", "quiet", "-select_streams", "v:0",
-            "-show_entries", "packet=pos", "-show_frames",
+            "-show_entries", "frame=key_frame,pkt_pos",
             "-print_format", "json", str(video_path)
         ]
         
@@ -238,13 +238,24 @@ def extract_keyframe_offsets(video_path: Path) -> List[int]:
         
         offsets = []
         for frame in data.get("frames", []):
-            if frame.get("media_type") == "video" and frame.get("key_frame") == 1:
+            if frame.get("key_frame") == 1:  # key_frame is 1 for keyframes, 0 for non-keyframes
                 pos = frame.get("pkt_pos")
                 if pos and pos != "N/A":
-                    offsets.append(int(pos))
+                    try:
+                        offsets.append(int(pos))
+                    except (ValueError, TypeError):
+                        # Skip invalid positions
+                        continue
         
+        logger.info(f"Successfully extracted {len(offsets)} keyframe offsets from {video_path}")
         return sorted(offsets)
         
+    except subprocess.CalledProcessError as e:
+        logger.warning(f"ffprobe failed to extract keyframe offsets: {e}")
+        return []
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse ffprobe JSON output: {e}")
+        return []
     except Exception as e:
         logger.warning(f"Failed to extract keyframe offsets: {e}")
         return []
