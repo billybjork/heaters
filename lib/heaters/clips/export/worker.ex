@@ -117,9 +117,7 @@ defmodule Heaters.Clips.Export.Worker do
         mark_clips_export_failed(clips, error_msg)
 
       proxy_path ->
-        Logger.info(
-          "ExportWorker: Processing #{length(clips)} clips from proxy: #{proxy_path}"
-        )
+        Logger.info("ExportWorker: Processing #{length(clips)} clips from proxy: #{proxy_path}")
 
         execute_batch_export(clips, source_video, proxy_path)
     end

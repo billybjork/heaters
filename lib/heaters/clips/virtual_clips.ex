@@ -43,6 +43,7 @@ defmodule Heaters.Clips.VirtualClips do
   alias Heaters.Repo
   alias Heaters.Clips.Clip
   alias Heaters.Clips.VirtualClips.{CutPointOperations, MeceValidation}
+  alias HeatersWeb.VideoUrlHelper
   require Logger
 
   # Delegate cut point operations to specialized module
@@ -349,6 +350,79 @@ defmodule Heaters.Clips.VirtualClips do
         Logger.error("VirtualClips: Failed to create #{error_count} virtual clips")
         Repo.rollback("Failed to create #{error_count} virtual clips")
     end
+  end
+
+  @doc """
+  Get streaming URL for a clip.
+
+  Returns CloudFront streaming URL for virtual clips and direct S3 URL for physical clips.
+
+  ## Parameters
+  - `clip`: Clip struct with is_virtual flag and time boundaries
+  - `source_video`: Source video struct with proxy_filepath
+
+  ## Returns
+  - `{:ok, url, player_type}` on success
+  - `{:error, reason}` on failure
+
+  ## Examples
+
+      {:ok, url, :cloudfront_range} = VirtualClips.get_streaming_url(virtual_clip, source_video)
+      {:ok, url, :direct_s3} = VirtualClips.get_streaming_url(physical_clip, source_video)
+  """
+  @spec get_streaming_url(Clip.t(), map()) :: {:ok, String.t(), atom()} | {:error, String.t()}
+  def get_streaming_url(%Clip{} = clip, source_video) do
+    VideoUrlHelper.get_video_url(clip, source_video)
+  end
+
+  @doc """
+  Check if a clip supports CloudFront streaming.
+
+  Returns true if the clip has the necessary file available for streaming.
+  """
+  @spec streamable?(Clip.t(), map()) :: boolean()
+  def streamable?(%Clip{} = clip, source_video) do
+    VideoUrlHelper.streamable?(clip, source_video)
+  end
+
+  @doc """
+  Get all virtual clips for a source video with their streaming URLs.
+
+  Returns a list of clips with streaming metadata for efficient loading.
+  """
+  @spec get_virtual_clips_with_urls(integer()) :: list(map())
+  def get_virtual_clips_with_urls(source_video_id) do
+    query =
+      from(c in Clip,
+        join: sv in assoc(c, :source_video),
+        where: c.source_video_id == ^source_video_id and c.is_virtual == true,
+        order_by: [asc: c.source_video_order],
+        select: %{
+          clip: c,
+          source_video: sv
+        }
+      )
+
+    Repo.all(query)
+    |> Enum.map(fn %{clip: clip, source_video: source_video} ->
+      case get_streaming_url(clip, source_video) do
+        {:ok, url, player_type} ->
+          %{
+            clip: clip,
+            streaming_url: url,
+            player_type: player_type,
+            streamable: true
+          }
+
+        {:error, _reason} ->
+          %{
+            clip: clip,
+            streaming_url: nil,
+            player_type: :fallback,
+            streamable: false
+          }
+      end
+    end)
   end
 
   defp generate_virtual_clip_identifier(source_video_id, index) do

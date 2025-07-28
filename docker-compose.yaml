@@ -30,6 +30,7 @@ services:
     networks:
       - app-network
 
+
   # Main application service for development
   app:
     build:

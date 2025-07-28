@@ -3,7 +3,7 @@ defmodule HeatersWeb.ReviewLive do
   import Phoenix.LiveView, only: [put_flash: 3, clear_flash: 1]
 
   # Components / helpers
-  import HeatersWeb.WebCodecsPlayer, only: [webcodecs_player: 1, proxy_video_url: 1]
+  import HeatersWeb.CloudFrontVideoPlayer, only: [cloudfront_video_player: 1, proxy_video_url: 1]
 
   alias Heaters.Clips.Review, as: ClipReview
   alias Heaters.Clips.Clip
@@ -23,9 +23,7 @@ defmodule HeatersWeb.ReviewLive do
 
     socket =
       socket
-      |> assign(
-        flash_action: nil
-      )
+      |> assign(flash_action: nil)
 
     case clips do
       [] ->
@@ -52,8 +50,6 @@ defmodule HeatersWeb.ReviewLive do
   # -------------------------------------------------------------------------
   # Event handlers
   # -------------------------------------------------------------------------
-
-
 
   # ─────────────────────────────────────────────────────────────────────────
   # Generic SELECT (approve, skip, archive, …)
@@ -145,8 +141,6 @@ defmodule HeatersWeb.ReviewLive do
     socket
     |> assign(current: next, future: rest, page_state: :reviewing)
   end
-
-
 
   # -------------------------------------------------------------------------
   # Async callbacks (unchanged except for flash_verb)

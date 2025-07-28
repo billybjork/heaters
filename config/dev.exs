@@ -159,3 +159,13 @@ config :ex_aws, :s3,
   scheme: "https://",
   host: "s3.us-west-1.amazonaws.com",
   region: System.get_env("AWS_REGION") || "us-west-1"
+
+# ───────────────────────────────────────────
+#  CloudFront Video Streaming Configuration
+# ───────────────────────────────────────────
+config :heaters,
+  # CloudFront distribution domain (fallback to S3 for development)
+  cloudfront_domain: System.get_env("CLOUDFRONT_DEV_DOMAIN"),
+  # S3 bucket configuration
+  s3_dev_bucket_name: System.get_env("S3_DEV_BUCKET_NAME") || "heaters-dev",
+  aws_region: System.get_env("AWS_REGION") || "us-west-1"

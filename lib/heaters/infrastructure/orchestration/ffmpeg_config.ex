@@ -132,9 +132,9 @@ defmodule Heaters.Infrastructure.Orchestration.FFmpegConfig do
         }
       },
 
-      # All-I-frame proxy for efficient WebCodecs seeking
+      # All-I-frame proxy for efficient CloudFront streaming
       proxy: %{
-        purpose: "All-I-frame proxy for efficient WebCodecs seeking and export",
+        purpose: "All-I-frame proxy for efficient CloudFront streaming and export",
         optimization: "Seeking performance and visual quality",
         video: %{
           codec: "libx264",
@@ -149,7 +149,7 @@ defmodule Heaters.Infrastructure.Orchestration.FFmpegConfig do
           keyint_min: "1",
           # Disable scene change detection
           sc_threshold: "0",
-          # Force baseline profile for WebCodecs compatibility
+          # Force baseline profile for universal compatibility
           profile: "baseline",
           level: "3.0"
         },
@@ -160,15 +160,10 @@ defmodule Heaters.Infrastructure.Orchestration.FFmpegConfig do
         },
         container: "mp4",
         web_optimization: %{
-          # MSE-compatible fragmentation: dash creates proper fragments with moof+mdat
-          movflags: "+dash+delay_moov",
-          # Fragment duration for seeking (1 second fragments)
-          frag_duration: "1000000",
-          # Ensure proper segment boundaries
-          min_frag_duration: "1000000"
+          # CloudFront optimization: faststart for instant seeking + fragmentation for range requests
+          movflags: "+faststart+frag_keyframe+empty_moov"
         }
       },
-
 
       # Lightweight normalization to fix yt-dlp merge issues  
       download_normalization: %{

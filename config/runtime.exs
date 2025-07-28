@@ -109,9 +109,9 @@ if config_env() != :test and not is_database_operation do
     IO.puts("[Runtime.exs] S3 Bucket not configured via APP_ENV specific vars or S3_BUCKET_NAME.")
   end
 
-  # Configure WebCodecs support and proxy settings
-  webcodecs_enabled = System.get_env("WEBCODECS_ENABLED", "true") == "true"
-  config :heaters, :webcodecs_enabled, webcodecs_enabled
+  # Configure CloudFront streaming and proxy settings
+  cloudfront_streaming_enabled = System.get_env("CLOUDFRONT_STREAMING_ENABLED", "true") == "true"
+  config :heaters, :cloudfront_streaming_enabled, cloudfront_streaming_enabled
 
   # Configure CDN domain for proxy video streaming (supports range requests)
   proxy_cdn_domain = System.get_env("PROXY_CDN_DOMAIN") || current_cloudfront_domain
@@ -124,7 +124,7 @@ if config_env() != :test and not is_database_operation do
   config :heaters, :master_storage_class, master_storage_class
   config :heaters, :proxy_storage_class, proxy_storage_class
 
-  IO.puts("[Runtime.exs] WebCodecs enabled: #{webcodecs_enabled}")
+  IO.puts("[Runtime.exs] CloudFront streaming enabled: #{cloudfront_streaming_enabled}")
   IO.puts("[Runtime.exs] Proxy CDN domain: #{proxy_cdn_domain}")
   IO.puts("[Runtime.exs] Master storage: #{master_storage_class}")
   IO.puts("[Runtime.exs] Proxy storage: #{proxy_storage_class}")
