@@ -2,6 +2,7 @@ defmodule HeatersWeb.VideoController do
   use HeatersWeb, :controller
   require Logger
   alias Heaters.Videos.Download
+  alias HeatersWeb.{FFmpegPool, StreamPorts, VideoUrlHelper}
 
   def create(conn, %{"url" => url}) do
     case Download.submit(url) do
@@ -18,21 +19,32 @@ defmodule HeatersWeb.VideoController do
   end
 
   @doc """
-  Stream a virtual clip with time-based byte range requests.
-  
-  Accepts requests like: /videos/clips/:clip_id/stream
-  Converts time ranges to byte ranges, then proxies to CloudFront.
+  Stream a virtual clip using FFmpeg time-based segmentation.
+
+  Accepts requests like: /videos/clips/:clip_id/stream/:version
+  Uses FFmpeg to stream only the exact time range needed for the clip.
   """
-  def stream_clip(conn, %{"clip_id" => clip_id}) do
-    case get_clip_info(clip_id) do
-      {:ok, clip_info} ->
-        handle_range_request(conn, clip_info)
-      
-      {:error, reason} ->
+  def stream_clip(conn, %{"clip_id" => clip_id, "version" => _version}) do
+    # Check FFmpeg process pool for rate limiting
+    case FFmpegPool.acquire() do
+      :ok ->
+        try do
+          do_stream_clip(conn, clip_id)
+        after
+          FFmpegPool.release()
+        end
+
+      :rate_limited ->
         conn
-        |> put_status(404)
-        |> json(%{error: reason})
+        |> put_status(429)
+        |> put_resp_header("retry-after", "10")
+        |> json(%{error: "Too many concurrent video streams", retry_after: 10})
     end
+  end
+
+  # Fallback for requests without version (for backward compatibility)
+  def stream_clip(conn, %{"clip_id" => clip_id}) do
+    stream_clip(conn, %{"clip_id" => clip_id, "version" => "1"})
   end
 
   # Extract only the path (and query string, if any) from the Referer header.
@@ -50,179 +62,103 @@ defmodule HeatersWeb.VideoController do
     end
   end
 
-  defp handle_range_request(conn, clip_info) do
-    %{
-      cloudfront_url: cloudfront_url,
-      start_time: start_time,
-      end_time: end_time
-    } = clip_info
+  # Core FFmpeg streaming implementation
+  defp do_stream_clip(conn, clip_id) do
+    case get_clip_with_source_video(clip_id) do
+      {:ok, clip} ->
+        case generate_signed_cloudfront_url(clip.source_video) do
+          {:ok, signed_url} ->
+            stream_ffmpeg_clip(conn, clip, signed_url)
 
-    case get_req_header(conn, "range") do
-      [] ->
-        # No range header - return full clip range  
-        get_clip_byte_range_and_proxy(conn, cloudfront_url, start_time, end_time, nil)
-        
-      [<<"bytes=", range_spec::binary>>] ->
-        # Parse range header and combine with time constraints
-        case parse_range_spec(range_spec) do
-          {:ok, {req_start, req_end}} ->
-            get_clip_byte_range_and_proxy(conn, cloudfront_url, start_time, end_time, {req_start, req_end})
-          
-          :error ->
+          {:error, reason} ->
+            Logger.error("Failed to generate signed URL for clip #{clip_id}: #{reason}")
+
             conn
-            |> put_status(416)
-            |> put_resp_header("content-range", "bytes */0")
-            |> send_resp(416, "Requested Range Not Satisfiable")
+            |> put_status(500)
+            |> json(%{error: "Failed to access video source"})
         end
-    end
-  end
 
-  defp get_clip_byte_range_and_proxy(conn, cloudfront_url, start_time, end_time, requested_bytes) do
-    # For now, use simple constant bitrate approximation
-    # TODO: Replace with proper FFprobe integration for keyframe-accurate seeking
-    case estimate_byte_range(cloudfront_url, start_time, end_time) do
-      {:ok, {clip_byte_start, clip_byte_end, total_size}} ->
-        # Calculate final byte range considering both time constraints and browser request
-        {final_start, final_end} = calculate_final_range(
-          clip_byte_start, 
-          clip_byte_end, 
-          requested_bytes,
-          total_size
-        )
-        
-        # Proxy request to CloudFront with calculated byte range
-        proxy_cloudfront_request(conn, cloudfront_url, final_start, final_end, total_size)
-        
       {:error, reason} ->
-        Logger.error("Failed to get byte range for clip: #{reason}")
         conn
-        |> put_status(500)
-        |> json(%{error: "Failed to process video clip"})
+        |> put_status(404)
+        |> json(%{error: reason})
     end
   end
 
-  defp estimate_byte_range(video_url, start_time, end_time) do
-    # Simple constant bitrate estimation
-    # In production, use FFprobe to get precise keyframe positions
-    
-    try do
-      case HTTPoison.head(video_url) do
-        {:ok, %{headers: headers}} ->
-          total_size = 
-            headers
-            |> Enum.find_value(fn {key, value} -> 
-              if String.downcase(key) == "content-length", do: String.to_integer(value)
-            end)
-          
-          if total_size do
-            # Estimate based on common video lengths (adjust based on your videos)
-            estimated_duration = 300.0  # 5 minutes typical
-            
-            bytes_per_second = total_size / estimated_duration
-            clip_start_byte = round(start_time * bytes_per_second)
-            clip_end_byte = round(end_time * bytes_per_second)
-            
-            # Ensure we don't exceed file bounds
-            clip_start_byte = max(0, min(clip_start_byte, total_size - 1))
-            clip_end_byte = max(clip_start_byte, min(clip_end_byte, total_size - 1))
-            
-            {:ok, {clip_start_byte, clip_end_byte, total_size}}
-          else
-            {:error, "Could not determine file size"}
-          end
-          
-        {:error, reason} ->
-          {:error, "HTTP request failed: #{inspect(reason)}"}
-      end
-    rescue
-      error ->
-        {:error, "Exception: #{inspect(error)}"}
-    end
-  end
+  defp stream_ffmpeg_clip(conn, clip, signed_url) do
+    # Build FFmpeg command for time-based segmentation
+    cmd = [
+      "ffmpeg",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-ss",
+      to_string(clip.start_time_seconds),
+      "-to",
+      to_string(clip.end_time_seconds),
+      "-i",
+      signed_url,
+      "-c",
+      "copy",
+      "-movflags",
+      "+faststart",
+      "-f",
+      "mp4",
+      "pipe:1"
+    ]
 
-  defp calculate_final_range(clip_start, clip_end, requested_bytes, total_size) do
-    case requested_bytes do
-      nil ->
-        # No specific byte range requested, return full clip range
-        {clip_start, clip_end}
-        
-      {req_start, req_end} ->
-        # Combine clip constraints with requested byte range
-        final_start = max(clip_start, req_start)
-        final_end = case req_end do
-          nil -> clip_end
-          end_byte -> min(clip_end, end_byte)
-        end
-        
-        # Ensure bounds
-        final_start = max(0, min(final_start, total_size - 1))
-        final_end = max(final_start, min(final_end, total_size - 1))
-        
-        {final_start, final_end}
-    end
-  end
+    Logger.debug(
+      "Streaming clip #{clip.id} (#{clip.start_time_seconds}s-#{clip.end_time_seconds}s)"
+    )
 
-  defp proxy_cloudfront_request(conn, cloudfront_url, start_byte, end_byte, total_size) do
-    range_header = "bytes=#{start_byte}-#{end_byte}"
-    
-    case HTTPoison.get(cloudfront_url, [{"Range", range_header}]) do
-      {:ok, %{status_code: 206, body: body}} ->
-        # Forward CloudFront response with proper headers
-        content_length = end_byte - start_byte + 1
-        
+    # Set up chunked response with appropriate headers
+    conn =
+      conn
+      |> put_resp_header("content-type", "video/mp4")
+      |> put_resp_header("accept-ranges", "bytes")
+      |> put_resp_header("cache-control", "public, max-age=31536000")
+      |> put_resp_header("x-clip-id", to_string(clip.id))
+      |> send_chunked(200)
+
+    # Stream FFmpeg output directly to HTTP response
+    case StreamPorts.stream(conn, cmd) do
+      {:ok, conn} ->
+        Logger.debug("Successfully streamed clip #{clip.id}")
         conn
-        |> put_status(206)
-        |> put_resp_header("accept-ranges", "bytes")
-        |> put_resp_header("content-range", "bytes #{start_byte}-#{end_byte}/#{total_size}")
-        |> put_resp_header("content-length", to_string(content_length))
-        |> put_resp_header("content-type", "video/mp4")
-        |> put_resp_header("cache-control", "public, max-age=31536000")
-        |> send_resp(206, body)
-        
-      {:ok, %{status_code: status_code}} ->
-        Logger.error("CloudFront returned status #{status_code}")
-        send_resp(conn, 502, "Bad Gateway")
-        
-      {:error, reason} ->
-        Logger.error("Failed to proxy CloudFront request: #{inspect(reason)}")
-        send_resp(conn, 502, "Bad Gateway")
+
+      {:error, reason, conn} ->
+        Logger.error("FFmpeg streaming failed for clip #{clip.id}: #{inspect(reason)}")
+        conn
     end
   end
 
-  defp parse_range_spec(range_spec) do
-    case String.split(range_spec, "-", parts: 2) do
-      [start_str, end_str] ->
-        try do
-          start_byte = if start_str == "", do: 0, else: String.to_integer(start_str)
-          end_byte = if end_str == "", do: nil, else: String.to_integer(end_str)
-          {:ok, {start_byte, end_byte}}
-        rescue
-          _ -> :error
-        end
-      _ ->
-        :error
-    end
-  end
-
-  defp get_clip_info(clip_id) do
-    # Load clip from database with source video
+  defp get_clip_with_source_video(clip_id) do
     case Heaters.Repo.get(Heaters.Clips.Clip, clip_id) do
       nil ->
         {:error, "Clip not found"}
-        
+
       clip ->
-        clip = Heaters.Repo.preload(clip, :source_video)
-        
-        case HeatersWeb.VideoUrlHelper.get_video_url(clip, clip.source_video) do
-          {:ok, cloudfront_url, _player_type} ->
-            {:ok, %{
-              cloudfront_url: cloudfront_url,
-              start_time: clip.start_time_seconds,
-              end_time: clip.end_time_seconds
-            }}
-            
-          {:error, reason} ->
-            {:error, reason}
+        # Only allow streaming for virtual clips
+        if clip.is_virtual do
+          clip = Heaters.Repo.preload(clip, :source_video)
+          {:ok, clip}
+        else
+          {:error, "Only virtual clips can be streamed"}
+        end
+    end
+  end
+
+  defp generate_signed_cloudfront_url(source_video) do
+    case source_video.proxy_filepath do
+      nil ->
+        {:error, "No proxy file available"}
+
+      proxy_path ->
+        # Generate signed CloudFront URL for FFmpeg input
+        # Use CloudFront for edge caching of source video
+        case VideoUrlHelper.generate_signed_cloudfront_url(proxy_path) do
+          {:ok, signed_url} -> {:ok, signed_url}
+          {:error, reason} -> {:error, reason}
         end
     end
   end

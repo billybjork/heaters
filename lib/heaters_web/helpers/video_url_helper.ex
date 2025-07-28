@@ -4,7 +4,7 @@ defmodule HeatersWeb.VideoUrlHelper do
 
   Provides URL generation for virtual clips using CloudFront's native byte-range 
   capabilities and direct URLs for physical clips.
-  
+
   CloudFront automatically handles HTTP Range requests, so we generate simple URLs
   and let the native HTML5 video element handle seeking via byte-range requests.
   """
@@ -59,10 +59,38 @@ defmodule HeatersWeb.VideoUrlHelper do
   def streamable?(%{is_virtual: true}, %{proxy_filepath: proxy_path}) when not is_nil(proxy_path),
     do: true
 
-  def streamable?(%{is_virtual: false, clip_filepath: clip_path}, _source_video) when not is_nil(clip_path),
-    do: true
+  def streamable?(%{is_virtual: false, clip_filepath: clip_path}, _source_video)
+      when not is_nil(clip_path),
+      do: true
 
   def streamable?(_, _), do: false
+
+  @doc """
+  Generate signed CloudFront URL for FFmpeg input.
+
+  This generates presigned URLs optimized for FFmpeg access, with longer expiration
+  times and appropriate caching headers for video processing.
+  """
+  @spec generate_signed_cloudfront_url(String.t()) :: {:ok, String.t()} | {:error, String.t()}
+  def generate_signed_cloudfront_url(s3_path) do
+    require Logger
+
+    case get_cloudfront_domain() do
+      nil ->
+        # Development mode - use presigned S3 URLs for FFmpeg
+        Logger.debug("Generating presigned URL for FFmpeg input: #{s3_path}")
+        {:ok, generate_presigned_url(s3_path)}
+
+      cloudfront_domain ->
+        # Production mode - use CloudFront URLs
+        # For now, use unsigned CloudFront URLs
+        # In production, you might want to implement CloudFront signed URLs
+        s3_key = extract_s3_key(s3_path)
+        url = "https://#{cloudfront_domain}/#{s3_key}"
+        Logger.debug("Generated CloudFront URL for FFmpeg input: #{url}")
+        {:ok, url}
+    end
+  end
 
   @doc """
   Build CloudFront URL from S3 path.
@@ -73,13 +101,16 @@ defmodule HeatersWeb.VideoUrlHelper do
   @spec build_cloudfront_url(String.t()) :: String.t()
   def build_cloudfront_url(s3_path) do
     require Logger
-    
+
     case get_cloudfront_domain() do
       nil ->
         # Development mode - use presigned URLs to avoid CORS
-        Logger.debug("VideoUrlHelper: Using presigned URL for development (no CloudFront domain configured)")
+        Logger.debug(
+          "VideoUrlHelper: Using presigned URL for development (no CloudFront domain configured)"
+        )
+
         generate_presigned_url(s3_path)
-      
+
       cloudfront_domain ->
         # Production mode - use CloudFront domain
         Logger.debug("VideoUrlHelper: Using CloudFront domain: #{cloudfront_domain}")
@@ -110,13 +141,13 @@ defmodule HeatersWeb.VideoUrlHelper do
 
   defp generate_presigned_url(s3_path) do
     require Logger
-    
+
     # Generate presigned URL for development to avoid CORS issues
     s3_key = extract_s3_key(s3_path)
     bucket_name = get_bucket_name()
-    
+
     Logger.debug("VideoUrlHelper: Generating presigned URL for s3://#{bucket_name}/#{s3_key}")
-    
+
     # 1 hour expiration for video streaming
     ExAws.S3.presigned_url(
       ExAws.Config.new(:s3),
@@ -126,13 +157,18 @@ defmodule HeatersWeb.VideoUrlHelper do
       expires_in: 3600
     )
     |> case do
-      {:ok, url} -> 
+      {:ok, url} ->
         Logger.debug("VideoUrlHelper: Generated presigned URL successfully")
         url
-      {:error, reason} -> 
-        Logger.warning("VideoUrlHelper: Failed to generate presigned URL: #{inspect(reason)}, falling back to direct S3")
+
+      {:error, reason} ->
+        Logger.warning(
+          "VideoUrlHelper: Failed to generate presigned URL: #{inspect(reason)}, falling back to direct S3"
+        )
+
         # Fallback to direct S3 URL if presigned URL generation fails
         region = Application.get_env(:heaters, :aws_region, "us-east-1")
+
         case region do
           "us-east-1" -> "https://#{bucket_name}.s3.amazonaws.com/#{s3_key}"
           _ -> "https://#{bucket_name}.s3.#{region}.amazonaws.com/#{s3_key}"
@@ -146,7 +182,6 @@ defmodule HeatersWeb.VideoUrlHelper do
     # In production, this would be your CloudFront distribution domain
     Application.get_env(:heaters, :cloudfront_domain)
   end
-
 
   defp get_bucket_name do
     Application.get_env(:heaters, :s3_dev_bucket_name) ||

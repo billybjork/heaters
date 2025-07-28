@@ -33,11 +33,11 @@ defmodule HeatersWeb.CloudFrontVideoPlayer do
   - `controls` - Show video controls (optional, defaults to true)
   - `preload` - Video preload strategy (optional, defaults to "metadata")
   """
-  attr :clip, :map, required: true
-  attr :id, :string, default: "video-player"
-  attr :class, :string, default: ""
-  attr :controls, :boolean, default: true
-  attr :preload, :string, default: "none"
+  attr(:clip, :map, required: true)
+  attr(:id, :string, default: "video-player")
+  attr(:class, :string, default: "")
+  attr(:controls, :boolean, default: true)
+  attr(:preload, :string, default: "none")
 
   def cloudfront_video_player(assigns) do
     # Get video URL and player type
@@ -86,14 +86,17 @@ defmodule HeatersWeb.CloudFrontVideoPlayer do
   # Helper function to get video data for the component
   defp get_video_data(clip) do
     # Load source video if not already loaded
-    source_video = 
+    source_video =
       case clip do
-        %{source_video: %{} = sv} -> sv
-        %{source_video_id: id} when not is_nil(id) -> 
+        %{source_video: %{} = sv} ->
+          sv
+
+        %{source_video_id: id} when not is_nil(id) ->
           # In a real app, you'd load this from the database
           # For now, assume it's preloaded or handle the error case
           %{proxy_filepath: nil}
-        _ -> 
+
+        _ ->
           %{proxy_filepath: nil}
       end
 
