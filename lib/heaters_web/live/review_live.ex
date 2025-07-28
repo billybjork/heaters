@@ -3,7 +3,7 @@ defmodule HeatersWeb.ReviewLive do
   import Phoenix.LiveView, only: [put_flash: 3, clear_flash: 1]
 
   # Components / helpers
-  import HeatersWeb.CloudFrontVideoPlayer, only: [cloudfront_video_player: 1, proxy_video_url: 1]
+  import HeatersWeb.CloudFrontVideoPlayer, only: [cloudfront_video_player: 1]
 
   alias Heaters.Clips.Review, as: ClipReview
   alias Heaters.Clips.Clip

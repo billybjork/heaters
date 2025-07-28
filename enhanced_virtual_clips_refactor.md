@@ -22,8 +22,8 @@ This document tracks the comprehensive refactor of the video processing system's
 - ✅ **Artifacts/Shared Organization**: Artifact utilities moved to `artifacts/operations.ex`. Shared error handling in `shared/error_handling.ex`.
 - ✅ **Centralized FFmpeg Configuration**: Declarative encoding profiles eliminating hardcoded settings across Python/Elixir with consistent `master`, `proxy`, and optimized export strategy.
 - ✅ **Organizational Cleanup**: Directory structure flattened, all module references updated, deprecated code (~85 lines) removed.
-- ✅ **CloudFront Streaming**: Complete replacement of WebCodecs/MSE/nginx-mp4 with native CloudFront byte-range streaming via standard HTML5 video for maximum simplicity and reliability.
-- 🎉 **Current State**: Production-ready CloudFront streaming architecture with clean, maintainable foundation.
+- ✅ **Infrastructure Foundation**: Complete elimination of complex streaming infrastructure (WebCodecs/MSE/nginx-mp4) and establishment of clean virtual clips architecture.
+- 🚧 **Current Focus**: Implementing server-side FFmpeg-based time segmentation for true virtual clip streaming.
 
 **Architecture Foundation**: All cut point operations now maintain MECE (Mutually Exclusive, Collectively Exhaustive) properties through algorithmic validation, ensuring no gaps, overlaps, or coverage holes in video processing.
 
@@ -33,7 +33,7 @@ This document tracks the comprehensive refactor of the video processing system's
 2. **MECE Guarantee**: Cut points across source videos are mutually exclusive, collectively exhaustive  
 3. **Rolling Export**: Individual clip export rather than batch processing
 4. **Clean Abstractions**: No legacy merge/split/splice/sprite concepts, centralized FFmpeg configuration
-5. **CloudFront Streaming**: Native HTML5 video with CloudFront byte-range support for maximum simplicity
+5. **Server-Side Time Segmentation**: FFmpeg-based streaming that serves only the exact time ranges needed for virtual clips
 
 ---
 
@@ -69,16 +69,20 @@ Virtual Clips: pending_review → review_approved → exported (physical) → ke
 
 ---
 
-**Frontend (assets/js/): Native CloudFront Streaming**
-  - `cloudfront-video-player.js`: Native HTML5 video element with CloudFront byte-range support and virtual clip timing constraints
+**Frontend (assets/js/): Server-Side Time Segmentation**
+  - `cloudfront-video-player.js`: Standard HTML5 video element for FFmpeg-segmented streams
   - `cloudfront-video-player-controller.js`: Phoenix LiveView hook for seamless integration
   - `app.js`: Updated with CloudFrontVideoPlayer hook for LiveView integration
 
+**Controllers (lib/heaters_web/controllers/):**
+  - `video_controller.ex`: FFmpeg-based streaming endpoint for virtual clips
+
 **Components (lib/heaters_web/components/):**
-  - `cloudfront_video_player.ex`: Phoenix component for CloudFront streaming with automatic URL generation
+  - `cloudfront_video_player.ex`: Phoenix component for streaming URL generation
 
 **Helpers (lib/heaters_web/helpers/):**
-  - `video_url_helper.ex`: CloudFront URL generation with S3 fallback for development
+  - `video_url_helper.ex`: Streaming endpoint URL generation
+  - `stream_ports.ex`: FFmpeg stdout streaming helper
 
 ### Cut Point Management
 
@@ -199,91 +203,249 @@ end
 - [x] Update pipeline configuration for optimized export workflow
 - [x] Performance optimization (10x improvement via stream copy)
 
-### ✅ Phase 3: Enhanced Review Interface (CloudFront Streaming) - COMPLETE
-- [x] CloudFront URL generation with S3 fallback for development
-- [x] Native HTML5 video player with virtual clip timing constraints
-- [x] Phoenix LiveView integration with CloudFront streaming URLs
-- [x] Complete elimination of complex streaming infrastructure (nginx-mp4, WebCodecs, MSE)
-- [x] CloudFront configuration for production deployment
-- [x] Development environment testing with direct S3 URLs
-- [ ] Cut point manipulation UI with instant streaming (ready for implementation)
+### 🚧 Phase 3: Server-Side Time Segmentation (IN PROGRESS)
+- [x] Infrastructure foundation and complex streaming elimination 
+- [x] Virtual clips architecture and database schema alignment
+- [ ] **FFmpeg streaming endpoint** (`/videos/clips/:clip_id/stream`)
+- [ ] **StreamPorts helper** for efficient FFmpeg stdout streaming
+- [ ] **Router configuration** for streaming endpoints
+- [ ] **VideoUrlHelper updates** to generate streaming URLs
+- [ ] **Component integration** with new streaming approach
+- [ ] **CloudFront integration** as caching layer for FFmpeg output
+- [ ] Cut point manipulation UI with instant streaming
 - [ ] User experience testing with real data
 
 ---
 
-## CloudFront Streaming Implementation
+## Server-Side Time Segmentation Implementation
 
 ### Architecture Decision
 
-**Problem**: WebCodecs/MSE players and nginx-mp4 infrastructure proved complex and required maintenance overhead.
+**Problem**: Traditional byte-range streaming downloads entire video files before playing specific time segments, wasting bandwidth and time.
 
-**Solution**: CloudFront's native byte-range support with standard HTML5 video elements eliminates all custom streaming infrastructure.
+**Solution**: Server-side FFmpeg time segmentation that streams only the exact bytes needed for each virtual clip, with CloudFront as a caching layer.
 
 ### Key Advantages
 
-1. **Maximum Simplicity**: Native HTML5 `<video>` element with zero custom infrastructure
-2. **CloudFront Native Support**: Built-in byte-range requests and global edge caching
-3. **Universal Compatibility**: Works across all modern browsers without feature detection  
-4. **Zero Maintenance**: No streaming services to maintain, debug, or deploy
-5. **Production Ready**: CloudFront handles scaling, caching, and global distribution automatically
+1. **True Virtual Clips**: Only streams the exact time range requested, not the full video
+2. **FFmpeg Precision**: Keyframe-accurate seeking with proper MP4 headers (`-c copy -movflags +faststart`)
+3. **CloudFront Caching**: Phoenix acts as custom origin, CloudFront caches segmented output globally
+4. **Zero Client Complexity**: Standard HTML5 `<video>` element receives complete MP4 fragments
+5. **Bandwidth Efficient**: Dramatically reduces data transfer compared to full-file streaming
 
 ### Implementation Strategy
 
-**Existing Assets Leveraged:**
-- ✅ `source_videos.proxy_filepath` - S3 paths for CloudFront streaming
-- ✅ `clips.start_time_seconds` / `clips.end_time_seconds` - timing constraints in JavaScript
-- ✅ Proxy CRF 20 encoding - optimized for CloudFront streaming
-- ✅ Virtual clips architecture - instant cut point operations
+**Database Schema Alignment:**
+- ✅ `clips.start_time_seconds` / `clips.end_time_seconds` - Used directly by FFmpeg `-ss` and `-to` parameters
+- ✅ `clips.is_virtual` flag - Determines streaming vs direct file access
+- ✅ `source_videos.proxy_filepath` - Provides signed CloudFront URLs for FFmpeg input
+- ✅ Virtual clips architecture - Perfect for on-demand segmentation
 
-**New Components Implemented:**
-- ✅ CloudFront URL generation with S3 fallback (`HeatersWeb.VideoUrlHelper`)
-- ✅ Native HTML5 video player with timing constraints (`CloudFrontVideoPlayer`)
-- ✅ Phoenix LiveView integration (`CloudFrontVideoPlayerController` hook)
-- ✅ Component-based UI (`HeatersWeb.CloudFrontVideoPlayer`)
-- ✅ Configuration for CloudFront domain with development S3 fallback
+**Core Implementation Components:**
+
+#### 1. **FFmpeg Streaming Endpoint**
+```elixir
+# GET /videos/clips/:clip_id/stream
+def stream_clip(conn, %{"clip_id" => clip_id}) do
+  clip = get_clip_with_source_video(clip_id)
+  signed_url = generate_signed_url(clip.source_video.proxy_filepath)
+  
+  cmd = ~w(ffmpeg -hide_banner -loglevel error
+           -ss #{clip.start_time_seconds}
+           -to #{clip.end_time_seconds}  
+           -i #{signed_url}
+           -c copy -movflags +faststart -f mp4 pipe:1)
+  
+  conn
+  |> put_resp_header("content-type", "video/mp4")
+  |> put_resp_header("accept-ranges", "bytes")
+  |> put_resp_header("cache-control", "public, max-age=31536000")
+  |> send_chunked(200)
+  |> StreamPorts.stream(cmd)
+end
+```
+
+#### 2. **StreamPorts Helper**
+```elixir
+defmodule HeatersWeb.StreamPorts do
+  def stream(conn, cmd) do
+    port = Port.open({:spawn_executable, System.find_executable("ffmpeg")}, 
+                     [:binary, :exit_status, args: tl(cmd)])
+    stream_port_output(conn, port)
+  end
+  
+  defp stream_port_output(conn, port) do
+    # Stream FFmpeg stdout directly to chunked HTTP response
+  end
+end
+```
+
+#### 3. **URL Generation Updates**
+```elixir
+# HeatersWeb.VideoUrlHelper
+def get_video_url(%{is_virtual: true} = clip, _source_video) do
+  streaming_url = ~p"/videos/clips/#{clip.id}/stream"
+  {:ok, streaming_url, :ffmpeg_stream}
+end
+```
+
+#### 4. **Router Configuration**
+```elixir
+# router.ex
+scope "/videos", HeatersWeb do
+  get "/clips/:clip_id/stream", VideoController, :stream_clip
+end
+```
 
 ---
 
-## 🎉 Implementation Summary
+## 🚧 Implementation Plan: Server-Side Time Segmentation
 
-### ✅ **CloudFront Streaming Architecture - COMPLETE**
+### **Current Goal: True Virtual Clip Streaming**
 
-**What Was Achieved:**
-- **100% Complex Infrastructure Elimination**: Removed WebCodecs/MSE/nginx-mp4 in favor of native CloudFront support
-- **Native HTML5 Video**: Leverages browser's built-in byte-range capabilities with CloudFront
-- **Zero Custom Infrastructure**: No nginx services, no complex player implementations
-- **Maximum Simplicity**: Standard `<video>` element with CloudFront URLs
-- **Production-Ready**: Direct CloudFront integration with S3 fallback for development
+**What We're Building:**
+- **FFmpeg-Based Streaming**: Server-side time segmentation that streams only exact clip ranges
+- **Phoenix as Custom Origin**: CloudFront caches FFmpeg output for global distribution
+- **Zero Client Downloads**: Browsers receive complete MP4 fragments, not full source videos
+- **Keyframe Accuracy**: FFmpeg ensures proper video headers and keyframe alignment
 
-**Technical Implementation:**
-- ✅ **Backend**: `VideoUrlHelper` generates CloudFront URLs with S3 fallback
-- ✅ **Frontend**: `CloudFrontVideoPlayer` class handles virtual clip timing constraints
-- ✅ **Components**: `cloudfront_video_player.ex` Phoenix component with automatic URL generation
-- ✅ **Infrastructure**: Removed nginx service, eliminated complex streaming setup
+### **Implementation Stages**
 
-**Key Performance Benefits:**
-- **Maximum Simplicity**: Native browser support eliminates all custom streaming infrastructure
-- **CloudFront Optimization**: Automatic byte-range caching and global edge distribution
-- **Universal Compatibility**: Works across all modern browsers without feature detection
-- **Zero Maintenance**: No custom streaming services to maintain or debug
+#### **Stage 1: Core Streaming Infrastructure** 
+- [ ] **Database MECE Constraints** (Migration)
+  ```sql
+  ALTER TABLE clips
+    ADD CONSTRAINT no_overlap
+    EXCLUDE USING gist (
+       source_video_id WITH =,
+       int4range(
+         extract(epoch from start_time_seconds * 1000)::int4,
+         extract(epoch from end_time_seconds * 1000)::int4
+       ) WITH &&
+    );
+  ```
+- [ ] **StreamPorts Helper** (`lib/heaters_web/helpers/stream_ports.ex`)
+  - Port management with `Port.monitor/1` for zombie cleanup
+  - Chunked HTTP response handling with backpressure
+  - `Plug.Conn.before_send` cleanup on connection drops
+  - Proper FFmpeg process termination (SIGTERM)
+- [ ] **FFmpeg Process Pool** (`lib/heaters_web/helpers/ffmpeg_pool.ex`)
+  - ETS counter for active processes
+  - Rate limiting (429 response when > N workers)
+  - Graceful degradation under load
+- [ ] **FFmpeg Streaming Endpoint** (`lib/heaters_web/controllers/video_controller.ex`)
+  - `/videos/clips/:clip_id/stream/:version` route with cache versioning
+  - Clip lookup with source video preloading
+  - FFmpeg command construction with signed CloudFront URLs
+  - Response headers optimized for CloudFront caching
 
-**Architecture Flow:**
+#### **Stage 2: URL Generation & Routing**
+- [ ] **VideoUrlHelper Updates** (`lib/heaters_web/helpers/video_url_helper.ex`)
+  - Generate versioned streaming URLs: `/videos/clips/:id/stream/:version`
+  - Version based on `clips.updated_at` or cut point hash for cache busting
+  - Maintain direct CloudFront URLs for physical clips
+  - Update return types to indicate streaming vs direct
+- [ ] **Router Configuration** (`lib/heaters_web/router.ex`)
+  - Add versioned streaming routes: `get "/clips/:clip_id/stream/:version"`
+  - Optional authentication middleware for streaming endpoints
+
+#### **Stage 3: Component Integration**
+- [ ] **CloudFront Player Updates** (`assets/js/cloudfront-video-player.js`)
+  - Handle streaming URLs vs direct URLs
+  - Remove timing constraints (now handled server-side)  
+  - Add `preload="metadata"` for complete MP4 fragments
+  - Implement 200ms debouncing for timeline scrubbing
+  - Add subtle loading spinner (~150ms FFmpeg startup latency)
+- [ ] **Component Updates** (`lib/heaters_web/components/cloudfront_video_player.ex`)
+  - Update to use versioned URL generation
+  - Simplify component logic (no client-side timing)
+
+#### **Stage 4: Production Optimization**
+- [ ] **CloudFront Configuration Tuning**
+  - **Cache Policy**: `CachingOptimized` (Range-aware, automatic)
+  - **Origins**: Phoenix (streaming) + S3 (exported files)  
+  - **TTL**: 5min-1h for previews, ≥1 year for exports
+  - **CORS**: `Access-Control-Allow-Origin` for cross-domain UI
+- [ ] **Keyframe Leakage Handling** (if needed)
+  - Detect problematic clips with visible pre-roll
+  - Implement precision mode: `-ss -to -copyts -avoid_negative_ts 1 -c:v libx264 -preset ultrafast`
+  - Apply only to first/last 1-2 seconds of clips
+- [ ] **Performance Monitoring**
+  - FFmpeg process count and memory usage
+  - Stream latency measurement (~150ms startup)
+  - CloudFront cache hit ratios
+  - Database constraint violation tracking
+
+### **Architecture Flow (Target)**
 ```
-Virtual Clip → VideoUrlHelper.get_video_url() → CloudFront URL (proxy file)
-             ↓
-Phoenix LiveView → CloudFrontVideoPlayer hook → HTML5 <video> with timing constraints
-             ↓
-CloudFront CDN → S3 byte-range requests → Native streaming playback
+Virtual Clip Request → Phoenix Endpoint → FFmpeg Time Segmentation → Chunked Stream
+                                  ↓
+             CloudFront Caching ← MP4 Fragment ← stdout stream
+                     ↓
+              Browser <video> ← Cached/Live Stream
 ```
 
-**Ready for Production**: CloudFront's native byte-range support handles all streaming complexity. Virtual clips play with timing constraints enforced in JavaScript.
+### **Expected Benefits**
+- **Bandwidth Efficiency**: ~90% reduction in data transfer (2-minute clip vs 60-minute source)
+- **Instant Playback**: No waiting for full video download
+- **CloudFront Caching**: Identical clips cached globally for subsequent requests
+- **Simple Maintenance**: Standard Elixir/Phoenix patterns, no complex streaming infrastructure
 
-**Production Considerations for I/O Optimization:**
-- **S3 Presigned URL Security**: 1-hour expiration prevents URL leakage while allowing sufficient export time
-- **CloudFront Integration**: Consider CloudFront presigned URLs for improved global performance
-- **Error Handling**: Fallback to local download if presigned URL access fails (network issues, expired URLs)
-- **Monitoring**: Track byte-range request patterns and proxy file access frequency
-- **Cost Impact**: Reduced egress costs due to targeted byte-range access vs full file downloads
+### **Key Implementation Notes**
+
+#### **FFmpeg Configuration**
+- **Input Seeking (`-ss`)**: Applied before input for keyframe-accurate positioning
+- **Stream Copy (`-c copy`)**: Zero re-encoding for maximum speed and quality
+- **Fast Start (`-movflags +faststart`)**: Moves moov atom to front for instant playback
+- **Pipe Output (`-f mp4 pipe:1`)**: Streams complete MP4 fragments to stdout
+- **Keyframe Leakage**: Stream copy snaps to nearest earlier keyframe (may show pre-roll)
+- **Precision Mode** (if needed): `-ss -to -copyts -avoid_negative_ts 1 -c:v libx264 -preset ultrafast`
+
+#### **CloudFront Configuration** 
+- **Origin**: Phoenix app as custom origin (not direct S3)
+- **Cache Policy**: `CachingOptimized` - automatically handles Range headers
+- **Allowed Methods**: GET & HEAD only
+- **Cache Duration**: Long TTL appropriate for immutable clip content
+- **CORS**: Add `Access-Control-Allow-Origin` for cross-domain requests
+
+#### **Performance Considerations**
+- **Concurrency**: One FFmpeg process per active reviewer scales well on modern hardware
+- **Memory Usage**: Streaming approach keeps memory footprint minimal
+- **CPU Impact**: Stream copy typically <10% CPU usage on t4g.medium instances
+- **Zombie Process Prevention**: `Port.monitor/1` + `Process.exit/2` on connection drops
+- **Rate Limiting**: ETS counter with 429 response when > N active workers
+- **Cache Versioning**: Include clip version in URL to bust CloudFront cache on edits
+
+#### **Database Query Optimization**
+```elixir
+# Preload source video to avoid N+1 queries
+clip = 
+  Clip
+  |> Repo.get!(clip_id)
+  |> Repo.preload(:source_video)
+```
+
+#### **StreamPorts Implementation Details**
+```elixir
+# Key patterns for robust FFmpeg streaming
+Port.open({:spawn_executable, ffmpeg_bin}, [
+  :binary, 
+  {:args, args}, 
+  :stderr_to_stdout, 
+  :exit_status
+])
+
+# Cleanup patterns:
+# 1. Monitor port for zombie prevention
+# 2. before_send callback for connection drops
+# 3. Proper SIGTERM on errors
+```
+
+#### **Security Considerations**
+- **FFmpeg Input**: Use signed CloudFront URLs (not S3) for edge caching
+- **Streaming Auth**: Session cookies or 5-minute HMAC tokens
+- **Public Thumbnails**: Keep small preview images public (no signing overhead)
+- **Rate Limiting**: Prevent FFmpeg process floods with ETS counters
 
 ---
 
@@ -300,7 +462,7 @@ CloudFront CDN → S3 byte-range requests → Native streaming playback
 2. **I/O Efficiency**: Direct S3 byte-range access eliminates proxy download bottleneck
 3. **Resource Efficiency**: Dual-purpose proxy eliminates redundant file operations
 4. **Instant Operations**: All review actions are immediate database transactions
-5. **CloudFront Streaming**: Native byte-range requests enable instant seeking without any custom infrastructure
+5. **Server-Side Time Segmentation**: FFmpeg streams only exact clip ranges, eliminating full-video downloads
 6. **Superior Quality**: CRF 20 proxy source > deprecated CRF 23 final_export encoding
 
 ### Maintenance Benefits
@@ -309,6 +471,6 @@ CloudFront CDN → S3 byte-range requests → Native streaming playback
 3. **Clear Semantics**: Cut point operations have obvious, predictable behavior
 4. **Centralized Configuration**: Single source of truth for all FFmpeg encoding settings eliminates hardcoded constants
 5. **Future-Proof**: Architecture supports advanced cut point features and easy encoding optimization
-6. **Frontend Simplicity**: Native HTML5 `<video>` element eliminates all custom streaming infrastructure maintenance.
+6. **Frontend Simplicity**: Standard HTML5 `<video>` element with server-side segmentation eliminates client-side complexity.
 
 ---

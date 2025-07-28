@@ -21,15 +21,10 @@
     
 <!-- Reviewing --------------------------------------------------------- -->
   <% else %>
-    <%!-- Preload next clip proxy video metadata --%>
-    <%= if @future != [] do %>
-      <% next_clip = List.first(@future) %>
-      <link rel="preload" as="fetch" href={proxy_video_url(next_clip)} crossorigin="anonymous" />
-    <% end %>
 
     <article class="stack-center gap-4">
       <%!-- CloudFront video player component --%>
-      <.cloudfront_video_player clip={@current} />
+      <.cloudfront_video_player clip={@current} id={"video-player-#{@current.id}"} />
       
 <!-- Action buttons ------------------------------------------------ -->
       <nav

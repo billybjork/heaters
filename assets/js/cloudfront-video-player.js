@@ -19,7 +19,7 @@ class CloudFrontVideoPlayer {
   constructor(videoElement, options = {}) {
     this.video = videoElement;
     this.options = {
-      preload: 'metadata',
+      preload: 'none',
       controls: true,
       ...options
     };
@@ -33,69 +33,111 @@ class CloudFrontVideoPlayer {
 
   init() {
     // Set basic video attributes
-    this.video.preload = this.options.preload;
+    this.video.preload = 'none';
     this.video.controls = this.options.controls;
+    
+    // Track if video has been loaded
+    this.videoLoaded = false;
+    this.pendingVideoUrl = null;
+    this.pendingClipInfo = null;
     
     // Add event listeners for virtual clip handling
     this.video.addEventListener('loadedmetadata', this.handleLoadedMetadata.bind(this));
     this.video.addEventListener('timeupdate', this.handleTimeUpdate.bind(this));
     this.video.addEventListener('seeking', this.handleSeeking.bind(this));
     
+    // Add click listener to load video on first interaction
+    this.video.addEventListener('click', this.handleFirstClick.bind(this));
+    this.video.addEventListener('play', this.handlePlay.bind(this));
+    
     console.log('[CloudFrontVideoPlayer] Initialized');
   }
 
   /**
-   * Load a video URL for playback
+   * Update clip information without reloading the video
+   * @param {Object} clipInfo - Clip timing information for virtual clips
+   */
+  updateClipInfo(clipInfo) {
+    if (clipInfo && clipInfo.is_virtual) {
+      this.isVirtualClip = true;
+      this.clipStartTime = clipInfo.start_time_seconds;
+      this.clipEndTime = clipInfo.end_time_seconds;
+      
+      console.log(`[CloudFrontVideoPlayer] Updated clip timing: ${this.clipStartTime}s - ${this.clipEndTime}s`);
+      
+      // If video is already loaded, seek to new start time
+      if (this.video.readyState >= 1) { // HAVE_METADATA
+        this.video.currentTime = this.clipStartTime;
+      }
+    }
+  }
+
+  /**
+   * Prepare video URL and clip info for lazy loading
    * @param {string} videoUrl - CloudFront URL for the video
    * @param {Object} clipInfo - Optional clip timing information for virtual clips
    */
   async loadVideo(videoUrl, clipInfo = null) {
-    try {
-      console.log(`[CloudFrontVideoPlayer] Loading: ${videoUrl}`);
-      
-      // Store virtual clip information
-      if (clipInfo && clipInfo.start_time_seconds !== undefined && clipInfo.end_time_seconds !== undefined) {
-        this.isVirtualClip = true;
-        this.clipStartTime = clipInfo.start_time_seconds;
-        this.clipEndTime = clipInfo.end_time_seconds;
-        console.log(`[CloudFrontVideoPlayer] Virtual clip: ${this.clipStartTime}s - ${this.clipEndTime}s`);
-      } else {
-        this.isVirtualClip = false;
-        this.clipStartTime = 0;
-        this.clipEndTime = 0;
-      }
-
-      // Set the source and load
-      this.video.src = videoUrl;
-      this.video.load();
-      
-      return new Promise((resolve, reject) => {
-        const handleCanPlay = () => {
-          this.video.removeEventListener('canplay', handleCanPlay);
-          this.video.removeEventListener('error', handleError);
-          
-          // For virtual clips, seek to start time
-          if (this.isVirtualClip) {
-            this.video.currentTime = this.clipStartTime;
-          }
-          
-          resolve();
-        };
-        
-        const handleError = (event) => {
-          this.video.removeEventListener('canplay', handleCanPlay);
-          this.video.removeEventListener('error', handleError);
-          reject(new Error(`Video load failed: ${event.message || 'Unknown error'}`));
-        };
-        
-        this.video.addEventListener('canplay', handleCanPlay);
-        this.video.addEventListener('error', handleError);
-      });
-      
-    } catch (error) {
-      console.error('[CloudFrontVideoPlayer] Load error:', error);
-      throw error;
+    console.log(`[CloudFrontVideoPlayer] Preparing video: ${videoUrl}`);
+    
+    // Store video URL and clip info for lazy loading
+    this.pendingVideoUrl = videoUrl;
+    this.pendingClipInfo = clipInfo;
+    
+    // Store virtual clip information
+    if (clipInfo && clipInfo.start_time_seconds !== undefined && clipInfo.end_time_seconds !== undefined) {
+      this.isVirtualClip = true;
+      this.clipStartTime = clipInfo.start_time_seconds;
+      this.clipEndTime = clipInfo.end_time_seconds;
+      console.log(`[CloudFrontVideoPlayer] Virtual clip prepared: ${this.clipStartTime}s - ${this.clipEndTime}s`);
+    } else {
+      this.isVirtualClip = false;
+      this.clipStartTime = 0;
+      this.clipEndTime = 0;
     }
+
+    // Don't actually load the video until user interaction
+    console.log('[CloudFrontVideoPlayer] Video prepared for lazy loading');
+  }
+
+  /**
+   * Actually load the video when user interacts
+   */
+  async actuallyLoadVideo() {
+    if (!this.pendingVideoUrl || this.videoLoaded) {
+      return;
+    }
+
+    console.log(`[CloudFrontVideoPlayer] Actually loading: ${this.pendingVideoUrl}`);
+    
+    // Set the source and load metadata only
+    this.video.src = this.pendingVideoUrl;
+    this.video.preload = 'metadata';
+    this.video.load();
+    this.videoLoaded = true;
+    
+    return new Promise((resolve, reject) => {
+      const handleCanPlay = () => {
+        this.video.removeEventListener('canplay', handleCanPlay);
+        this.video.removeEventListener('error', handleError);
+        
+        // For virtual clips, seek to start time
+        if (this.isVirtualClip) {
+          this.video.currentTime = this.clipStartTime;
+        }
+        
+        resolve();
+      };
+      
+      const handleError = (event) => {
+        this.video.removeEventListener('canplay', handleCanPlay);
+        this.video.removeEventListener('error', handleError);
+        reject(new Error(`Video load failed: ${event.message || 'Unknown error'}`));
+      };
+      
+      this.video.addEventListener('canplay', handleCanPlay);
+      this.video.addEventListener('error', handleError);
+    });
   }
 
   /**
@@ -139,6 +181,30 @@ class CloudFrontVideoPlayer {
       } else if (this.video.currentTime > this.clipEndTime) {
         this.video.currentTime = this.clipEndTime;
       }
+    }
+  }
+
+  /**
+   * Handle first click - load video if not already loaded
+   */
+  async handleFirstClick(event) {
+    if (!this.videoLoaded && this.pendingVideoUrl) {
+      console.log('[CloudFrontVideoPlayer] First click - loading video');
+      await this.actuallyLoadVideo();
+    }
+  }
+
+  /**
+   * Handle play event - load video if not already loaded
+   */
+  async handlePlay(event) {
+    if (!this.videoLoaded && this.pendingVideoUrl) {
+      console.log('[CloudFrontVideoPlayer] Play requested - loading video');
+      // Pause immediately to prevent error
+      this.video.pause();
+      await this.actuallyLoadVideo();
+      // Resume play after loading
+      this.video.play();
     }
   }
 
@@ -204,6 +270,8 @@ class CloudFrontVideoPlayer {
     this.video.removeEventListener('loadedmetadata', this.handleLoadedMetadata);
     this.video.removeEventListener('timeupdate', this.handleTimeUpdate);
     this.video.removeEventListener('seeking', this.handleSeeking);
+    this.video.removeEventListener('click', this.handleFirstClick);
+    this.video.removeEventListener('play', this.handlePlay);
     
     this.video.src = '';
     this.video.load();

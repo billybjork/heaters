@@ -65,7 +65,13 @@ export const CloudFrontVideoPlayerController = {
       console.error("[CloudFrontVideoPlayerController] Failed to parse updated clip info:", error);
     }
     
-    // Load new video if URL changed
+    // Always update clip info even if URL is the same (virtual clips use same source video)
+    if (clipInfo.is_virtual) {
+      console.log(`[CloudFrontVideoPlayerController] Updating virtual clip timing: ${clipInfo.start_time_seconds}s - ${clipInfo.end_time_seconds}s`);
+      this.player.updateClipInfo(clipInfo);
+    }
+    
+    // Load new video only if URL actually changed
     if (videoUrl && videoUrl !== this.currentVideoUrl) {
       console.log(`[CloudFrontVideoPlayerController] Loading new video: ${videoUrl}`);
       this.currentVideoUrl = videoUrl;

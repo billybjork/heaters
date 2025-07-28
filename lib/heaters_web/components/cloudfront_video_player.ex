@@ -37,7 +37,7 @@ defmodule HeatersWeb.CloudFrontVideoPlayer do
   attr :id, :string, default: "video-player"
   attr :class, :string, default: ""
   attr :controls, :boolean, default: true
-  attr :preload, :string, default: "metadata"
+  attr :preload, :string, default: "none"
 
   def cloudfront_video_player(assigns) do
     # Get video URL and player type
@@ -48,6 +48,7 @@ defmodule HeatersWeb.CloudFrontVideoPlayer do
       |> assign(:video_url, video_url)
       |> assign(:player_type, player_type)
       |> assign(:clip_info, clip_info)
+      |> assign(:clip_key, "clip-#{assigns.clip.id}")
 
     ~H"""
     <div class="video-player-container">
@@ -56,13 +57,14 @@ defmodule HeatersWeb.CloudFrontVideoPlayer do
           id={@id}
           class={["video-player", @class]}
           controls={@controls}
-          preload={@preload}
+          preload="none"
+          crossorigin="anonymous"
           phx-hook="CloudFrontVideoPlayer"
           data-video-url={@video_url}
           data-player-type={@player_type}
           data-clip-info={Jason.encode!(@clip_info)}
+          poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='600'%3E%3Crect width='100%25' height='100%25' fill='%23f0f0f0'/%3E%3Ctext x='50%25' y='50%25' font-family='Arial' font-size='24' fill='%23666' text-anchor='middle' dy='.3em'%3EClick to load video%3C/text%3E%3C/svg%3E"
         >
-          <source src={@video_url} type="video/mp4" />
           <p>Your browser doesn't support HTML5 video streaming.</p>
         </video>
       <% else %>
