@@ -106,6 +106,62 @@ defmodule HeatersWeb.FFmpegPool do
   end
 
   @doc """
+  Get detailed status for performance monitoring.
+
+  ## Returns
+
+  - Map with active count, max count, utilization percentage, and memory info
+  """
+  def detailed_status do
+    {active, max} = status()
+    utilization = if max > 0, do: Float.round(active / max * 100, 1), else: 0.0
+
+    %{
+      active_processes: active,
+      max_processes: max,
+      utilization_percent: utilization,
+      memory_usage: get_memory_usage(),
+      timestamp: DateTime.utc_now()
+    }
+  end
+
+  # Get approximate memory usage of FFmpeg processes
+  defp get_memory_usage do
+    try do
+      # Get memory info for all FFmpeg processes
+      {result, 0} = System.cmd("pgrep", ["-f", "ffmpeg"])
+
+      pids =
+        result
+        |> String.trim()
+        |> String.split("\n")
+        |> Enum.reject(&(&1 == ""))
+
+      if length(pids) > 0 do
+        {memory_output, 0} = System.cmd("ps", ["-o", "rss=", "-p"] ++ pids)
+
+        total_kb =
+          memory_output
+          |> String.trim()
+          |> String.split("\n")
+          |> Enum.map(&String.trim/1)
+          |> Enum.reject(&(&1 == ""))
+          |> Enum.map(&String.to_integer/1)
+          |> Enum.sum()
+
+        %{
+          total_memory_mb: Float.round(total_kb / 1024, 1),
+          process_count: length(pids)
+        }
+      else
+        %{total_memory_mb: 0.0, process_count: 0}
+      end
+    rescue
+      _ -> %{total_memory_mb: 0.0, process_count: 0, error: "Could not get memory info"}
+    end
+  end
+
+  @doc """
   Force reset the process counter (for emergencies).
 
   This should only be used if the counter gets into an inconsistent state.

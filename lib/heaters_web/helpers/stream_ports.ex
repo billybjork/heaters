@@ -48,6 +48,7 @@ defmodule HeatersWeb.StreamPorts do
   end
 
   defp do_stream(conn, ffmpeg_bin, args) do
+    start_time = System.monotonic_time(:millisecond)
     Logger.debug("Starting FFmpeg stream with args: #{inspect(args)}")
 
     # Open port with error output redirected to stdout for better error handling
@@ -70,17 +71,17 @@ defmodule HeatersWeb.StreamPorts do
       end)
 
     # Start streaming loop
-    stream_loop(conn, port, port_ref, :streaming)
+    stream_loop(conn, port, port_ref, start_time)
   end
 
   # Main streaming loop that handles port output and connection state
-  defp stream_loop(conn, port, port_ref, state) do
+  defp stream_loop(conn, port, port_ref, start_time) do
     receive do
       # Data from FFmpeg stdout/stderr
       {^port, {:data, data}} ->
         case chunk_data(conn, data) do
           {:ok, conn} ->
-            stream_loop(conn, port, port_ref, state)
+            stream_loop(conn, port, port_ref, start_time)
 
           {:error, reason} ->
             Logger.warning("Failed to send chunk: #{inspect(reason)}")
@@ -90,13 +91,26 @@ defmodule HeatersWeb.StreamPorts do
 
       # Port exit (normal completion)
       {^port, {:exit_status, 0}} ->
-        Logger.debug("FFmpeg process completed successfully")
+        duration_ms = System.monotonic_time(:millisecond) - start_time
+
+        Logger.info("FFmpeg stream completed successfully",
+          duration_ms: duration_ms,
+          pool_status: HeatersWeb.FFmpegPool.status()
+        )
+
         Port.demonitor(port_ref, [:flush])
         {:ok, conn}
 
       # Port exit (error)
       {^port, {:exit_status, exit_code}} ->
-        Logger.error("FFmpeg process failed with exit code: #{exit_code}")
+        duration_ms = System.monotonic_time(:millisecond) - start_time
+
+        Logger.error("FFmpeg process failed with exit code: #{exit_code}",
+          duration_ms: duration_ms,
+          exit_code: exit_code,
+          pool_status: HeatersWeb.FFmpegPool.status()
+        )
+
         Port.demonitor(port_ref, [:flush])
         {:error, {:ffmpeg_exit, exit_code}, conn}
 

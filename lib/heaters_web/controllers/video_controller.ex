@@ -2,7 +2,7 @@ defmodule HeatersWeb.VideoController do
   use HeatersWeb, :controller
   require Logger
   alias Heaters.Videos.Download
-  alias HeatersWeb.{FFmpegPool, StreamPorts, VideoUrlHelper}
+  alias HeatersWeb.{FFmpegPool, StreamPorts, VideoUrlHelper, KeyframeAnalyzer}
 
   def create(conn, %{"url" => url}) do
     case Download.submit(url) do
@@ -86,7 +86,18 @@ defmodule HeatersWeb.VideoController do
   end
 
   defp stream_ffmpeg_clip(conn, clip, signed_url) do
-    # Build FFmpeg command for time-based segmentation
+    duration_seconds = clip.end_time_seconds - clip.start_time_seconds
+
+    # Analyze for potential keyframe leakage (currently logs only)
+    _encoding_mode = KeyframeAnalyzer.recommend_encoding_mode(clip, clip.source_video)
+
+    Logger.info("Starting FFmpeg stream for clip #{clip.id} (#{duration_seconds}s duration)",
+      clip_id: clip.id,
+      duration: duration_seconds,
+      pool_status: FFmpegPool.status()
+    )
+
+    # Build FFmpeg command using stream copy (precision mode available but not used yet)
     cmd = [
       "ffmpeg",
       "-hide_banner",
