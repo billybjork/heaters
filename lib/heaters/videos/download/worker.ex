@@ -1,11 +1,32 @@
 defmodule Heaters.Videos.Download.Worker do
+  @moduledoc """
+  Download Worker for source video ingestion.
+
+  Handles the initial download phase of the video processing pipeline:
+  - Downloads videos from URLs using yt-dlp with quality-focused strategy
+  - Applies conditional normalization for primary downloads (fixes merge issues)
+  - Stores original files in S3 for downstream processing
+  - Uses centralized FFmpeg configuration from FFmpegConfig
+
+  🚨 CRITICAL: This worker depends on download_handler.py for yt-dlp operations.
+  The Python implementation follows strict quality requirements:
+
+  ❌ NEVER ADD height/extension restrictions to format strings
+  ❌ NEVER ADD client restrictions via extractor_args
+  ✅ ALWAYS use unrestricted primary format: 'bv*+ba/b'
+  ✅ ALWAYS let yt-dlp choose optimal clients automatically
+
+  Breaking these rules reduces quality from 4K to 360p (18x quality loss).
+  See py/tasks/download_handler.py for detailed implementation.
+  """
+
   use Heaters.Infrastructure.Orchestration.WorkerBehavior,
     queue: :media_processing,
     # 30 minutes, prevent duplicate jobs for same video
     unique: [period: 1800, fields: [:args]]
 
   alias Heaters.Videos.Queries, as: VideoQueries
-  alias Heaters.Infrastructure.PyRunner
+  alias Heaters.Infrastructure.{PyRunner, TempCache}
   alias Heaters.Videos.Download
   alias Heaters.Infrastructure.Orchestration.WorkerBehavior
   require Logger
@@ -39,9 +60,24 @@ defmodule Heaters.Videos.Download.Worker do
       )
 
       # Python task constructs its own S3 path based on video title
+      # Passes FFmpeg normalization arguments for primary downloads
+      # 
+      # CRITICAL: The Python task uses yt-dlp with quality-focused strategy:
+      # - Primary format: 'bv*+ba/b' (best quality, may need normalization)
+      # - Fallback1: 'best[ext=mp4]/...' (compatible MP4)
+      # - Fallback2: 'worst' (maximum compatibility)
+      #
+      # Normalization is applied only for primary downloads to fix merge issues
+      # while preserving the quality benefits of separate stream downloads.
       py_args = %{
         source_video_id: updated_video.id,
-        input_source: updated_video.original_url
+        input_source: updated_video.original_url,
+        # Enable temp caching for pipeline chaining
+        use_temp_cache: true,
+        # Pass FFmpeg normalization arguments for primary downloads
+        # Uses centralized configuration from FFmpegConfig for consistency
+        normalize_args:
+          Heaters.Infrastructure.Orchestration.FFmpegConfig.get_args(:download_normalization)
       }
 
       case PyRunner.run("download", py_args, timeout: :timer.minutes(20)) do
@@ -54,7 +90,15 @@ defmodule Heaters.Videos.Download.Worker do
           # Convert string keys to atom keys for the metadata (recursively)
           metadata = convert_keys_to_atoms(result)
 
-          case Download.complete_downloading(source_video_id, metadata) do
+          # Handle both temp cache and traditional S3 results
+          completion_result =
+            if Map.get(result, "use_temp_cache", false) do
+              handle_temp_cache_download_completion(source_video_id, metadata)
+            else
+              Download.complete_downloading(source_video_id, metadata)
+            end
+
+          case completion_result do
             {:ok, _updated_video} ->
               Logger.info(
                 "DownloadWorker: Successfully completed download for source_video_id: #{source_video_id}"
@@ -128,4 +172,31 @@ defmodule Heaters.Videos.Download.Worker do
   end
 
   defp convert_keys_to_atoms(other), do: other
+
+  # Handle download completion when using temp cache
+  defp handle_temp_cache_download_completion(source_video_id, metadata) do
+    # Python task returns local path when using temp cache
+    local_path = Map.get(metadata, :local_filepath)
+    # Future S3 path
+    s3_key = Map.get(metadata, :filepath)
+
+    if local_path && s3_key do
+      # Cache the downloaded file for preprocessing stage
+      case TempCache.put(s3_key, local_path) do
+        {:ok, _cached_path} ->
+          Logger.info("DownloadWorker: Cached download result for pipeline chaining")
+
+          # Update database with S3 path (even though not uploaded yet)
+          Download.complete_downloading(source_video_id, metadata)
+
+        {:error, reason} ->
+          Logger.warning("DownloadWorker: Failed to cache download result: #{inspect(reason)}")
+          # Fall back to traditional approach
+          Download.complete_downloading(source_video_id, metadata)
+      end
+    else
+      # Missing required paths, fall back to traditional approach
+      Download.complete_downloading(source_video_id, metadata)
+    end
+  end
 end

@@ -42,7 +42,7 @@ defmodule Heaters.Videos.DetectScenes.Worker do
   alias Heaters.Videos.DetectScenes.StateManager
   alias Heaters.Clips.VirtualClips
   alias Heaters.Infrastructure.Orchestration.WorkerBehavior
-  alias Heaters.Infrastructure.PyRunner
+  alias Heaters.Infrastructure.{PyRunner, TempCache}
   require Logger
 
   @impl WorkerBehavior
@@ -137,17 +137,40 @@ defmodule Heaters.Videos.DetectScenes.Worker do
   end
 
   defp execute_scene_detection(source_video) do
-    # Use the proxy file for scene detection (faster than source)
-    scene_detection_args = %{
-      source_video_id: source_video.id,
-      proxy_video_path: source_video.proxy_filepath,
-      threshold: 0.6,
-      method: "correl",
-      min_duration_seconds: 1.0
-    }
+    # Try to get proxy file from temp cache first, fallback to S3
+    proxy_path_result =
+      TempCache.get_or_download(
+        source_video.proxy_filepath,
+        operation_name: "DetectScenesWorker"
+      )
 
+    case proxy_path_result do
+      {:ok, local_proxy_path, cache_status} ->
+        Logger.info("DetectScenesWorker: Using #{cache_status} proxy file: #{local_proxy_path}")
+
+        # Use the local proxy file for scene detection (faster than S3)
+        scene_detection_args = %{
+          source_video_id: source_video.id,
+          # Use local path instead of S3 path
+          proxy_video_path: local_proxy_path,
+          threshold: 0.6,
+          method: "correl",
+          min_duration_seconds: 1.0,
+          # Reuse existing keyframe data
+          keyframe_offsets: source_video.keyframe_offsets || []
+        }
+
+        run_python_scene_detection(source_video, scene_detection_args)
+
+      {:error, reason} ->
+        Logger.error("DetectScenesWorker: Failed to get proxy video: #{inspect(reason)}")
+        {:error, "Failed to get proxy video: #{inspect(reason)}"}
+    end
+  end
+
+  defp run_python_scene_detection(source_video, scene_detection_args) do
     Logger.info(
-      "DetectScenesWorker: Running Python scene detection with args: #{inspect(scene_detection_args)}"
+      "DetectScenesWorker: Running Python scene detection with args: #{inspect(Map.delete(scene_detection_args, :proxy_video_path))}"
     )
 
     case PyRunner.run("detect_scenes", scene_detection_args, timeout: :timer.minutes(15)) do

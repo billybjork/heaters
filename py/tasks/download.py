@@ -1,12 +1,28 @@
 """
-Download Task - Download Only Workflow
+Download Task - Orchestrates video download workflow.
 
-This version focuses on downloading and storing original videos:
-- Downloads videos from URLs or copies local files  
-- Stores original files in S3 without transcoding
-- Extracts basic metadata using FFprobe
-- No transcoding - that happens later in preprocessing.py
+This module orchestrates the complete download process:
+- Orchestrates download using download_handler.py (yt-dlp implementation)
+- Handles conditional normalization for primary downloads
+- Manages S3 upload and metadata extraction
 - Returns structured data for Elixir to process
+
+## Architecture:
+This is an orchestrator that depends on download_handler.py for core yt-dlp operations.
+The download_handler.py contains all the quality-critical yt-dlp configuration and logic.
+
+## Responsibilities:
+- Workflow orchestration (download → normalize → upload)
+- FFmpeg normalization for primary downloads
+- S3 upload and metadata management
+- Error handling and state management
+
+## Dependencies:
+- download_handler.py: Core yt-dlp implementation and quality requirements
+- FFmpegConfig: Normalization arguments from Elixir
+- S3: File storage and upload
+
+See download_handler.py for detailed yt-dlp quality requirements and implementation.
 """
 
 import argparse
@@ -31,6 +47,23 @@ from .download_handler import (
 )
 from utils.s3_handler import upload_to_s3
 
+
+# Custom exception classes for better error handling
+class DownloadError(Exception):
+    """Raised when yt-dlp download fails"""
+    pass
+
+
+class NormalizationError(Exception):
+    """Raised when FFmpeg normalization fails"""
+    pass
+
+
+class QualityReductionError(Exception):
+    """Raised when configuration would reduce download quality"""
+    pass
+
+
 # --- Logging Configuration ---
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -45,9 +78,9 @@ def normalize_video(input_path: Path, output_path: Path, normalize_args: list = 
     """
     Lightweight normalization of downloaded video to fix merge issues from primary downloads.
     
-    CRITICAL: This step is essential for maintaining best quality downloads. Primary downloads
-    use separate video/audio streams that yt-dlp merges internally, but this merge operation
-    sometimes fails or produces corrupted files. This normalization ensures the file is 
+    This function applies FFmpeg normalization to fix merge issues that occur when yt-dlp
+    downloads separate video/audio streams and merges them internally. The merge operation
+    sometimes fails or produces corrupted files, and this normalization ensures the file is 
     valid and playable while preserving the quality benefits of the primary download strategy.
     
     This is intentionally different from preprocessing.py - it's a lightweight fix specifically
@@ -60,6 +93,9 @@ def normalize_video(input_path: Path, output_path: Path, normalize_args: list = 
         
     Returns:
         bool: True if normalization succeeded, False otherwise
+        
+    Raises:
+        NormalizationError: If FFmpeg normalization fails
     """
     try:
         # Use provided normalize_args or fallback to basic settings
@@ -98,38 +134,55 @@ def normalize_video(input_path: Path, output_path: Path, normalize_args: list = 
         if return_code != 0:
             logger.error(f"Normalization failed with return code {return_code}")
             logger.error(f"FFmpeg stderr: {' '.join(stderr_output[-5:])}")  # Last 5 lines
-            return False
+            raise NormalizationError(f"FFmpeg normalization failed with return code {return_code}")
         
         if not output_path.exists():
             logger.error(f"Normalized file was not created: {output_path}")
-            return False
+            raise NormalizationError(f"Normalized file was not created: {output_path}")
             
         output_size = output_path.stat().st_size
         logger.info(f"Normalization completed successfully")
         logger.info(f"Output file size: {output_size:,} bytes")
         return True
         
+    except NormalizationError:
+        # Re-raise NormalizationError as-is
+        raise
     except Exception as e:
         logger.error(f"Normalization exception: {e}")
-        return False
+        raise NormalizationError(f"Normalization failed: {e}")
 
 
 def run_download(
     source_video_id: int, 
     input_source: str, 
+    normalize_args: list = None,
     **kwargs
 ):
     """
-    Download a source video: downloads original and stores in S3 without transcoding.
-    Transcoding happens later in preprocess.py to avoid redundant operations.
+    Orchestrate the complete download workflow.
+    
+    This function orchestrates the download process by:
+    1. Using download_handler.py for yt-dlp operations
+    2. Applying conditional normalization for primary downloads
+    3. Uploading to S3 and extracting metadata
+    4. Returning structured data for Elixir processing
+    
+    The core yt-dlp implementation and quality requirements are handled by download_handler.py.
+    This function focuses on workflow orchestration and integration with the broader pipeline.
     
     Args:
         source_video_id: The ID of the source video (for reference only)
         input_source: URL or local file path to the video
+        normalize_args: FFmpeg arguments for normalization (from Elixir FFmpegConfig)
         **kwargs: Additional options
     
     Returns:
         dict: Structured data about the original video including S3 path and metadata
+        
+    Raises:
+        DownloadError: If yt-dlp download fails
+        NormalizationError: If FFmpeg normalization fails
     """
     logger.info(f"RUNNING DOWNLOAD for source_video_id: {source_video_id}")
     logger.info(f"Input: '{input_source}'")
@@ -159,26 +212,31 @@ def run_download(
         try:
             # Step 1: Download/acquire the original video
             if is_url:
-                downloaded_path, download_info_dict = download_from_url(input_source, temp_dir_path)
+                try:
+                    downloaded_path, download_info_dict = download_from_url(input_source, temp_dir_path)
+                except Exception as e:
+                    logger.error(f"yt-dlp download failed: {e}")
+                    raise DownloadError(f"yt-dlp download failed: {e}")
+                
                 # Use the info_dict from the download process to avoid extra yt-dlp calls
                 metadata = extract_download_metadata(input_source, download_info_dict)
                 
                 # Step 1.5: Conditional normalization for primary downloads
                 # 
-                # CRITICAL ARCHITECTURE NOTE: This conditional normalization is essential for 
-                # maintaining our best-quality-first download strategy. Here's why:
+                # This step applies FFmpeg normalization to fix merge issues that occur
+                # when yt-dlp downloads separate video/audio streams. The merge operation
+                # sometimes fails or produces corrupted files, and normalization ensures
+                # the file is valid and playable while preserving quality benefits.
                 #
-                # PRIMARY DOWNLOADS (requires_normalization=True):
-                # - Use format: 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b'
-                # - Download separate video/audio streams for maximum quality
-                # - yt-dlp merges them internally using FFmpeg
-                # - This merge sometimes fails or produces corrupted files
-                # - Normalization fixes these merge issues while preserving quality benefits
+                # Primary downloads (requires_normalization=True):
+                # - Use separate video/audio streams for maximum quality
+                # - May have merge issues that need normalization
+                # - Expected: 4K quality, 80MB+ files, may need normalization
                 #
-                # FALLBACK DOWNLOADS (requires_normalization=False):
-                # - Use format: 'bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best'
-                # - Download pre-merged files or more compatible formats
+                # Fallback downloads (requires_normalization=False):
+                # - Use pre-merged files for compatibility
                 # - No merge operation needed, so no normalization required
+                # - Expected: Lower quality, smaller files, guaranteed compatibility
                 #
                 # This approach ensures we get the best possible quality when available,
                 # with graceful fallback to more compatible formats when needed.
@@ -190,12 +248,17 @@ def run_download(
                     logger.info(f"Primary download method detected - applying normalization for merge issue prevention")
                     normalized_path = temp_dir_path / f"normalized_{downloaded_path.name}"
                     
-                    if normalize_video(downloaded_path, normalized_path):
-                        original_video_path = normalized_path
-                        metadata['normalized'] = True
-                        logger.info("Primary download normalization completed successfully")
-                    else:
-                        logger.warning("Normalization failed, proceeding with original download")
+                    try:
+                        if normalize_video(downloaded_path, normalized_path, normalize_args):
+                            original_video_path = normalized_path
+                            metadata['normalized'] = True
+                            logger.info("Primary download normalization completed successfully")
+                        else:
+                            logger.warning("Normalization failed, proceeding with original download")
+                            original_video_path = downloaded_path
+                            metadata['normalized'] = False
+                    except NormalizationError as e:
+                        logger.warning(f"Normalization failed: {e}, proceeding with original download")
                         original_video_path = downloaded_path
                         metadata['normalized'] = False
                 else:
@@ -269,7 +332,11 @@ def run_download(
 
         except Exception as e:
             logger.error(f"Error processing video: {e}")
-            raise
+            # Preserve original error type if it's one of our custom exceptions
+            if isinstance(e, (DownloadError, NormalizationError, QualityReductionError)):
+                raise
+            # Wrap generic exceptions to provide context
+            raise DownloadError(f"Download processing failed: {e}")
 
 
 def main():

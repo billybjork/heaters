@@ -46,21 +46,34 @@ defmodule Heaters.Infrastructure.Orchestration.FFmpegConfig do
   ## Parameters
   - `profile`: Atom identifying the encoding profile
   - `opts`: Optional parameters for profile customization
+    - `:skip_master`: Skip master generation (returns empty args for :master profile)
+    - `:crf`: Override CRF value
+    - `:preset`: Override preset
+    - `:audio_bitrate`: Override audio bitrate
+    - `:threads`: Override thread count
 
   ## Examples
 
       iex> FFmpegConfig.get_args(:master)
       ["-c:v", "ffv1", "-level", "3", "-coder", "1", ...]
 
+      iex> FFmpegConfig.get_args(:master, skip_master: true)
+      []
+
       iex> FFmpegConfig.get_args(:proxy, crf: 25)
       ["-c:v", "libx264", "-preset", "medium", "-crf", "25", ...]
   """
   @spec get_args(atom(), keyword()) :: [String.t()]
   def get_args(profile, opts \\ []) do
-    profile
-    |> get_profile_config()
-    |> apply_options(opts)
-    |> build_ffmpeg_args()
+    # Quick return for skipped master generation
+    if profile == :master and Keyword.get(opts, :skip_master, false) do
+      []
+    else
+      profile
+      |> get_profile_config()
+      |> apply_options(opts)
+      |> build_ffmpeg_args()
+    end
   end
 
   @doc """
@@ -79,6 +92,43 @@ defmodule Heaters.Infrastructure.Orchestration.FFmpegConfig do
   @spec available_profiles() :: [atom()]
   def available_profiles do
     Map.keys(profiles())
+  end
+
+  @doc """
+  Checks if master generation should be skipped based on configuration or feature flags.
+
+  This allows for cost optimization by skipping expensive lossless master generation
+  when not needed for immediate use cases.
+
+  ## Parameters
+  - `opts`: Options that may contain skip_master flag
+  - `source_video`: Optional source video struct to make intelligent decisions
+
+  ## Examples
+
+      iex> FFmpegConfig.should_skip_master?(skip_master: true)
+      true
+      
+      iex> FFmpegConfig.should_skip_master?([])
+      false
+  """
+  @spec should_skip_master?(keyword(), map() | nil) :: boolean()
+  def should_skip_master?(opts, _source_video \\ nil) do
+    cond do
+      # Explicit override
+      Keyword.has_key?(opts, :skip_master) ->
+        Keyword.get(opts, :skip_master, false)
+
+      # Check application config for default behavior
+      Application.get_env(:heaters, :skip_master_by_default, false) ->
+        true
+
+      # Could add more intelligent logic here based on source_video properties
+      # For example: skip for videos shorter than X seconds, or specific sources
+
+      true ->
+        false
+    end
   end
 
   @doc """

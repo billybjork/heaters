@@ -144,8 +144,8 @@ defmodule Heaters.Infrastructure.PyRunner do
         {String.to_charlist(key), String.to_charlist(value)}
       end)
 
-    Logger.info("PyRunner: Original env: #{inspect(env)}")
-    Logger.info("PyRunner: Charlist env: #{inspect(charlist_env)}")
+    Logger.info("PyRunner: Original env: #{inspect(redact_secrets(env))}")
+    Logger.info("PyRunner: Charlist env: #{inspect(redact_secrets_charlist(charlist_env))}")
 
     port_options = [
       :binary,
@@ -335,4 +335,66 @@ defmodule Heaters.Infrastructure.PyRunner do
   # Helper function to explicitly show Dialyzer that success is possible
   @spec can_return_success() :: {:ok, map()}
   def can_return_success, do: {:ok, %{"status" => "test_success"}}
+
+  ## Secret redaction helpers
+
+  # Environment variable keys that contain sensitive information
+  @secret_keys [
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "DATABASE_URL",
+    "DEV_DATABASE_URL",
+    "PROD_DATABASE_URL"
+  ]
+
+  @spec redact_secrets([{String.t(), String.t()}]) :: [{String.t(), String.t()}]
+  defp redact_secrets(env) when is_list(env) do
+    Enum.map(env, fn {key, value} ->
+      if key in @secret_keys do
+        {key, redact_value(value)}
+      else
+        {key, value}
+      end
+    end)
+  end
+
+  @spec redact_secrets_charlist([{charlist(), charlist()}]) :: [{charlist(), charlist()}]
+  defp redact_secrets_charlist(env) when is_list(env) do
+    Enum.map(env, fn {key, value} ->
+      key_str = List.to_string(key)
+
+      if key_str in @secret_keys do
+        {key, String.to_charlist(redact_value(List.to_string(value)))}
+      else
+        {key, value}
+      end
+    end)
+  end
+
+  @spec redact_value(String.t()) :: String.t()
+  defp redact_value(value) when is_binary(value) do
+    cond do
+      # Redact database URLs by keeping only the protocol and host
+      String.contains?(value, "postgresql://") or String.contains?(value, "postgres://") ->
+        case URI.parse(value) do
+          %URI{scheme: scheme, host: host} when not is_nil(host) ->
+            "#{scheme}://***:***@#{host}/***"
+
+          _ ->
+            "[REDACTED_DATABASE_URL]"
+        end
+
+      # For other secrets, show only first and last few characters if long enough
+      String.length(value) > 8 ->
+        first = String.slice(value, 0, 3)
+        last = String.slice(value, -3, 3)
+        "#{first}***#{last}"
+
+      # Short secrets are completely redacted
+      true ->
+        "[REDACTED]"
+    end
+  end
+
+  defp redact_value(_), do: "[REDACTED]"
 end

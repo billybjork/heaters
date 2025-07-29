@@ -110,38 +110,14 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 
 ### yt-dlp Download Strategy
 
-The system uses a **quality-first download strategy** with robust fallback mechanisms:
+The system uses a **quality-first download strategy** with robust fallback mechanisms to ensure best possible video quality (including 4K/8K when available).
 
-**Primary Format**: `bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[ext=mp4][height<=1080]/bv*+ba/b`
-- Downloads separate video/audio streams for maximum quality
-- yt-dlp merges them internally using FFmpeg
-- May require normalization for merge issues
+⚠️  **CRITICAL**: Implementation details and requirements for maintaining 4K downloads are documented in `py/tasks/download_handler.py`. Do not modify format strings or client configurations without reviewing those requirements.
 
-**Fallback Format**: `best[ext=mp4][height<=720]/best[height<=720]/best`
-- Downloads pre-merged files or more compatible formats
-- No merge operation needed, so no normalization required
+**Key Features**:
+- Primary/fallback format strategy for maximum compatibility
+- Playlist prevention and cache management
+- Timeout handling and graceful degradation
+- Normalization when needed for merge operations
 
-**Critical Configuration**:
-- `playlist_items: '1'` - Forces single video download (prevents playlist expansion)
-- `noplaylist: True` - Don't download playlists
-- `no_cache_dir: True` - Clears cached data to prevent old video downloads
-- `cachedir: False` - Disables caching entirely
-
-**Timeout Handling**:
-- 120-second timeout for metadata extraction
-- 30-second socket timeout for network operations
-- Graceful fallback when metadata extraction fails
-- Reuses metadata from download phase to avoid redundant network calls
-
-### Normalization Strategy
-
-**Primary Downloads** (requires_normalization=True):
-- Applied when using separate video/audio streams
-- Fixes potential merge issues while preserving quality benefits
-- Uses FFmpeg normalization with optimized parameters
-
-**Fallback Downloads** (requires_normalization=False):
-- No normalization needed for pre-merged files
-- More compatible formats don't require post-processing
-
-This approach ensures we get the best possible quality when available, with graceful fallback to more compatible formats when needed.
+**Expected Results**: ~49 available formats including 4K (2160p), 1440p, multiple 1080p options.
