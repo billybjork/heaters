@@ -1,19 +1,20 @@
-defmodule HeatersWeb.CloudFrontVideoPlayer do
+defmodule HeatersWeb.StreamingVideoPlayer do
   @moduledoc """
-  Phoenix LiveView component for CloudFront video streaming.
+  Phoenix LiveView component for server-side FFmpeg video streaming.
 
-  Provides a simple HTML5 video element that leverages CloudFront's native
-  byte-range support for efficient video streaming and seeking.
+  Provides a simple HTML5 video element that receives FFmpeg-segmented streams
+  for true virtual clip playback with zero client-side video processing.
 
   Key features:
-  - Native HTML5 video element (no complex decoders)
-  - CloudFront byte-range requests for efficient seeking
-  - Support for both virtual clips (with timing constraints) and physical clips
-  - Simple, maintainable implementation
+  - Server-side FFmpeg time segmentation (streams only exact clip ranges)
+  - Native HTML5 video element (no complex decoders or client processing)
+  - CloudFront caching of FFmpeg output for global distribution
+  - Support for both virtual clips (FFmpeg streaming) and physical clips (direct files)
+  - Each clip feels like a standalone video file with 0-based timeline
 
   ## Usage
 
-      <.cloudfront_video_player clip={@current_clip} />
+      <.streaming_video_player clip={@current_clip} />
 
   The component automatically determines the appropriate video URL and player type
   based on the clip's properties and the source video's available files.
@@ -23,7 +24,7 @@ defmodule HeatersWeb.CloudFrontVideoPlayer do
   alias HeatersWeb.VideoUrlHelper
 
   @doc """
-  Renders a CloudFront video player component.
+  Renders a streaming video player component.
 
   ## Attributes
 
@@ -37,9 +38,9 @@ defmodule HeatersWeb.CloudFrontVideoPlayer do
   attr(:id, :string, default: "video-player")
   attr(:class, :string, default: "")
   attr(:controls, :boolean, default: true)
-  attr(:preload, :string, default: "none")
+  attr(:preload, :string, default: "metadata")
 
-  def cloudfront_video_player(assigns) do
+  def streaming_video_player(assigns) do
     # Get video URL and player type
     {video_url, player_type, clip_info} = get_video_data(assigns.clip)
 
@@ -59,7 +60,7 @@ defmodule HeatersWeb.CloudFrontVideoPlayer do
           controls={@controls}
           preload="none"
           crossorigin="anonymous"
-          phx-hook="CloudFrontVideoPlayer"
+          phx-hook="StreamingVideoPlayer"
           data-video-url={@video_url}
           data-player-type={@player_type}
           data-clip-info={Jason.encode!(@clip_info)}
@@ -72,7 +73,7 @@ defmodule HeatersWeb.CloudFrontVideoPlayer do
           <p>Video not available for streaming.</p>
           <p class="error-details">
             <%= if @clip.is_virtual do %>
-              Virtual clip requires proxy file for streaming.
+              Virtual clip requires proxy file for FFmpeg streaming.
             <% else %>
               Physical clip file not found.
             <% end %>
@@ -110,7 +111,8 @@ defmodule HeatersWeb.CloudFrontVideoPlayer do
     end
   end
 
-  # Build clip timing information for the JavaScript player
+  # Build clip information for the JavaScript player
+  # With server-side FFmpeg streaming, each clip is treated as a standalone file
   defp build_clip_info(%{is_virtual: true} = clip, _player_type) do
     %{
       is_virtual: true,
@@ -127,14 +129,14 @@ defmodule HeatersWeb.CloudFrontVideoPlayer do
   end
 
   @doc """
-  Helper function to get proxy video URL for preloading.
+  Helper function to get streaming video URL for preloading.
 
-  Used in templates for preloading next clips.
+  Used in templates for preloading next clips or sequential playback.
   """
-  def proxy_video_url(clip) when is_map(clip) do
+  def streaming_video_url(clip) when is_map(clip) do
     {url, _player_type, _clip_info} = get_video_data(clip)
     url
   end
 
-  def proxy_video_url(_), do: nil
+  def streaming_video_url(_), do: nil
 end

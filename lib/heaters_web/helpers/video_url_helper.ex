@@ -28,14 +28,16 @@ defmodule HeatersWeb.VideoUrlHelper do
       {:ok, url, :direct_s3} = get_video_url(physical_clip, source_video)
   """
   @spec get_video_url(map(), map()) :: {:ok, String.t(), atom()} | {:error, String.t()}
-  def get_video_url(%{is_virtual: true} = _clip, source_video) do
+  def get_video_url(%{is_virtual: true} = clip, source_video) do
     case source_video.proxy_filepath do
       nil ->
         {:error, "No proxy file available for virtual clip"}
 
-      proxy_path ->
-        url = build_cloudfront_url(proxy_path)
-        {:ok, url, :cloudfront_range}
+      _proxy_path ->
+        # Generate versioned streaming URL for virtual clips
+        version = generate_clip_version(clip)
+        url = "/videos/clips/#{clip.id}/stream/#{version}"
+        {:ok, url, :ffmpeg_stream}
     end
   end
 
@@ -71,7 +73,7 @@ defmodule HeatersWeb.VideoUrlHelper do
   This generates presigned URLs optimized for FFmpeg access, with longer expiration
   times and appropriate caching headers for video processing.
   """
-  @spec generate_signed_cloudfront_url(String.t()) :: {:ok, String.t()} | {:error, String.t()}
+  @spec generate_signed_cloudfront_url(String.t()) :: {:ok, String.t()}
   def generate_signed_cloudfront_url(s3_path) do
     require Logger
 
@@ -79,7 +81,8 @@ defmodule HeatersWeb.VideoUrlHelper do
       nil ->
         # Development mode - use presigned S3 URLs for FFmpeg
         Logger.debug("Generating presigned URL for FFmpeg input: #{s3_path}")
-        {:ok, generate_presigned_url(s3_path)}
+        url = generate_presigned_url(s3_path)
+        {:ok, url}
 
       cloudfront_domain ->
         # Production mode - use CloudFront URLs
@@ -188,5 +191,19 @@ defmodule HeatersWeb.VideoUrlHelper do
       Application.get_env(:heaters, :s3)[:dev_bucket_name] ||
       System.get_env("S3_DEV_BUCKET_NAME") ||
       "default-bucket"
+  end
+
+  # Generate a version string for clip cache busting.
+  # Uses clip updated_at timestamp to create a cache-busting version parameter.
+  # This ensures CloudFront cache is invalidated when clip cut points change.
+  defp generate_clip_version(%{updated_at: updated_at}) when not is_nil(updated_at) do
+    updated_at
+    |> DateTime.to_unix(:millisecond)
+    |> Integer.to_string()
+  end
+
+  defp generate_clip_version(_clip) do
+    # Fallback for clips without updated_at
+    "1"
   end
 end

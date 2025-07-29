@@ -9,7 +9,7 @@ Heaters processes videos through a **virtual clip pipeline**: download → proxy
 - **Universal Download**: Handles both web-scraped and user-uploaded videos
 - **Proxy Generation**: Creates lossless master (FFV1/MKV, Glacier archival) and proxy (all-I-frame H.264, dual-purpose)
 - **Virtual Clips**: Database records with cut points; no physical files until final export
-- **Instant Review**: CloudFront byte-range streaming with native HTML5 video for seeking and review actions (approve, skip, archive, group, cut point ops)  
+- **Instant Review**: Server-side FFmpeg time segmentation with native HTML5 video for seeking and review actions (approve, skip, archive, group, cut point ops)  
 - **Optimized Export**: Stream copy from proxy for 10x performance and superior quality
 
 **Key Benefits**: Zero re-encoding during review, optimized export performance, cost-effective storage, instant operations, universal workflow, maintainable codebase.
@@ -22,7 +22,7 @@ Heaters processes videos through a **virtual clip pipeline**: download → proxy
 - **ML Processing**: Python (PyTorch, Transformers)
 - **Media Processing**: Python (yt-dlp, FFmpeg)
 - **Storage**: AWS S3
-- **Frontend**: CloudFront streaming, native HTML5 video, modular JS, Phoenix LiveView
+- **Frontend**: Server-side FFmpeg streaming, native HTML5 video, modular JS, Phoenix LiveView
 
 ## Architecture Principles
 
@@ -101,6 +101,7 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 2. **Superior Quality**: Export from high-quality proxy (CRF 20) with zero transcoding loss
 3. **I/O Efficiency**: Direct S3 byte-range access eliminates download bottlenecks
 4. **Universal Workflow**: Handles all ingest types
-5. **Instant Review**: CloudFront byte-range streaming with native HTML5 video
-6. **Maintainable Codebase**: Modular, focused, and up-to-date
-7. **Production Reliable**: Resumable, idempotent, and robust
+5. **True Virtual Clips**: Server-side FFmpeg time segmentation streams only exact clip ranges
+6. **Instant Review**: Each clip feels like a standalone video file with 0-based timeline
+7. **Maintainable Codebase**: Modular, focused, and up-to-date
+8. **Production Reliable**: Resumable, idempotent, and robust

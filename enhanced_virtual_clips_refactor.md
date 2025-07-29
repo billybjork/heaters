@@ -70,15 +70,15 @@ Virtual Clips: pending_review → review_approved → exported (physical) → ke
 ---
 
 **Frontend (assets/js/): Server-Side Time Segmentation**
-  - `cloudfront-video-player.js`: Standard HTML5 video element for FFmpeg-segmented streams
-  - `cloudfront-video-player-controller.js`: Phoenix LiveView hook for seamless integration
-  - `app.js`: Updated with CloudFrontVideoPlayer hook for LiveView integration
+  - `streaming-video-player.js`: Standard HTML5 video element for FFmpeg-segmented streams
+  - `streaming-video-player-controller.js`: Phoenix LiveView hook for seamless integration
+  - `app.js`: Updated with StreamingVideoPlayer hook for LiveView integration
 
 **Controllers (lib/heaters_web/controllers/):**
   - `video_controller.ex`: FFmpeg-based streaming endpoint for virtual clips
 
 **Components (lib/heaters_web/components/):**
-  - `cloudfront_video_player.ex`: Phoenix component for streaming URL generation
+  - `streaming_video_player.ex`: Phoenix component for streaming URL generation
 
 **Helpers (lib/heaters_web/helpers/):**
   - `video_url_helper.ex`: Streaming endpoint URL generation with signed CloudFront URLs  
@@ -204,7 +204,7 @@ end
 - [x] Update pipeline configuration for optimized export workflow
 - [x] Performance optimization (10x improvement via stream copy)
 
-### ✅ Phase 3: Server-Side Time Segmentation (COMPLETE - Stage 1)
+### ✅ Phase 3: Server-Side Time Segmentation (COMPLETE - Stages 1-3)
 - [x] **Infrastructure foundation** and complex streaming elimination 
 - [x] **Virtual clips architecture** and database schema alignment
 - [x] **Database MECE constraints** with PostgreSQL EXCLUDE using GIST indexes
@@ -213,8 +213,9 @@ end
 - [x] **FFmpeg process pool** with ETS counters and graceful degradation
 - [x] **VideoUrlHelper updates** to generate signed CloudFront URLs for FFmpeg input
 - [x] **Application supervision** integration for process pool management
-- [ ] **Router configuration** for streaming endpoints  
-- [ ] **Component integration** with new streaming approach
+- [x] **Router configuration** for streaming endpoints with versioned URLs
+- [x] **URL generation** with cache-busting version parameters based on clip timestamps
+- [x] **Component integration** with new streaming approach (renamed to StreamingVideoPlayer)
 - [ ] **CloudFront integration** as caching layer for FFmpeg output
 - [ ] Cut point manipulation UI with instant streaming
 - [ ] User experience testing with real data
@@ -313,6 +314,29 @@ end
 - **Zero Client Downloads**: Browsers receive complete MP4 fragments, not full source videos
 - **Keyframe Accuracy**: FFmpeg ensures proper video headers and keyframe alignment
 
+### **🔥 FLAME Serverless Architecture (Production Target)**
+
+**Deployment Model**: Using Chris McCord's FLAME pattern for cost-optimized serverless Phoenix:
+
+```
+Browser → CloudFront Cache ─────────────┐ (cache hit → $0 compute)
+                                        │
+                                miss    │
+                                        ▼
+                     Fly Machine (boots on-demand)
+                     ├─ Phoenix app (~200ms cold start)
+                     └─ FFmpeg process (I/O bound)
+                               │
+                               ▼ (HTTP Range request)
+                        S3 Proxy File
+```
+
+**Cost Structure**:
+- **Compute**: ~$0.013/month for 10min daily usage (Fly shared-cpu-1x)
+- **Storage**: $0.15/GB-mo for Fly rootfs + S3 standard storage
+- **Bandwidth**: Dominates costs (CloudFront egress to reviewers)
+- **Idle Cost**: $0 when no active streaming (scale-to-zero)
+
 ### **Implementation Stages**
 
 #### **✅ Stage 1: Core Streaming Infrastructure** (**COMPLETE**)
@@ -348,27 +372,38 @@ end
   - Response headers optimized for CloudFront caching (`max-age=31536000`)
   - Virtual clip validation (only `is_virtual: true` clips can be streamed)
 
-#### **🚧 Stage 2: URL Generation & Routing** (**NEXT**)
+#### **✅ Stage 2: URL Generation & Routing** (**COMPLETE**)
 - [x] **VideoUrlHelper Updates** (`lib/heaters_web/helpers/video_url_helper.ex`)
-  - Added `generate_signed_cloudfront_url/1` for FFmpeg input URLs
+  - Added `generate_signed_cloudfront_url/1` for FFmpeg input URLs (type-safe)
   - Supports development (presigned S3) and production (CloudFront) modes
-  - Longer expiration times optimized for video processing
-  - ~~Generate versioned streaming URLs~~ (handled in controller routing)
-  - ~~Version based on `clips.updated_at`~~ (URL versioning via route parameters)
-- [ ] **Router Configuration** (`lib/heaters_web/router.ex`)
-  - Add versioned streaming routes: `get "/clips/:clip_id/stream/:version"`
-  - Optional authentication middleware for streaming endpoints
+  - Virtual clips now return `/videos/clips/:id/stream/:version` streaming URLs
+  - Cache-busting version based on `clips.updated_at` timestamp
+  - Return type `:ffmpeg_stream` indicates server-side streaming
+- [x] **Router Configuration** (`lib/heaters_web/router.ex`)
+  - Added versioned streaming routes: `get "/clips/:clip_id/stream/:version"`
+  - Added fallback route: `get "/clips/:clip_id/stream"` for backward compatibility
+  - No pipeline for direct HTTP streaming with custom headers
 
-#### **Stage 3: Component Integration**
-- [ ] **CloudFront Player Updates** (`assets/js/cloudfront-video-player.js`)
-  - Handle streaming URLs vs direct URLs
+#### **✅ Stage 3: Component Integration** (**COMPLETE**)
+- [x] **Streaming Player Updates** (`assets/js/streaming-video-player.js`)
+  - Handle streaming URLs vs direct URLs with `StreamingVideoPlayer` class
   - Remove timing constraints (now handled server-side)  
   - Add `preload="metadata"` for complete MP4 fragments
-  - Implement 200ms debouncing for timeline scrubbing
-  - Add subtle loading spinner (~150ms FFmpeg startup latency)
-- [ ] **Component Updates** (`lib/heaters_web/components/cloudfront_video_player.ex`)
-  - Update to use versioned URL generation
-  - Simplify component logic (no client-side timing)
+  - Add loading spinner with CSS for FFmpeg startup latency (~150ms)
+  - Each clip treated as standalone file with 0-based timeline
+  - New API: `loadVideo()`, `switchClip()` for sequential playback foundation
+- [x] **Controller Updates** (`assets/js/streaming-video-player-controller.js`)
+  - Updated LiveView hook to use new `StreamingVideoPlayer` API
+  - Smooth clip transitions with `switchClip()` method
+  - Proper state tracking for URL and player type changes
+- [x] **Component Updates** (`lib/heaters_web/components/streaming_video_player.ex`)
+  - Renamed from `CloudFrontVideoPlayer` to `StreamingVideoPlayer`
+  - Updated to use streaming URL generation with server-side time segmentation
+  - Simplified component logic (no client-side timing constraints)
+  - Updated hook registration (`phx-hook="StreamingVideoPlayer"`)
+- [x] **LiveView Integration** (`lib/heaters_web/live/review_live.ex`)
+  - Updated imports and template to use new `streaming_video_player` component
+  - All compilation errors resolved, ready for end-to-end testing
 
 #### **Stage 4: Production Optimization**
 - [ ] **CloudFront Configuration Tuning**
@@ -386,29 +421,86 @@ end
   - CloudFront cache hit ratios
   - Database constraint violation tracking
 
-### **Architecture Flow (✅ Implemented)**
+#### **🔥 Stage 5: FLAME Serverless Migration (Production Target)**
+- [ ] **FLAME Integration** (`lib/heaters/flame_runners/`)
+  - Replace `FFmpegPool` with `FLAME.call(FfmpegRunner, fn -> ... end)`
+  - Dedicated runner modules optimized for video processing
+  - Pre-warmed dependencies (FFmpeg binary, S3 clients)
+- [ ] **Rate Limiting Adaptation**
+  - Remove ETS-based process counting (not needed in FLAME)
+  - Rely on Fly.io machine concurrency limits
+  - Per-invocation resource validation
+- [ ] **Connection Lifecycle Updates**
+  - Ensure `StreamPorts` handles ephemeral machine shutdowns
+  - Optimize for ~5-minute machine lifecycle
+  - Clean shutdown coordination with FLAME
+- [ ] **Cost Monitoring & Optimization**
+  - CloudFront cache hit ratio monitoring
+  - Fly Machine usage tracking (compute seconds)
+  - S3 bandwidth cost analysis
+  - Rootfs image size optimization (<100MB target)
+
+### **Architecture Flow Comparison**
+
+#### **Current Implementation (✅ Stage 1 Complete)**
 ```
-Virtual Clip Request → Phoenix Endpoint → FFmpeg Process Pool (Rate Limiting)
+Virtual Clip Request → Always-On Phoenix → FFmpeg Process Pool (Rate Limiting)
                                                     ↓
                        FFmpeg Time Segmentation → StreamPorts (Zombie Protection)
                                                     ↓
                             Chunked Stream → Browser <video> element
                                   ↓
-               CloudFront Caching ← MP4 Fragment ← stdout stream (Ready for Stage 2)
+               CloudFront Caching ← MP4 Fragment ← stdout stream
 ```
 
-### **Benefits Achieved (Stage 1)**
+#### **🔥 FLAME Target Architecture (Stage 5)**
+```
+Virtual Clip Request → CloudFront Cache ──┐ (hit → $0 compute)
+                                          │
+                                  miss    │
+                                          ▼
+                    FLAME.call(FfmpegRunner, fn ->
+                      Phoenix Controller → StreamPorts → FFmpeg
+                    end) ── Fly Machine (ephemeral)
+                                          │
+                                          ▼
+                    MP4 Fragment → CloudFront Cache → Browser
+```
+
+**Key Differences**:
+- **Current**: Always-on server, ETS process pool, persistent supervision tree
+- **FLAME**: Scale-to-zero, ephemeral machines, isolated execution contexts
+- **Cost Impact**: Current ~$5-20/month → FLAME ~$0.50/month for typical usage
+
+### **Benefits Achieved (Stages 1-2)**
 - ✅ **Database Integrity**: MECE constraints prevent overlapping virtual clips at database level
 - ✅ **Process Safety**: Zombie FFmpeg process prevention with port monitoring and cleanup
 - ✅ **Resource Protection**: Rate limiting prevents server overload during concurrent streaming
 - ✅ **True Virtual Clips**: FFmpeg streams only exact time ranges, eliminating full video downloads
 - ✅ **Production Ready**: Supervision tree integration with graceful error handling
+- ✅ **Type Safety**: All URL generation functions are type-safe with proper error handling
+- ✅ **Cache Versioning**: Automatic cache busting when virtual clips are modified
+- ✅ **Backward Compatibility**: Fallback routes ensure smooth transitions
 
-### **Benefits Pending (Stage 2+)**  
+### **Benefits Achieved (Stages 1-3)**
+- ✅ **Component Integration**: Complete StreamingVideoPlayer implementation with smooth clip transitions
+- ✅ **0-Based Timeline**: Each virtual clip feels like a standalone video file
+- ✅ **Loading Indicators**: Visual feedback for FFmpeg startup latency (~150ms)
+- ✅ **Sequential Playback Foundation**: `switchClip()` API ready for future playlist functionality
+
+### **Benefits Pending (Stage 4)**  
 - **CloudFront Caching**: Identical clips cached globally for subsequent requests
 - **Simple Maintenance**: Standard Elixir/Phoenix patterns, no complex streaming infrastructure
 - **Bandwidth Efficiency**: ~90% reduction in data transfer (2-minute clip vs 60-minute source) 
 - **Instant Playback**: No waiting for full video download
+
+### **🔥 FLAME Architecture Benefits (Stage 5)**
+- **Cost Optimization**: Pay only for actual compute seconds (~$0.50/month vs $5-20/month)
+- **Zero Idle Cost**: Machines shutdown when not streaming video
+- **Elastic Scaling**: Handles traffic spikes without pre-provisioning
+- **Simplified Operations**: No server management, automatic scaling
+- **Global Edge**: CloudFront cache hit rates become primary performance metric
+- **Development Flexibility**: Can run FFmpeg locally for solo review, FLAME for collaboration
 
 ### **Key Implementation Notes**
 
@@ -465,6 +557,23 @@ Port.open({:spawn_executable, ffmpeg_bin}, [
 - **Streaming Auth**: Session cookies or 5-minute HMAC tokens
 - **Public Thumbnails**: Keep small preview images public (no signing overhead)
 - **Rate Limiting**: Prevent FFmpeg process floods with ETS counters
+
+#### **🔥 FLAME Deployment Considerations** 
+- **Docker Image Optimization**: Minimize rootfs size for faster cold starts
+  ```dockerfile
+  # Target: <100MB image with FFmpeg, Elixir runtime, and dependencies
+  FROM flyio/elixir:1.16-slim
+  RUN apt-get update && apt-get install -y ffmpeg --no-install-recommends
+  ```
+- **Database Connection Strategy**: 
+  - Use connection pooling optimized for ephemeral machines
+  - Consider read replicas for clip metadata queries
+  - Connection lifecycle aligned with machine lifecycle
+- **S3 Region Alignment**: Co-locate Fly machines with S3 buckets for minimal latency
+- **Development Workflow**:
+  - **Local Development**: Run FFmpeg locally for instant feedback
+  - **Staging**: Traditional Phoenix deployment for integration testing
+  - **Production**: FLAME deployment for cost optimization
 
 ---
 

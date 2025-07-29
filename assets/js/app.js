@@ -2,7 +2,7 @@ import { Socket } from "phoenix"
 import { LiveSocket } from "phoenix_live_view"
 
 import { ReviewHotkeys } from "./review-hotkeys"
-import { CloudFrontVideoPlayerController } from "./cloudfront-video-player-controller"
+import { StreamingVideoPlayerController } from "./streaming-video-player-controller"
 import { HoverPlay, ThumbHoverPlayer } from "./hover-play";
 
 // Pull the CSRF token from the page
@@ -11,12 +11,12 @@ let csrfToken = document
   ?.getAttribute("content")
 
 // Debug logging
-console.log("[DEBUG] Imported CloudFrontVideoPlayerController:", typeof CloudFrontVideoPlayerController);
+console.log("[DEBUG] Imported StreamingVideoPlayerController:", typeof StreamingVideoPlayerController);
 
 // Build the hooks object matching your `phx-hook` names in templates
 let Hooks = {
   ReviewHotkeys,
-  CloudFrontVideoPlayer: CloudFrontVideoPlayerController,
+  StreamingVideoPlayer: StreamingVideoPlayerController,
   ThumbHoverPlayer,
   HoverPlay
 }

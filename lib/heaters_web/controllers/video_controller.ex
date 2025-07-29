@@ -156,10 +156,8 @@ defmodule HeatersWeb.VideoController do
       proxy_path ->
         # Generate signed CloudFront URL for FFmpeg input
         # Use CloudFront for edge caching of source video
-        case VideoUrlHelper.generate_signed_cloudfront_url(proxy_path) do
-          {:ok, signed_url} -> {:ok, signed_url}
-          {:error, reason} -> {:error, reason}
-        end
+        {:ok, signed_url} = VideoUrlHelper.generate_signed_cloudfront_url(proxy_path)
+        {:ok, signed_url}
     end
   end
 end

@@ -23,6 +23,13 @@ defmodule HeatersWeb.Router do
     post("/submit_video", VideoController, :create)
   end
 
+  # Video streaming endpoints
+  scope "/videos", HeatersWeb do
+    # No pipeline - direct HTTP streaming with custom headers
+    get("/clips/:clip_id/stream/:version", VideoController, :stream_clip)
+    get("/clips/:clip_id/stream", VideoController, :stream_clip)
+  end
+
   # Other scopes may use custom stacks.
   # scope "/api", HeatersWeb do
   #   pipe_through :api
