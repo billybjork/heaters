@@ -11,13 +11,33 @@ Handles video downloading with yt-dlp including:
 import logging
 import os
 import shutil
+import signal
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
 import yt_dlp
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def extraction_timeout(seconds):
+    """Context manager for timing out yt-dlp extraction operations"""
+    def timeout_handler(signum, frame):
+        raise TimeoutError(f"yt-dlp extraction timed out after {seconds} seconds")
+    
+    # Set up the timeout
+    old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(seconds)
+    
+    try:
+        yield
+    finally:
+        # Clean up: restore old handler and cancel alarm
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
 
 
 def _validate_ffmpeg_for_merge():
@@ -63,25 +83,46 @@ def download_from_url(url: str, temp_dir: Path) -> Tuple[Path, Dict[str, Any]]:
     output_template = str(temp_dir / "%(title)s.%(ext)s")
     
     # Define format preferences with fallback strategy
-    format_primary = 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b'
-    format_fallback = 'bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+    # Updated formats to be more compatible with YouTube's current restrictions
+    format_primary = 'bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[ext=mp4][height<=1080]/bv*+ba/b'
+    format_fallback = 'best[ext=mp4][height<=720]/best[height<=720]/best'
     
     base_ydl_opts = {
         'outtmpl': output_template,
         'merge_output_format': 'mp4',  # Ensure merged output is mp4
         'logger': YtdlpLogger(),
         'nocheckcertificate': True,
-        'retries': 5,
-        'embedmetadata': True,
-        'embedthumbnail': True,
+        'retries': 3,  # Reduced retries to fail faster
+        'embedmetadata': False,  # Disabled to avoid potential issues
+        'embedthumbnail': False,  # Disabled to avoid potential issues  
         'restrictfilenames': True,
         'ignoreerrors': False,  # Fail on error to trigger fallback
         'socket_timeout': 120,
         'postprocessor_args': {
             'ffmpeg_i': ['-err_detect', 'ignore_err'],
         },
-        'fragment_retries': 10,
+        'fragment_retries': 5,  # Reduced fragment retries
         'skip_unavailable_fragments': True,
+        
+        # CRITICAL: Prevent playlist expansion and multiple video downloads
+        # These settings ensure only the single requested video is downloaded
+        'playlist_items': '1',  # Only download the first item (prevents playlist expansion)
+        'extract_flat': False,  # Ensure we get full video info
+        'noplaylist': True,     # Don't download playlists (prevents channel/playlist expansion)
+        
+        # CRITICAL: Clear cached data to prevent old video downloads
+        # These settings prevent yt-dlp from using cached data that might cause
+        # downloading of previously cached videos instead of the requested one
+        'no_cache_dir': True,   # Don't use cache directory
+        'cachedir': False,      # Disable caching entirely
+        
+        # YouTube-specific options to handle current restrictions
+        'extractor_args': {
+            'youtube': {
+                'player_skip': ['configs', 'webpage'],  # Skip some steps for speed
+                'player_client': ['android', 'web'],     # Try different clients
+            }
+        },
     }
 
     download_successful = False
@@ -111,13 +152,22 @@ def download_from_url(url: str, temp_dir: Path) -> Tuple[Path, Dict[str, Any]]:
 
     # Attempt 1: Primary (Best Quality) Format
     logger.info(f"yt-dlp: Attempt 1 - Using primary format: '{format_primary}'")
+    logger.info(f"yt-dlp: Processing URL: {url}")
     ydl_opts_primary = {**base_ydl_opts, 'format': format_primary, 'progress_hooks': [ytdlp_progress_hook]}
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts_primary) as ydl:
             logger.info(f"Extracting info (Attempt 1) for {url}...")
-            temp_info_dict = ydl.extract_info(url, download=False)
-            video_title = temp_info_dict.get('title', video_title)
+            try:
+                with extraction_timeout(60):  # 60 second timeout for extraction
+                    temp_info_dict = ydl.extract_info(url, download=False)
+                    video_title = temp_info_dict.get('title', video_title)
+                    logger.info(f"yt-dlp: Extracted info - title: '{video_title}', type: {temp_info_dict.get('_type', 'unknown')}, entries: {len(temp_info_dict.get('entries', []))}")
+                    # Store the info_dict for later use
+                    info_dict = temp_info_dict
+            except TimeoutError as timeout_err:
+                logger.error(f"Primary extraction timed out: {timeout_err}")
+                raise yt_dlp.utils.DownloadError(f"Extraction timeout: {timeout_err}")
 
             logger.info(f"Downloading video (Attempt 1): '{video_title}'...")
             
@@ -155,9 +205,25 @@ def download_from_url(url: str, temp_dir: Path) -> Tuple[Path, Dict[str, Any]]:
         
         logger.info(f"Selected file: {initial_temp_filepath} ({file_size} bytes)")
 
-        # Re-extract info for metadata accuracy
-        with yt_dlp.YoutubeDL({'logger': YtdlpLogger(), 'quiet': True, 'skip_download': True}) as ydl_info:
-            info_dict = ydl_info.extract_info(url, download=False)
+        # CRITICAL: Optimize metadata handling to avoid timeout issues
+        # Reuse metadata from download phase instead of making redundant network calls
+        # This prevents the timeout issues that occur when yt-dlp tries to re-extract
+        # metadata after the download is complete
+        if not info_dict:
+            logger.warning("No info_dict from download phase, attempting metadata extraction...")
+            with yt_dlp.YoutubeDL({'logger': YtdlpLogger(), 'quiet': True, 'skip_download': True, 'socket_timeout': 30}) as ydl_info:
+                try:
+                    with extraction_timeout(120):  # 120 second timeout for metadata extraction
+                        info_dict = ydl_info.extract_info(url, download=False)
+                except TimeoutError as timeout_err:
+                    logger.error(f"Metadata extraction timed out: {timeout_err}")
+                    # Don't fail here, just use empty info_dict
+                    info_dict = {}
+                except Exception as e:
+                    logger.error(f"Metadata extraction failed: {e}")
+                    info_dict = {}
+        else:
+            logger.info("Using info_dict from download phase for metadata")
 
         download_successful = True
         logger.info("yt-dlp: Download successful with primary format.")
@@ -202,13 +268,25 @@ def download_from_url(url: str, temp_dir: Path) -> Tuple[Path, Dict[str, Any]]:
     # Attempt 2: Fallback (More Compatible) Format
     if not download_successful:
         logger.info(f"yt-dlp: Attempt 2 - Using fallback format: '{format_fallback}'")
+        logger.info(f"yt-dlp: Processing URL (fallback): {url}")
         ydl_opts_fallback = {**base_ydl_opts, 'format': format_fallback, 'progress_hooks': [ytdlp_progress_hook]}
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts_fallback) as ydl:
                 logger.info(f"Extracting info (Attempt 2) for {url}...")
-                info_dict = ydl.extract_info(url, download=False)
-                video_title = info_dict.get('title', video_title)
+                try:
+                    with extraction_timeout(120):  # 120 second timeout for fallback extraction
+                        temp_info_dict = ydl.extract_info(url, download=False)
+                        video_title = temp_info_dict.get('title', video_title)
+                        logger.info(f"yt-dlp: Extracted info (fallback) - title: '{video_title}', type: {temp_info_dict.get('_type', 'unknown')}, entries: {len(temp_info_dict.get('entries', []))}")
+                        # Store the info_dict for later use
+                        info_dict = temp_info_dict
+                except TimeoutError as timeout_err:
+                    logger.error(f"Fallback extraction timed out: {timeout_err}")
+                    raise yt_dlp.utils.DownloadError(f"Fallback extraction timeout: {timeout_err}")
+                except Exception as e:
+                    logger.error(f"Fallback extraction failed: {e}")
+                    raise yt_dlp.utils.DownloadError(f"Fallback extraction failed: {e}")
 
                 logger.info(f"Downloading video (Attempt 2): '{video_title}'...")
                 ydl.download([url])
@@ -255,8 +333,16 @@ def download_from_url(url: str, temp_dir: Path) -> Tuple[Path, Dict[str, Any]]:
     if not info_dict:
         logger.warning("info_dict not populated. Attempting final metadata fetch...")
         try:
-            with yt_dlp.YoutubeDL({'logger': YtdlpLogger(), 'quiet': True, 'skip_download': True}) as ydl_final:
-                info_dict = ydl_final.extract_info(url, download=False)
+            with yt_dlp.YoutubeDL({'logger': YtdlpLogger(), 'quiet': True, 'skip_download': True, 'socket_timeout': 30}) as ydl_final:
+                try:
+                    with extraction_timeout(120):  # 120 second timeout for final metadata fetch
+                        info_dict = ydl_final.extract_info(url, download=False)
+                except TimeoutError as timeout_err:
+                    logger.error(f"Final metadata extraction timed out: {timeout_err}")
+                    info_dict = {}
+                except Exception as e:
+                    logger.error(f"Final metadata extraction failed: {e}")
+                    info_dict = {}
         except Exception as final_info_err:
             logger.error(f"Failed to fetch final metadata: {final_info_err}")
             info_dict = {}
@@ -278,8 +364,16 @@ def extract_download_metadata(url: str, info_dict: Optional[Dict[str, Any]] = No
     """Extract metadata from yt-dlp info dict or by fetching it"""
     if info_dict is None:
         try:
-            with yt_dlp.YoutubeDL({'logger': YtdlpLogger(), 'quiet': True, 'skip_download': True}) as ydl:
-                info_dict = ydl.extract_info(url, download=False)
+            with yt_dlp.YoutubeDL({'logger': YtdlpLogger(), 'quiet': True, 'skip_download': True, 'socket_timeout': 30}) as ydl:
+                try:
+                    with extraction_timeout(120):  # 120 second timeout for metadata extraction
+                        info_dict = ydl.extract_info(url, download=False)
+                except TimeoutError as timeout_err:
+                    logger.warning(f"Metadata extraction timed out: {timeout_err}")
+                    info_dict = {}
+                except Exception as e:
+                    logger.warning(f"Metadata extraction failed: {e}")
+                    info_dict = {}
         except Exception as e:
             logger.warning(f"Failed to extract metadata from URL: {e}")
             info_dict = {}

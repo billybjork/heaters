@@ -105,3 +105,43 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 6. **Instant Review**: Each clip feels like a standalone video file with 0-based timeline
 7. **Maintainable Codebase**: Modular, focused, and up-to-date
 8. **Production Reliable**: Resumable, idempotent, and robust
+
+## Media Processing Configuration
+
+### yt-dlp Download Strategy
+
+The system uses a **quality-first download strategy** with robust fallback mechanisms:
+
+**Primary Format**: `bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[ext=mp4][height<=1080]/bv*+ba/b`
+- Downloads separate video/audio streams for maximum quality
+- yt-dlp merges them internally using FFmpeg
+- May require normalization for merge issues
+
+**Fallback Format**: `best[ext=mp4][height<=720]/best[height<=720]/best`
+- Downloads pre-merged files or more compatible formats
+- No merge operation needed, so no normalization required
+
+**Critical Configuration**:
+- `playlist_items: '1'` - Forces single video download (prevents playlist expansion)
+- `noplaylist: True` - Don't download playlists
+- `no_cache_dir: True` - Clears cached data to prevent old video downloads
+- `cachedir: False` - Disables caching entirely
+
+**Timeout Handling**:
+- 120-second timeout for metadata extraction
+- 30-second socket timeout for network operations
+- Graceful fallback when metadata extraction fails
+- Reuses metadata from download phase to avoid redundant network calls
+
+### Normalization Strategy
+
+**Primary Downloads** (requires_normalization=True):
+- Applied when using separate video/audio streams
+- Fixes potential merge issues while preserving quality benefits
+- Uses FFmpeg normalization with optimized parameters
+
+**Fallback Downloads** (requires_normalization=False):
+- No normalization needed for pre-merged files
+- More compatible formats don't require post-processing
+
+This approach ensures we get the best possible quality when available, with graceful fallback to more compatible formats when needed.
