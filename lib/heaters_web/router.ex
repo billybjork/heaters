@@ -30,6 +30,12 @@ defmodule HeatersWeb.Router do
     get("/clips/:clip_id/stream", VideoController, :stream_clip)
   end
 
+  # Debug endpoints (development only)
+  scope "/debug", HeatersWeb do
+    get("/ffmpeg/reset", VideoController, :reset_ffmpeg_pool)
+    get("/ffmpeg/status", VideoController, :ffmpeg_pool_status)
+  end
+
   # Other scopes may use custom stacks.
   # scope "/api", HeatersWeb do
   #   pipe_through :api

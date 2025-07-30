@@ -35,7 +35,7 @@ defmodule HeatersWeb.StreamingVideoPlayer do
   - `preload` - Video preload strategy (optional, defaults to "metadata")
   """
   attr(:clip, :map, required: true)
-  attr(:id, :string, default: "video-player")
+  attr(:id, :string, default: nil)
   attr(:class, :string, default: "")
   attr(:controls, :boolean, default: true)
   attr(:preload, :string, default: "metadata")
@@ -44,30 +44,42 @@ defmodule HeatersWeb.StreamingVideoPlayer do
     # Get video URL and player type
     {video_url, player_type, clip_info} = get_video_data(assigns.clip)
 
+    # Use a stable ID based on clip to prevent unnecessary DOM recreation
+    video_id = assigns.id || "video-player-#{assigns.clip.id}"
+    
     assigns =
       assigns
       |> assign(:video_url, video_url)
       |> assign(:player_type, player_type)
       |> assign(:clip_info, clip_info)
+      |> assign(:video_id, video_id)
       |> assign(:clip_key, "clip-#{assigns.clip.id}")
 
     ~H"""
     <div class="video-player-container">
       <%= if @video_url do %>
         <video
-          id={@id}
+          id={@video_id}
           class={["video-player", @class]}
           controls={@controls}
+          autoplay
+          muted
           preload="none"
+          playsinline
           crossorigin="anonymous"
           phx-hook="StreamingVideoPlayer"
+          phx-update="ignore"
           data-video-url={@video_url}
           data-player-type={@player_type}
           data-clip-info={Jason.encode!(@clip_info)}
-          poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='600'%3E%3Crect width='100%25' height='100%25' fill='%23f0f0f0'/%3E%3Ctext x='50%25' y='50%25' font-family='Arial' font-size='24' fill='%23666' text-anchor='middle' dy='.3em'%3EClick to load video%3C/text%3E%3C/svg%3E"
         >
           <p>Your browser doesn't support HTML5 video streaming.</p>
         </video>
+        
+        <div class="streaming-video-loading">
+          <div class="spinner"></div>
+          <div class="loading-text">Streaming clip...</div>
+        </div>
       <% else %>
         <div class="video-player-error">
           <p>Video not available for streaming.</p>

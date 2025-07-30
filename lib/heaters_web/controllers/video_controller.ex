@@ -24,15 +24,14 @@ defmodule HeatersWeb.VideoController do
   Accepts requests like: /videos/clips/:clip_id/stream/:version
   Uses FFmpeg to stream only the exact time range needed for the clip.
   """
-  def stream_clip(conn, %{"clip_id" => clip_id, "version" => _version}) do
+  def stream_clip(conn, %{"clip_id" => clip_id, "version" => version} = params) do
+    Logger.info("VideoController.stream_clip called with params: #{inspect(params)}")
+    Logger.info("Parsed clip_id: #{clip_id}, version: #{version}")
+
     # Check FFmpeg process pool for rate limiting
     case FFmpegPool.acquire() do
       :ok ->
-        try do
-          do_stream_clip(conn, clip_id)
-        after
-          FFmpegPool.release()
-        end
+        do_stream_clip(conn, clip_id)
 
       :rate_limited ->
         conn
@@ -44,7 +43,37 @@ defmodule HeatersWeb.VideoController do
 
   # Fallback for requests without version (for backward compatibility)
   def stream_clip(conn, %{"clip_id" => clip_id}) do
+    Logger.info("VideoController.stream_clip called (no version) with clip_id: #{clip_id}")
     stream_clip(conn, %{"clip_id" => clip_id, "version" => "1"})
+  end
+
+  # Debug endpoints
+  def reset_ffmpeg_pool(conn, _params) do
+    alias HeatersWeb.FFmpegPool
+
+    {old_active, max_count} = FFmpegPool.status()
+    FFmpegPool.reset_counter()
+    {new_active, _} = FFmpegPool.status()
+
+    Logger.info("FFmpeg pool reset: #{old_active}/#{max_count} -> #{new_active}/#{max_count}")
+
+    json(conn, %{
+      message: "FFmpeg pool counter reset",
+      before: %{active: old_active, max: max_count},
+      after: %{active: new_active, max: max_count}
+    })
+  end
+
+  def ffmpeg_pool_status(conn, _params) do
+    alias HeatersWeb.FFmpegPool
+
+    {active, max_count} = FFmpegPool.status()
+
+    json(conn, %{
+      active_processes: active,
+      max_processes: max_count,
+      available: max_count - active
+    })
   end
 
   # Extract only the path (and query string, if any) from the Referer header.
@@ -64,6 +93,8 @@ defmodule HeatersWeb.VideoController do
 
   # Core FFmpeg streaming implementation
   defp do_stream_clip(conn, clip_id) do
+    Logger.info("do_stream_clip called for clip_id: #{clip_id}")
+
     case get_clip_with_source_video(clip_id) do
       {:ok, clip} ->
         case generate_signed_cloudfront_url(clip.source_video) do
@@ -97,7 +128,7 @@ defmodule HeatersWeb.VideoController do
       pool_status: FFmpegPool.status()
     )
 
-    # Build FFmpeg command using stream copy (precision mode available but not used yet)
+    # Build FFmpeg command for streaming MP4 - input-side seeking for fast startup
     cmd = [
       "ffmpeg",
       "-hide_banner",
@@ -105,16 +136,16 @@ defmodule HeatersWeb.VideoController do
       "error",
       "-ss",
       to_string(clip.start_time_seconds),
-      "-to",
-      to_string(clip.end_time_seconds),
       "-i",
       signed_url,
+      "-t",
+      to_string(duration_seconds),
       "-c",
       "copy",
-      "-movflags",
-      "+faststart",
       "-f",
       "mp4",
+      "-movflags",
+      "frag_keyframe+empty_moov",
       "pipe:1"
     ]
 
@@ -127,7 +158,10 @@ defmodule HeatersWeb.VideoController do
       conn
       |> put_resp_header("content-type", "video/mp4")
       |> put_resp_header("accept-ranges", "bytes")
-      |> put_resp_header("cache-control", "public, max-age=31536000")
+      |> put_resp_header("cache-control", "no-cache, no-store, must-revalidate")
+      |> put_resp_header("access-control-allow-origin", "*")
+      |> put_resp_header("access-control-allow-methods", "GET")
+      |> put_resp_header("access-control-allow-headers", "range")
       |> put_resp_header("x-clip-id", to_string(clip.id))
       |> send_chunked(200)
 

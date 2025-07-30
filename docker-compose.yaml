@@ -38,6 +38,10 @@ services:
       dockerfile: Dockerfile.dev
     container_name: heaters-app-dev
     env_file: .env
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
     environment:
       MIX_ENV: dev
       APP_ENV: development

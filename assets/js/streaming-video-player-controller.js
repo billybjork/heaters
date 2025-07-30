@@ -37,7 +37,7 @@ export const StreamingVideoPlayerController = {
       showLoadingSpinner: true
     });
     
-    // Load the video
+    // Load the video if URL is provided
     if (videoUrl) {
       this.player.loadVideo(videoUrl, playerType, clipInfo).catch(error => {
         console.error("[StreamingVideoPlayerController] Failed to load video:", error);
@@ -51,9 +51,11 @@ export const StreamingVideoPlayerController = {
 
   updated() {
     console.log("[StreamingVideoPlayerController] Updated");
+    console.log("[StreamingVideoPlayerController] Element ID:", this.el.id);
+    console.log("[StreamingVideoPlayerController] Player exists:", !!this.player);
     
     if (!this.player) {
-      console.warn("[StreamingVideoPlayerController] Player not initialized on update");
+      console.warn("[StreamingVideoPlayerController] Player not initialized on update - component was likely recreated");
       return;
     }
     

@@ -37,41 +37,61 @@ defmodule HeatersWeb.StreamPorts do
   - `{:error, reason, conn}` - Error occurred during streaming
   """
   def stream(%Conn{} = conn, cmd) when is_list(cmd) do
-    ffmpeg_bin = System.find_executable("ffmpeg")
+    case cmd do
+      ["ffmpeg" | args] ->
+        ffmpeg_bin = System.find_executable("ffmpeg")
 
-    if ffmpeg_bin do
-      do_stream(conn, ffmpeg_bin, tl(cmd))
-    else
-      Logger.error("FFmpeg executable not found in PATH")
-      {:error, :ffmpeg_not_found, conn}
+        if ffmpeg_bin do
+          do_stream(conn, ffmpeg_bin, args)
+        else
+          Logger.error("FFmpeg executable not found in PATH")
+          {:error, :ffmpeg_not_found, conn}
+        end
+
+      ["sh" | args] ->
+        shell_bin = System.find_executable("sh")
+
+        if shell_bin do
+          do_stream(conn, shell_bin, args)
+        else
+          Logger.error("Shell executable not found in PATH")
+          {:error, :shell_not_found, conn}
+        end
+
+      [executable | args] ->
+        exec_bin = System.find_executable(executable)
+
+        if exec_bin do
+          do_stream(conn, exec_bin, args)
+        else
+          Logger.error("#{executable} executable not found in PATH")
+          {:error, :executable_not_found, conn}
+        end
     end
   end
 
-  defp do_stream(conn, ffmpeg_bin, args) do
+  defp do_stream(conn, executable_bin, args) do
     start_time = System.monotonic_time(:millisecond)
-    Logger.debug("Starting FFmpeg stream with args: #{inspect(args)}")
+    Logger.debug("Starting stream with args: #{inspect(args)}")
+    Logger.debug("Executable binary: #{executable_bin}")
 
     # Open port with error output redirected to stdout for better error handling
     port =
-      Port.open({:spawn_executable, ffmpeg_bin}, [
+      Port.open({:spawn_executable, executable_bin}, [
         :binary,
         :exit_status,
         {:args, args},
-        :stderr_to_stdout
+        {:stderr_to_stdout, true}
       ])
 
     # Monitor port to detect zombie processes
     port_ref = Port.monitor(port)
 
-    # Set up connection cleanup callback
-    conn =
-      Conn.register_before_send(conn, fn conn ->
-        cleanup_port(port, port_ref)
-        conn
-      end)
-
     # Start streaming loop
     stream_loop(conn, port, port_ref, start_time)
+  after
+    # Always release the FFmpeg pool slot
+    HeatersWeb.FFmpegPool.release()
   end
 
   # Main streaming loop that handles port output and connection state
@@ -79,6 +99,15 @@ defmodule HeatersWeb.StreamPorts do
     receive do
       # Data from FFmpeg stdout/stderr
       {^port, {:data, data}} ->
+        # Log any stderr output (should be warnings/errors since we redirect stderr to stdout)
+        if String.contains?(data, "Warning") or String.contains?(data, "Error") or
+             String.contains?(data, "error") do
+          Logger.warning("FFmpeg output: #{String.trim(data)}")
+        end
+
+        # Log first data chunk for debugging
+        Logger.debug("FFmpeg streaming data chunk: #{byte_size(data)} bytes")
+
         case chunk_data(conn, data) do
           {:ok, conn} ->
             stream_loop(conn, port, port_ref, start_time)
@@ -122,7 +151,10 @@ defmodule HeatersWeb.StreamPorts do
         # Timeout to prevent hanging connections (configurable)
     after
       stream_timeout() ->
-        Logger.warning("FFmpeg stream timeout reached")
+        Logger.warning(
+          "FFmpeg stream timeout reached after #{stream_timeout()}ms - no data received from port"
+        )
+
         cleanup_port(port, port_ref)
         {:error, :timeout, conn}
     end
@@ -158,8 +190,8 @@ defmodule HeatersWeb.StreamPorts do
     Port.demonitor(port_ref, [:flush])
   end
 
-  # Configurable stream timeout (default 5 minutes for large clips)
+  # Configurable stream timeout (reduced to 10 seconds for responsiveness)
   defp stream_timeout do
-    Application.get_env(:heaters, :ffmpeg_stream_timeout, 300_000)
+    Application.get_env(:heaters, :ffmpeg_stream_timeout, 10_000)
   end
 end

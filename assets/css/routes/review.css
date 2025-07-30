@@ -1,140 +1,144 @@
 /* Hide default LV flash -------------------------------------------------- */
 #flash-group {
-    display: none !important;
-}
-
-/* Sprite player ---------------------------------------------------------- */
-.sprite-viewer {
-    margin-top: var(--space-4);
-}
-
-/* WebCodecs player ------------------------------------------------------- */
-.webcodecs-viewer {
-    margin-top: var(--space-4);
-    position: relative;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    overflow: hidden;
-}
-
-.webcodecs-viewer canvas,
-.webcodecs-viewer video {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    background-color: #000;
-}
-
-/* Sprite-player controls container (CSS Grid) ---------------------------- */
-.sprite-controls {
-    display: grid;
-    align-items: center;
-    width: 100%;
-    padding: var(--space-2) 0;
-
-    /* two buttons pinned at 3rem each, scrub‐bar takes all the rest */
-    grid-template-columns: 3rem 1fr 3rem;
-    column-gap: var(--space-2);
-    max-width: 100%;
-
-    /* lock height so icon toggles don't shift navigation below */
-    min-height: 3rem;
-}
-
-/* WebCodecs-player controls container (CSS Grid) ------------------------- */
-.webcodecs-controls {
-    display: grid;
-    align-items: center;
-    width: 100%;
-    padding: var(--space-2) 0;
-
-    /* play/pause, scrub bar, speed, frame display, indicator */
-    grid-template-columns: 3rem 1fr 3rem auto auto;
-    column-gap: var(--space-2);
-    max-width: 100%;
-
-    /* lock height so icon toggles don't shift navigation below */
-    min-height: 3rem;
-}
-
-/* Control buttons (play/pause, speed) – fixed size so icons stay aligned - */
-.sprite-controls button,
-.webcodecs-controls button {
-    width: 3rem;
-    height: 3rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: none !important;
-    color: var(--fg);
-    transition: background 0.15s;
-}
-
-.sprite-controls button:hover,
-.webcodecs-controls button:hover {
-    background: var(--panel);
-    opacity: 1;
-}
-
-/* Make ghost-button respect disabled state like .btn[disabled] ----------- */
-.actions .btn-ghost {
-    padding: var(--space-2) var(--space-3);
-    font-weight: 600;
-    background: none !important;
-    color: var(--fg);
-    transition: background 0.15s;
-}
-
-.actions .btn-ghost:hover {
-    background: var(--panel);
-    opacity: 1;
-}
-
-.actions .btn-ghost[disabled],
-.sprite-controls button[disabled],
-.webcodecs-controls button[disabled] {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
-/* Scrub bar fills the middle grid column -------------------------------- */
-.sprite-controls input[type="range"],
-.webcodecs-controls input[type="range"] {
-    width: 100%;
-    margin: 0;
-    min-width: 0;
-}
-
-/* Remove the old frame counter for sprite controls ---------------------- */
-.sprite-controls span {
     display: none;
 }
 
-/* Show frame counter and indicators for WebCodecs controls -------------- */
-.webcodecs-controls span {
-    display: inline-block;
-    font-size: 12px;
-    color: var(--fg-muted);
-    padding: 0 var(--space-1);
-    white-space: nowrap;
+/* Video player container and responsive sizing --------------------------- */
+.video-player-container {
+    width: 100%;
+    max-width: 100%;
+    margin: 0 auto;
+    position: relative;
+    overflow: hidden;
+    box-sizing: border-box;
 }
 
-.webcodecs-controls .webcodecs-indicator {
-    margin-left: var(--space-2);
-    font-weight: 500;
+.video-player {
+    width: 100%;
+    max-width: 100%;
+    max-height: 70vh;
+    aspect-ratio: 16/9;
+    object-fit: contain;
+    border-radius: 0.75rem;
+    box-shadow: 0 4px 8px rgb(0 0 0 / 0.12);
+    background-color: #000;
+    box-sizing: border-box;
+    display: block;
+}
+
+/* Ensure video container doesn't overflow on small screens */
+@media (max-width: 768px) {
+    .video-player {
+        max-height: 50vh;
+        border-radius: 0.5rem;
+    }
+}
+
+/* Extra small screens */
+@media (max-width: 480px) {
+    .video-player {
+        max-height: 40vh;
+        border-radius: 0.25rem;
+    }
+}
+
+/* Article container and layout fixes ------------------------------------- */
+article.stack-center {
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+/* Ensure the main review container doesn't overflow */
+#review {
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+/* Streaming video loading spinner ----------------------------------------- */
+.streaming-video-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+    display: none;
+    text-align: center;
+    color: white;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 20px;
+    border-radius: 8px;
+}
+
+.streaming-video-loading .spinner {
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    border-top: 3px solid white;
+    border-radius: 50%;
+    width: 30px;
+    height: 30px;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 10px;
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+/* Video player error state */
+.video-player-error {
+    text-align: center;
+    padding: var(--space-4);
+    color: var(--fg-muted);
+}
+
+.video-player-error .error-details {
+    margin-top: var(--space-2);
+    font-size: 0.875rem;
+    opacity: 0.8;
 }
 
 /* Action buttons armed state -------------------------------------------- */
-.btn.approve.is-armed  { background: var(--approve); color: #fff; }
-.btn.skip.is-armed     { background: var(--skip);    color: #000; }
-.btn.archive.is-armed  { background: var(--archive); color: #fff; }
-.btn.merge.is-armed    { background: var(--merge);   color: #fff; }
-.btn.group.is-armed    { background: var(--group);   color: #000; }
-.btn.split.is-armed    { background: var(--split);   color: #000; }
+.btn.approve.is-armed {
+    background: var(--approve);
+    color: #fff;
+}
+
+.btn.skip.is-armed {
+    background: var(--skip);
+    color: #000;
+}
+
+.btn.archive.is-armed {
+    background: var(--archive);
+    color: #fff;
+}
+
+.btn.merge.is-armed {
+    background: var(--merge);
+    color: #fff;
+}
+
+.btn.group.is-armed {
+    background: var(--group);
+    color: #000;
+}
+
+.btn.split.is-armed {
+    background: var(--split);
+    color: #000;
+}
 
 /* Split-mode outline indicator ------------------------------------------ */
 .split-armed {
     outline: 3px dashed var(--split);
     outline-offset: 2px;
 }
-

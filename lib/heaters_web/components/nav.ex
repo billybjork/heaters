@@ -14,8 +14,8 @@ defmodule HeatersWeb.Nav do
       assign_new(assigns, :pending_count, fn -> ClipQueries.pending_review_count() end)
 
     ~H"""
-    <header class="site-nav border-b">
-      <nav class="container flex justify-center items-center gap-6 py-3">
+    <header class="site-nav">
+      <nav class="nav-container">
 
     <!-- Review link + badge (hidden when zero) -->
         <.link navigate={~p"/review"} class="nav-link relative">
@@ -32,7 +32,7 @@ defmodule HeatersWeb.Nav do
         </.link>
 
     <!-- ───────── Quick-submit form ───────── -->
-        <form action={~p"/submit_video"} method="post" class="submit-form flex gap-2">
+        <form action={~p"/submit_video"} method="post" class="submit-form">
           <input type="hidden" name="_csrf_token" value={Plug.CSRFProtection.get_csrf_token()} />
           <input type="url" name="url" placeholder="Paste video URL…" required class="submit-input" />
           <button class="btn-small" type="submit">Submit</button>

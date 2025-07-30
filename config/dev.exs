@@ -71,7 +71,8 @@ config :heaters, HeatersWeb.Endpoint,
   debug_errors: true,
   secret_key_base: "1yyvat8bVNahXZFsX5tOvQ2sc75yXYCOC8dTG6pzDpBR4w32TTFftWpI+suyC1jc",
   watchers: [
-    esbuild: {Esbuild, :install_and_run, [:default, ~w(--sourcemap=inline --watch)]}
+    esbuild: {Esbuild, :install_and_run, [:default, ~w(--sourcemap=inline --watch)]},
+    css: {HeatersWeb.CSSWatcher, :install_and_run, []}
   ]
 
 # Watch static assets for browser reloading.
@@ -79,6 +80,7 @@ config :heaters, HeatersWeb.Endpoint,
   live_reload: [
     patterns: [
       ~r"priv/static/(?!uploads/).*(js|css|png|jpeg|jpg|gif|svg)$",
+      ~r"assets/css/.*(css)$",
       ~r"priv/gettext/.*(po)$",
       ~r"lib/heaters_web/(live|views)/.*(ex)$",
       ~r"lib/heaters_web/templates/.*(eex)$",
@@ -168,4 +170,6 @@ config :heaters,
   cloudfront_domain: System.get_env("CLOUDFRONT_DEV_DOMAIN"),
   # S3 bucket configuration
   s3_dev_bucket_name: System.get_env("S3_DEV_BUCKET_NAME") || "heaters-dev",
-  aws_region: System.get_env("AWS_REGION") || "us-west-1"
+  aws_region: System.get_env("AWS_REGION") || "us-west-1",
+  # FFmpeg streaming timeout (increased for CloudFront latency)
+  ffmpeg_stream_timeout: 60_000

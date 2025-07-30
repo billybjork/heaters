@@ -15,9 +15,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   inotify-tools \
   bash \
   procps \
-  ffmpeg \
   curl \
+  wget \
+  xz-utils \
   && rm -rf /var/lib/apt/lists/*
+
+# Install Debian FFmpeg package for proper DNS resolution
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg \
+  && rm -rf /var/lib/apt/lists/* \
+  && ffmpeg -version
 
 # Install Rust for rambo compilation
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y

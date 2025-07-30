@@ -1,47 +1,49 @@
 /* ------------- Design tokens ------------------------------------------ */
 :root {
     /* neutrals */
-    --bg:        #f7fafc;
-    --fg:        #2d3748;
-    --panel:     #edf2f7;
-  
+    --bg: #f7fafc;
+    --fg: #2d3748;
+    --fg-muted: #718096;
+    --panel: #edf2f7;
+
     /* actions */
     --approve: #48bb78;
-    --skip:    #a0aec0;
+    --skip: #a0aec0;
     --archive: #f56565;
-    --group:   #ed8936;
+    --group: #ed8936;
 }
-  
+
 /* ------------- Dark mode ---------------------------------------------- */
 @media (prefers-color-scheme: dark) {
-:root {
-      --bg:    #1a202c;
-      --fg:    #e2e8f0;
-      --panel: #2d3748;
-  
-      /* tweak action contrast */
-      --skip:   #4a5568;
-      --archive:#c53030;
+    :root {
+        --bg: #1a202c;
+        --fg: #e2e8f0;
+        --fg-muted: #a0aec0;
+        --panel: #2d3748;
+
+        /* tweak action contrast */
+        --skip: #4a5568;
+        --archive: #c53030;
     }
 }
-  
+
 /* ------------- Global ------------------------------------------------- */
 html {
     background: var(--bg);
     color: var(--fg);
 }
-  
+
 .stack-center {
     display: flex;
     flex-direction: column;
     align-items: center;
     text-align: center;
 }
-  
+
 .gap-4 {
     gap: var(--space-3);
 }
-  
+
 /* ------------- Buttons ------------------------------------------------ */
 .btn {
     padding: var(--space-2) var(--space-3);
@@ -51,18 +53,33 @@ html {
     color: var(--fg);
     transition: background 0.15s;
 }
-  
+
 .btn[disabled] {
     opacity: 0.4;
     cursor: not-allowed;
 }
 
 /* Action variants */
-.btn.approve:hover { background: var(--approve); color: #fff; }
-.btn.skip:hover    { background: var(--skip);    color: #000; }
-.btn.archive:hover { background: var(--archive); color: #fff; }
-.btn.group:hover   { background: var(--group);   color: #000; }
-  
+.btn.approve:hover {
+    background: var(--approve);
+    color: #fff;
+}
+
+.btn.skip:hover {
+    background: var(--skip);
+    color: #000;
+}
+
+.btn.archive:hover {
+    background: var(--archive);
+    color: #fff;
+}
+
+.btn.group:hover {
+    background: var(--group);
+    color: #000;
+}
+
 /* ------------- Flash messages ----------------------------------------- */
 .flash {
     margin-top: var(--space-3);
@@ -71,11 +88,26 @@ html {
     font-weight: 600;
 }
 
-.flash--approve { background: var(--approve); color: #fff; }
-.flash--skip    { background: var(--skip);    color: #000; }
-.flash--archive { background: var(--archive); color: #fff; }
-.flash--group   { background: var(--group);   color: #000; }
-  
+.flash--approve {
+    background: var(--approve);
+    color: #fff;
+}
+
+.flash--skip {
+    background: var(--skip);
+    color: #000;
+}
+
+.flash--archive {
+    background: var(--archive);
+    color: #fff;
+}
+
+.flash--group {
+    background: var(--group);
+    color: #000;
+}
+
 /* ------------- Clip & actions wrapper --------------------------------- */
 .clip {
     margin: var(--space-3) auto;
@@ -88,4 +120,4 @@ html {
     justify-content: center;
     gap: var(--space-2);
     padding: 0 var(--space-3);
-}  
+}

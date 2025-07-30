@@ -203,7 +203,7 @@ defmodule HeatersWeb.VideoUrlHelper do
   end
 
   defp generate_clip_version(_clip) do
-    # Fallback for clips without updated_at
-    "1"
+    # Fallback for clips without updated_at - use current timestamp for cache busting
+    System.system_time(:millisecond) |> Integer.to_string()
   end
 end
