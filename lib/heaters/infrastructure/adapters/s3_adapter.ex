@@ -244,9 +244,11 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
     s3_key = "masters/#{filename}"
 
     # Use GLACIER storage for cost-effective cold storage of archival masters
-    case S3.upload_file(local_video_path, s3_key,
+    # Master files are typically large, so use progress reporting
+    case S3.upload_file_with_progress(local_video_path, s3_key,
            operation_name: "Master",
-           storage_class: "GLACIER"
+           storage_class: "GLACIER",
+           timeout: :timer.minutes(45)
          ) do
       {:ok, _} ->
         file_size = get_file_size(local_video_path)
@@ -282,9 +284,11 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
     s3_key = "proxies/#{filename}"
 
     # Use STANDARD storage for hot access during review and export
-    case S3.upload_file(local_video_path, s3_key,
+    # Proxy files are typically large, so use progress reporting
+    case S3.upload_file_with_progress(local_video_path, s3_key,
            operation_name: "Proxy",
-           storage_class: "STANDARD"
+           storage_class: "STANDARD",
+           timeout: :timer.minutes(30)
          ) do
       {:ok, _} ->
         file_size = get_file_size(local_video_path)

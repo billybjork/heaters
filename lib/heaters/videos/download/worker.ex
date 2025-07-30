@@ -2,33 +2,38 @@ defmodule Heaters.Videos.Download.Worker do
   @moduledoc """
   Download Worker for source video ingestion.
 
-  Handles the initial download phase of the video processing pipeline:
+  Orchestrates the initial download phase of the video processing pipeline:
   - Downloads videos from URLs using yt-dlp with quality-focused strategy
   - Applies conditional normalization for primary downloads (fixes merge issues)
   - Stores original files in S3 for downstream processing
-  - Uses centralized FFmpeg configuration from FFmpegConfig
+  - Chains to preprocessing stage for pipeline optimization
 
-  🚨 CRITICAL: This worker depends on download_handler.py for yt-dlp operations.
-  The Python implementation follows strict quality requirements:
+  ## Architecture
 
-  ❌ NEVER ADD height/extension restrictions to format strings
-  ❌ NEVER ADD client restrictions via extractor_args
-  ✅ ALWAYS use unrestricted primary format: 'bv*+ba/b'
-  ✅ ALWAYS let yt-dlp choose optimal clients automatically
+  This worker follows the Elixir-orchestrated pattern:
+  - **Configuration**: Provided by `YtDlpConfig` and `FFmpegConfig` modules
+  - **Execution**: Python task receives complete config and focuses on execution
+  - **State Management**: Elixir handles all state transitions and business logic
 
-  Breaking these rules reduces quality from 4K to 360p (18x quality loss).
-  See py/tasks/download_handler.py for detailed implementation.
+  See `YtDlpConfig` for yt-dlp configuration details and quality requirements.
   """
 
   use Heaters.Infrastructure.Orchestration.WorkerBehavior,
     queue: :media_processing,
-    # 30 minutes, prevent duplicate jobs for same video
-    unique: [period: 1800, fields: [:args]]
+    # 10 minutes with source_video_id uniqueness only
+    unique: [period: 600, fields: [:args], keys: [:source_video_id]]
 
   alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Infrastructure.{PyRunner, TempCache}
   alias Heaters.Videos.Download
-  alias Heaters.Infrastructure.Orchestration.{WorkerBehavior, PipelineConfig}
+
+  alias Heaters.Infrastructure.Orchestration.{
+    WorkerBehavior,
+    PipelineConfig,
+    YtDlpConfig,
+    FFmpegConfig
+  }
+
   require Logger
 
   # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
@@ -59,25 +64,23 @@ defmodule Heaters.Videos.Download.Worker do
         "DownloadWorker: Running PyRunner for source_video_id: #{source_video_id}, URL: #{updated_video.original_url}"
       )
 
-      # Python task constructs its own S3 path based on video title
-      # Passes FFmpeg normalization arguments for primary downloads
-      # 
-      # CRITICAL: The Python task uses yt-dlp with quality-focused strategy:
-      # - Primary format: 'bv*+ba/b' (best quality, may need normalization)
-      # - Fallback1: 'best[ext=mp4]/...' (compatible MP4)
-      # - Fallback2: 'worst' (maximum compatibility)
-      #
-      # Normalization is applied only for primary downloads to fix merge issues
-      # while preserving the quality benefits of separate stream downloads.
+      # Python task receives complete configuration from Elixir
+      # All yt-dlp options, format strategies, and normalization config
+      # are provided by YtDlpConfig and FFmpegConfig modules
+      download_config = YtDlpConfig.get_download_config()
+
+      # Validate configuration before sending to Python
+      :ok = YtDlpConfig.validate_config!(download_config)
+
       py_args = %{
         source_video_id: updated_video.id,
         input_source: updated_video.original_url,
         # Enable temp caching for pipeline chaining
         use_temp_cache: true,
-        # Pass FFmpeg normalization arguments for primary downloads
-        # Uses centralized configuration from FFmpegConfig for consistency
-        normalize_args:
-          Heaters.Infrastructure.Orchestration.FFmpegConfig.get_args(:download_normalization)
+        # Complete yt-dlp configuration from YtDlpConfig (validated)
+        download_config: download_config,
+        # FFmpeg normalization arguments from FFmpegConfig
+        normalize_args: FFmpegConfig.get_args(:download_normalization)
       }
 
       case PyRunner.run("download", py_args, timeout: :timer.minutes(20)) do
@@ -106,16 +109,9 @@ defmodule Heaters.Videos.Download.Worker do
               )
 
               # Chain directly to next stage using centralized pipeline configuration
-              case PipelineConfig.maybe_chain_next_job(__MODULE__, updated_video) do
-                :ok ->
-                  Logger.info("DownloadWorker: Successfully chained to next pipeline stage")
-                  :ok
-                
-                {:error, reason} ->
-                  Logger.warning("DownloadWorker: Failed to chain to next stage: #{inspect(reason)}")
-                  # Fallback to dispatcher-based processing
-                  :ok
-              end
+              :ok = PipelineConfig.maybe_chain_next_job(__MODULE__, updated_video)
+              Logger.info("DownloadWorker: Successfully chained to next pipeline stage")
+              :ok
 
             {:error, reason} ->
               Logger.error("DownloadWorker: Failed to update video metadata: #{inspect(reason)}")

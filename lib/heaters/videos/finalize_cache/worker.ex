@@ -64,7 +64,10 @@ defmodule Heaters.Videos.FinalizeCache.Worker do
         run_finalization_task(source_video)
 
       false ->
-        Logger.info("FinalizeCacheWorker: Video #{source_video.id} doesn't need finalization, skipping")
+        Logger.info(
+          "FinalizeCacheWorker: Video #{source_video.id} doesn't need finalization, skipping"
+        )
+
         :ok
     end
   end
@@ -75,16 +78,16 @@ defmodule Heaters.Videos.FinalizeCache.Worker do
     # 2. Not already marked as finalized
     # 3. Has potential cached files
 
-    scene_detection_complete = 
+    scene_detection_complete =
       source_video.needs_splicing == false or virtual_clips_exist?(source_video.id)
 
-    not_already_finalized = 
+    not_already_finalized =
       is_nil(source_video.cache_finalized_at)
 
     has_potential_cached_files =
-      not is_nil(source_video.filepath) or 
-      not is_nil(source_video.proxy_filepath) or
-      not is_nil(source_video.master_filepath)
+      not is_nil(source_video.filepath) or
+        not is_nil(source_video.proxy_filepath) or
+        not is_nil(source_video.master_filepath)
 
     scene_detection_complete and not_already_finalized and has_potential_cached_files
   end
@@ -107,7 +110,7 @@ defmodule Heaters.Videos.FinalizeCache.Worker do
     # The DownloadWorker caches files with S3 keys directly
     temp_cache_keys = collect_temp_cache_keys(source_video)
     s3_keys = collect_s3_keys(source_video)
-    
+
     all_keys = temp_cache_keys ++ s3_keys
 
     if length(all_keys) > 0 do
@@ -121,9 +124,7 @@ defmodule Heaters.Videos.FinalizeCache.Worker do
       # Mark finalization as complete
       mark_finalization_complete(source_video)
     else
-      Logger.info(
-        "FinalizeCacheWorker: No files to finalize for video #{source_video.id}"
-      )
+      Logger.info("FinalizeCacheWorker: No files to finalize for video #{source_video.id}")
 
       # Still mark as complete to avoid repeated processing
       mark_finalization_complete(source_video)
@@ -161,12 +162,14 @@ defmodule Heaters.Videos.FinalizeCache.Worker do
         Logger.info(
           "FinalizeCacheWorker: Successfully completed cache finalization for video #{source_video.id}"
         )
+
         :ok
 
       {:error, reason} ->
         Logger.error(
           "FinalizeCacheWorker: Failed to mark finalization complete for video #{source_video.id}: #{inspect(reason)}"
         )
+
         {:error, reason}
     end
   end

@@ -31,7 +31,7 @@ Heaters processes videos through a **virtual clip pipeline**: download → proxy
 - **Performance-First Optimizations**: Temp cache system eliminates 78% of S3 operations; direct job chaining eliminates dispatcher latency for FLAME environments.
 - **Semantic Organization**: Clear distinction between user edits and automated artifacts
 - **Direct Action Execution**: Review actions execute immediately; only simple UI-level undo (Ctrl+Z) remains
-- **Centralized Configuration**: FFmpeg settings, S3 path management, and job chaining logic centralized in Elixir
+- **Centralized Configuration**: FFmpeg settings, yt-dlp options, S3 path management, and job chaining logic centralized in Elixir
 - **Hybrid Processing**: Elixir for orchestration, Python for CV/ML/media
 - **Robust Error Handling**: Centralized error handling and audit trails
 - **Idempotency**: All operations are safe to retry
@@ -58,12 +58,18 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 - **Intelligent Finalization**: Maps temp cache keys to S3 destinations via database queries
 - **Batch Upload**: All cached files uploaded to S3 only once at pipeline completion
 
-### Declarative Job Chaining
-- **Zero Dispatcher Latency**: Workers directly enqueue next stage upon completion
+### Direct Job Chaining
+- **Zero Dispatcher Latency**: Workers directly invoke next stage workers upon completion
 - **FLAME Environment Optimized**: Reduces pipeline latency from 3 minutes to milliseconds
-- **Configuration-Driven**: All chaining logic defined in `PipelineConfig.stages()`
-- **Graceful Fallback**: Failed chaining falls back to dispatcher-based processing
-- **Centralized Logic**: Eliminates scattered chaining code across worker modules
+- **Configuration-Driven**: All chaining logic defined in `PipelineConfig.stages()` with condition functions
+- **Graceful Fallback**: Failed chaining falls back to Oban-based processing
+- **Centralized Logic**: All chaining handled in `PipelineConfig.maybe_chain_next_job()`
+
+**Chaining Stages**:
+- Download → Preprocess (when download completes successfully)
+- Preprocess → Scene Detection (when preprocessing completes and splicing is needed)
+- Scene Detection → Cache Finalization (when scene detection completes)
+- Other stages use standard Oban job scheduling
 
 ## Key Design Decisions
 
@@ -74,9 +80,11 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 - **`shared/`**: Cross-context utilities (error handling)
 - **`export/`**: Final encoding/export
 
-### Centralized FFmpeg Configuration
+### Centralized Media Processing Configuration
 
-- All encoding profiles and settings are managed in Elixir for consistency and maintainability.
+- **FFmpeg Configuration**: All encoding profiles and settings managed in `FFmpegConfig` for consistency and maintainability
+- **yt-dlp Configuration**: All download strategies, format options, and quality settings managed in `YtDlpConfig` with validation
+- **"Dumb Python" Architecture**: Python tasks receive complete configuration from Elixir and focus purely on execution
 
 ### Direct Action Execution
 
@@ -104,8 +112,8 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 
 - **`Videos`**: Source video lifecycle (download, preprocess, detect scenes, cache finalization)
 - **`Clips`**: Virtual clip management, review workflow, artifact management, export
-- **`Infrastructure`**: I/O adapters (S3, FFmpeg, Python), temp cache system, declarative pipeline configuration, worker behaviors
-- **Python Tasks**: Media processing, scene detection, S3 operations, temp cache integration
+- **`Infrastructure`**: I/O adapters (S3, FFmpeg, Python), temp cache system, declarative configuration (`PipelineConfig`, `FFmpegConfig`, `YtDlpConfig`), worker behaviors
+- **Python Tasks**: Focused execution of media processing, scene detection, S3 operations with configuration provided by Elixir
 
 ## Production Reliability Features
 
@@ -119,7 +127,7 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 1. **Zero Re-encoding During Review**: Virtual clips are DB records only; instant operations
 2. **Superior Quality**: Export from high-quality proxy (CRF 20) with zero transcoding loss
 3. **Optimized I/O Performance**: 78% S3 operation reduction via temp caching; direct byte-range access
-4. **FLAME Environment Ready**: Near-zero pipeline latency via declarative job chaining
+4. **FLAME Environment Ready**: Near-zero pipeline latency via direct job chaining
 5. **Universal Workflow**: Handles all ingest types with smart optimization detection
 6. **True Virtual Clips**: Server-side FFmpeg time segmentation streams only exact clip ranges
 7. **Instant Review**: Each clip feels like a standalone video file with 0-based timeline
@@ -132,12 +140,18 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 
 The system uses a **quality-first download strategy** with robust fallback mechanisms to ensure best possible video quality (including 4K/8K when available).
 
-⚠️  **CRITICAL**: Implementation details and requirements for maintaining 4K downloads are documented in `py/tasks/download_handler.py`. Do not modify format strings or client configurations without reviewing those requirements.
+⚠️  **CRITICAL**: All download configuration is now centralized in `YtDlpConfig` with built-in validation to prevent quality-reducing mistakes. Do not modify format strings or client configurations without reviewing the module documentation.
+
+**Architecture**:
+- **Configuration**: Complete yt-dlp setup managed in `YtDlpConfig` module
+- **Execution**: Python task receives configuration and focuses on execution only
+- **Validation**: Built-in checks prevent configurations that reduce quality from 4K to 360p
 
 **Key Features**:
-- Primary/fallback format strategy for maximum compatibility
-- Playlist prevention and cache management
-- Timeout handling and graceful degradation
-- Normalization when needed for merge operations
+- Three-tier fallback strategy (primary → fallback1 → fallback2)
+- Playlist prevention (single video from playlist URLs)
+- Quality-first format selection with automatic client optimization
+- Conditional normalization for merge issue resolution
+- Comprehensive timeout and error handling
 
 **Expected Results**: ~49 available formats including 4K (2160p), 1440p, multiple 1080p options.

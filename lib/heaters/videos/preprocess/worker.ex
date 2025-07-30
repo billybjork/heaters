@@ -31,7 +31,7 @@ defmodule Heaters.Videos.Preprocess.Worker do
 
   use Heaters.Infrastructure.Orchestration.WorkerBehavior,
     queue: :media_processing,
-    unique: [period: 900, fields: [:args]]
+    unique: [period: 300, fields: [:args], keys: [:source_video_id]]
 
   alias Heaters.Videos.{SourceVideo, Queries}
   alias Heaters.Videos.Preprocess.StateManager
@@ -232,16 +232,9 @@ defmodule Heaters.Videos.Preprocess.Worker do
             )
 
             # Chain directly to next stage using centralized pipeline configuration
-            case PipelineConfig.maybe_chain_next_job(__MODULE__, final_video) do
-              :ok ->
-                Logger.info("PreprocessWorker: Successfully chained to next pipeline stage")
-                :ok
-              
-              {:error, reason} ->
-                Logger.warning("PreprocessWorker: Failed to chain to next stage: #{inspect(reason)}")
-                # Fallback to dispatcher-based processing
-                :ok
-            end
+            :ok = PipelineConfig.maybe_chain_next_job(__MODULE__, final_video)
+            Logger.info("PreprocessWorker: Successfully chained to next pipeline stage")
+            :ok
 
           {:error, reason} ->
             Logger.error("PreprocessWorker: Failed to update video state: #{inspect(reason)}")
@@ -280,16 +273,9 @@ defmodule Heaters.Videos.Preprocess.Worker do
         )
 
         # Chain directly to next stage using centralized pipeline configuration
-        case PipelineConfig.maybe_chain_next_job(__MODULE__, final_video) do
-          :ok ->
-            Logger.info("PreprocessWorker: Successfully chained to next pipeline stage")
-            :ok
-          
-          {:error, reason} ->
-            Logger.warning("PreprocessWorker: Failed to chain to next stage: #{inspect(reason)}")
-            # Fallback to dispatcher-based processing
-            :ok
-        end
+        :ok = PipelineConfig.maybe_chain_next_job(__MODULE__, final_video)
+        Logger.info("PreprocessWorker: Successfully chained to next pipeline stage")
+        :ok
 
       {:error, reason} ->
         Logger.error("PreprocessWorker: Failed to update video state: #{inspect(reason)}")

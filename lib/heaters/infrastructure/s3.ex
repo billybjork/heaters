@@ -471,4 +471,77 @@ defmodule Heaters.Infrastructure.S3 do
       error -> error
     end
   end
+
+  @doc """
+  Upload a file to S3 with detailed progress reporting using Python task.
+
+  This function is ideal for large file uploads where progress visibility is important.
+  It uses a dedicated Python task that provides percentage-based progress logging.
+
+  ## Parameters
+  - `local_path`: Path to the local file to upload
+  - `s3_key`: S3 key where the file should be stored (without leading /)
+  - `opts`: Optional keyword list with options
+    - `:operation_name`: String to include in log messages (defaults to "S3Upload")
+    - `:storage_class`: S3 storage class ("STANDARD", "GLACIER", etc.)
+    - `:timeout`: Upload timeout in milliseconds (defaults to 30 minutes)
+
+  ## Examples
+
+      S3.upload_file_with_progress("/tmp/large_video.mp4", "masters/video.mkv")
+      S3.upload_file_with_progress("/tmp/master.mkv", "masters/master.mkv", 
+                                   storage_class: "GLACIER", timeout: :timer.minutes(45))
+
+  ## Returns
+  - `{:ok, s3_key}` on success
+  - `{:error, reason}` on failure
+
+  ## Progress Logging
+
+  The upload will log progress every 5% with details like:
+  ```
+  S3 Upload: video.mp4 - 25% complete (256.00/1024.00 MiB)
+  S3 Upload: video.mp4 - 50% complete (512.00/1024.00 MiB)
+  ```
+  """
+  @spec upload_file_with_progress(String.t(), String.t(), keyword()) ::
+          {:ok, String.t()} | {:error, any()}
+  def upload_file_with_progress(local_path, s3_key, opts \\ []) do
+    operation_name = Keyword.get(opts, :operation_name, "S3Upload")
+    storage_class = Keyword.get(opts, :storage_class, "STANDARD")
+    timeout = Keyword.get(opts, :timeout, :timer.minutes(30))
+
+    # Ensure s3_key doesn't start with /
+    clean_s3_key = String.trim_leading(s3_key, "/")
+
+    Logger.info(
+      "#{operation_name}: Starting upload with progress reporting: #{local_path} -> s3://bucket/#{clean_s3_key}"
+    )
+
+    if not File.exists?(local_path) do
+      {:error, "Local file does not exist: #{local_path}"}
+    else
+      # Use Python task for upload with progress reporting
+      upload_args = %{
+        local_path: local_path,
+        s3_key: clean_s3_key,
+        storage_class: storage_class
+      }
+
+      case Heaters.Infrastructure.PyRunner.run("s3_upload", upload_args, timeout: timeout) do
+        {:ok, %{"status" => "success"} = result} ->
+          Logger.info("#{operation_name}: Upload completed successfully")
+          Logger.debug("#{operation_name}: Upload result: #{inspect(result)}")
+          {:ok, clean_s3_key}
+
+        {:ok, %{"status" => "error", "error" => error_msg}} ->
+          Logger.error("#{operation_name}: Python upload task failed: #{error_msg}")
+          {:error, "Upload failed: #{error_msg}"}
+
+        {:error, reason} ->
+          Logger.error("#{operation_name}: PyRunner failed: #{inspect(reason)}")
+          {:error, "PyRunner failed: #{inspect(reason)}"}
+      end
+    end
+  end
 end

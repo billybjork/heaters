@@ -60,7 +60,7 @@ defmodule Heaters.Videos.Queries do
 
   @doc """
   Get all source videos that need cache finalization.
-  
+
   Videos need cache finalization if:
   - Scene detection is complete (needs_splicing = false)
   - Cache has not been finalized yet (cache_finalized_at is null)
@@ -70,8 +70,8 @@ defmodule Heaters.Videos.Queries do
     from(s in SourceVideo,
       where:
         s.needs_splicing == false and
-        is_nil(s.cache_finalized_at) and
-        (not is_nil(s.filepath) or not is_nil(s.proxy_filepath) or not is_nil(s.master_filepath))
+          is_nil(s.cache_finalized_at) and
+          (not is_nil(s.filepath) or not is_nil(s.proxy_filepath) or not is_nil(s.master_filepath))
     )
     |> Repo.all()
   end

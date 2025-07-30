@@ -23,6 +23,7 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
   - **Download Stage**: Processes videos in "new", "downloading", or "download_failed" states
   - **Preprocess Stage**: Processes videos in "downloaded", "preprocessing", or "preprocess_failed" states
   - **Scene Detection Stage**: Processes videos with proxy files needing virtual clip creation
+  - **Cache Finalization Stage**: Processes videos needing S3 upload and cache cleanup
   - **Export Stage**: Processes approved virtual clips for rolling export to physical clips
   - **Keyframe Stage**: Processes exported clips in "exported", "keyframing", or "keyframe_failed" states
   - **Embedding Stage**: Processes clips in "keyframed", "embedding", or "embedding_failed" states
@@ -45,6 +46,14 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
   - Each approved virtual clip gets its own export job
   - Resource sharing optimizes master downloads
   - Clips become available immediately after export (no waiting for full batch)
+
+  ## Job Chaining
+
+  The pipeline supports direct job chaining for performance optimization:
+  - Download → Preprocess (when download completes successfully)
+  - Preprocess → Scene Detection (when preprocessing completes and splicing is needed)
+  - Scene Detection → Cache Finalization (when scene detection completes)
+  - Other stages use standard Oban job scheduling
   """
 
   alias Heaters.Videos.Queries, as: VideoQueries
@@ -79,7 +88,7 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
         build: fn video -> DownloadWorker.new(%{source_video_id: video.id}) end,
         next_stage: %{
           worker: PreprocessWorker,
-          condition: fn source_video -> 
+          condition: fn source_video ->
             source_video.ingest_state == "downloaded" and is_nil(source_video.proxy_filepath)
           end,
           args: fn source_video -> %{source_video_id: source_video.id} end
@@ -94,9 +103,9 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
         next_stage: %{
           worker: DetectScenesWorker,
           condition: fn source_video ->
-            source_video.ingest_state == "preprocessed" and 
-            not is_nil(source_video.proxy_filepath) and
-            source_video.needs_splicing == true
+            source_video.ingest_state == "preprocessed" and
+              not is_nil(source_video.proxy_filepath) and
+              source_video.needs_splicing == true
           end,
           args: fn source_video -> %{source_video_id: source_video.id} end
         }
@@ -110,11 +119,11 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
         next_stage: %{
           worker: FinalizeCacheWorker,
           condition: fn source_video ->
-            source_video.needs_splicing == false and 
-            is_nil(source_video.cache_finalized_at) and
-            (not is_nil(source_video.filepath) or 
-             not is_nil(source_video.proxy_filepath) or
-             not is_nil(source_video.master_filepath))
+            source_video.needs_splicing == false and
+              is_nil(source_video.cache_finalized_at) and
+              (not is_nil(source_video.filepath) or
+                 not is_nil(source_video.proxy_filepath) or
+                 not is_nil(source_video.master_filepath))
           end,
           args: fn source_video -> %{source_video_id: source_video.id} end
         }
@@ -175,7 +184,7 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
   ## Examples
 
       iex> PipelineConfig.stage_labels()
-      ["new videos → ingest", "spliced clips → sprites", "review actions", ...]
+      ["videos needing download", "videos needing preprocessing → proxy generation", ...]
   """
   @spec stage_labels() :: [String.t()]
   def stage_labels do
@@ -190,56 +199,76 @@ defmodule Heaters.Infrastructure.Orchestration.PipelineConfig do
 
   @doc """
   Find the next stage configuration for a given worker.
-  
+
   Returns the chaining configuration if the worker has a next stage defined.
   """
   @spec find_next_stage_for_worker(module()) :: {:ok, map()} | {:error, :not_found}
   def find_next_stage_for_worker(worker_module) do
-    stages()
-    |> Enum.find(fn stage ->
-      case Map.get(stage, :build) do
-        nil -> false
-        build_fn ->
-          # Check if this stage builds the given worker type
-          # We'll use a sample item to test the build function
-          sample_result = build_fn.(%{id: 0})
-          sample_result.__struct__ == worker_module
+    # Create a mapping of workers to their stages for direct lookup
+    worker_to_stage = %{
+      Heaters.Videos.Download.Worker => "videos needing download",
+      Heaters.Videos.Preprocess.Worker => "videos needing preprocessing → proxy generation",
+      Heaters.Videos.DetectScenes.Worker => "videos needing scene detection → virtual clips",
+      Heaters.Videos.FinalizeCache.Worker => "videos needing cache finalization → S3 upload",
+      Heaters.Clips.Export.Worker => "approved virtual clips → rolling export",
+      Heaters.Clips.Artifacts.Keyframe.Worker => "exported clips needing keyframes",
+      Heaters.Clips.Embeddings.Worker => "keyframed clips needing embeddings",
+      Heaters.Clips.Archive.Worker => "review_archived clips → archive"
+    }
+
+    target_stage_label = Map.get(worker_to_stage, worker_module)
+
+    if target_stage_label do
+      found_stage =
+        stages()
+        |> Enum.find(fn stage -> stage.label == target_stage_label end)
+
+      case found_stage do
+        %{next_stage: next_stage} ->
+          {:ok, next_stage}
+
+        %{} = _stage ->
+          {:error, :not_found}
+
+        nil ->
+          {:error, :not_found}
       end
-    end)
-    |> case do
-      %{next_stage: next_stage} -> {:ok, next_stage}
-      _ -> {:error, :not_found}
+    else
+      {:error, :not_found}
     end
   end
 
   @doc """
   Execute job chaining for a worker if configured.
-  
+
   This is the centralized chaining logic that workers can call.
   """
   @spec maybe_chain_next_job(module(), any()) :: :ok | {:error, any()}
   def maybe_chain_next_job(current_worker, item) do
     case find_next_stage_for_worker(current_worker) do
       {:ok, %{worker: next_worker, condition: condition_fn, args: args_fn}} ->
-        if condition_fn.(item) do
+        condition_result = condition_fn.(item)
+
+        if condition_result do
           args = args_fn.(item)
-          
-          case next_worker.new(args) |> Oban.insert() do
-            {:ok, _job} ->
-              Logger.info("PipelineConfig: Chained #{inspect(current_worker)} → #{inspect(next_worker)} for item #{item.id}")
-              :ok
-              
-            {:error, reason} ->
-              Logger.warning("PipelineConfig: Failed to chain #{inspect(current_worker)} → #{inspect(next_worker)}: #{inspect(reason)}")
-              {:error, reason}
-          end
+
+          # Direct chaining - call the worker immediately instead of enqueueing
+          Task.start(fn ->
+            Logger.info(
+              "PipelineConfig: Chained #{inspect(current_worker)} → #{inspect(next_worker)} for item #{item.id}"
+            )
+
+            # Convert atom keys to string keys (Oban format)
+            string_args = for {key, value} <- args, into: %{}, do: {to_string(key), value}
+            next_worker.handle_work(string_args)
+          end)
+
+          :ok
         else
-          Logger.debug("PipelineConfig: Condition not met for chaining #{inspect(current_worker)}, skipping")
           :ok
         end
-        
+
       {:error, :not_found} ->
-        Logger.debug("PipelineConfig: No chaining configured for #{inspect(current_worker)}")
         :ok
     end
   end

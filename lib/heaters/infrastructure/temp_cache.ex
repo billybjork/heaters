@@ -116,7 +116,7 @@ defmodule Heaters.Infrastructure.TempCache do
   def finalize_to_s3(cache_key, s3_destination \\ nil, storage_class \\ "STANDARD") do
     # Default s3_destination to cache_key for backward compatibility
     s3_key = s3_destination || cache_key
-    
+
     case get(cache_key) do
       {:ok, cached_path} ->
         result = upload_to_s3(cached_path, s3_key, storage_class)
@@ -124,7 +124,10 @@ defmodule Heaters.Infrastructure.TempCache do
         result
 
       {:error, :not_found} ->
-        Logger.warning("TempCache: Cannot finalize #{cache_key} - not found in cache")
+        Logger.debug(
+          "TempCache: Cannot finalize #{cache_key} - not found in cache (normal cache expiration)"
+        )
+
         {:error, :not_found}
 
       {:error, reason} ->
@@ -242,11 +245,11 @@ defmodule Heaters.Infrastructure.TempCache do
     # Use a shared persistent cache directory instead of job-specific temp dirs
     # This allows sharing cached files between different worker processes
     cache_dir = Path.join(System.tmp_dir!(), "heaters_shared_cache")
-    
+
     case File.mkdir_p(cache_dir) do
       :ok ->
         {:ok, cache_dir}
-      
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -327,12 +330,35 @@ defmodule Heaters.Infrastructure.TempCache do
   end
 
   defp upload_to_s3(local_path, s3_key, storage_class) do
-    # Use existing S3 infrastructure
+    # Use existing S3 infrastructure with progress reporting for better visibility
     alias Heaters.Infrastructure.S3
 
-    case S3.upload_file(local_path, s3_key, storage_class: storage_class) do
+    # Determine if we should use progress reporting based on file size
+    file_size = File.stat!(local_path).size
+    # Use progress for files > 10MB
+    use_progress = file_size > 10 * 1024 * 1024
+
+    upload_result =
+      if use_progress do
+        Logger.info(
+          "TempCache: Using progress reporting for large file (#{file_size} bytes): #{s3_key}"
+        )
+
+        S3.upload_file_with_progress(local_path, s3_key,
+          storage_class: storage_class,
+          operation_name: "CacheFinalize",
+          timeout: :timer.minutes(45)
+        )
+      else
+        S3.upload_file(local_path, s3_key,
+          storage_class: storage_class,
+          operation_name: "CacheFinalize"
+        )
+      end
+
+    case upload_result do
       {:ok, _} ->
-        Logger.info("TempCache: Finalized #{s3_key} to S3")
+        Logger.info("TempCache: Successfully finalized #{s3_key} to S3 (#{storage_class})")
         :ok
 
       {:error, reason} ->
