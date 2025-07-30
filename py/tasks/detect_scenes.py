@@ -34,17 +34,19 @@ def run_detect_scenes(
     threshold: float = 0.6,
     method: str = "correl", 
     min_duration_seconds: float = 1.0,
+    keyframe_offsets: List[int] = None,
     **kwargs
 ) -> Dict[str, Any]:
     """
     Detect scene cuts in a proxy video file and return cut points for virtual clips.
     
     Args:
-        proxy_video_path: S3 path to proxy video file
+        proxy_video_path: Local path or S3 path to proxy video file
         source_video_id: Database ID of the source video
         threshold: Scene cut threshold (0.0-1.0)
         method: Comparison method name
         min_duration_seconds: Minimum scene duration
+        keyframe_offsets: Pre-computed keyframe offsets (optional, for optimization)
         
     Returns:
         dict: Cut points for virtual clip creation and metadata
@@ -53,10 +55,22 @@ def run_detect_scenes(
         logger.info(f"Starting scene detection for source_video_id: {source_video_id}")
         logger.info(f"Using proxy video: {proxy_video_path}")
         
-        # Download proxy video from S3 to local temp file
-        with tempfile.TemporaryDirectory() as temp_dir:
-            local_proxy_path = Path(temp_dir) / "proxy.mp4"
-            download_from_s3(proxy_video_path, local_proxy_path)
+        # Handle both local paths (from temp cache) and S3 paths
+        temp_dir_created = False
+        temp_dir = None
+        
+        try:
+            if Path(proxy_video_path).exists():
+                # Local file path (from temp cache)
+                logger.info(f"Using local proxy file: {proxy_video_path}")
+                local_proxy_path = Path(proxy_video_path)
+            else:
+                # S3 path - need to download
+                logger.info(f"Downloading proxy from S3: {proxy_video_path}")
+                temp_dir = tempfile.mkdtemp()
+                local_proxy_path = Path(temp_dir) / "proxy.mp4"
+                download_from_s3(proxy_video_path, local_proxy_path)
+                temp_dir_created = True
             
             # Open video
             cap = cv2.VideoCapture(str(local_proxy_path))
@@ -76,6 +90,12 @@ def run_detect_scenes(
             cut_points = build_cut_points_from_cuts(cut_frames, fps, min_duration_seconds)
             
             cap.release()
+            
+        finally:
+            # Clean up temp directory if we created one
+            if temp_dir_created and temp_dir:
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
         
         logger.info(f"Scene detection complete: found {len(cut_points)} valid cut points")
         

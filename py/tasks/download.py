@@ -157,6 +157,7 @@ def run_download(
     source_video_id: int, 
     input_source: str, 
     normalize_args: list = None,
+    use_temp_cache: bool = False,
     **kwargs
 ):
     """
@@ -175,6 +176,7 @@ def run_download(
         source_video_id: The ID of the source video (for reference only)
         input_source: URL or local file path to the video
         normalize_args: FFmpeg arguments for normalization (from Elixir FFmpegConfig)
+        use_temp_cache: If True, cache the file locally instead of uploading to S3 immediately
         **kwargs: Additional options
     
     Returns:
@@ -286,23 +288,39 @@ def run_download(
             if original_file_size == 0:
                 raise RuntimeError(f"Original video file is empty: {original_video_path}")
             
-            # Step 4: Upload original to S3 (no transcoding)
-            # Use the video title for S3 key instead of numeric prefix
+            # Step 4: Generate S3 key for original source video
             video_title = metadata.get("title", f"video_{source_video_id}")
-            
-            # Sanitize title for filesystem/S3 compatibility
             sanitized_title = sanitize_filename(video_title)
-            
-            # Generate S3 key for original source video with timestamp to avoid conflicts
             timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
             original_ext = original_video_path.suffix or '.mp4'
             s3_key = f"source_videos_original/{sanitized_title}_{timestamp}{original_ext}"
-            upload_to_s3(s3_client, s3_bucket_name, original_video_path, s3_key)
             
-            # Step 5: Return structured data for Elixir to process
+            # Step 5: Handle upload vs temp cache based on use_temp_cache flag
+            if use_temp_cache:
+                # Create a persistent path that survives temp directory cleanup
+                # Use system temp directory with a predictable name for Elixir TempCache
+                persist_dir = Path(tempfile.gettempdir()) / "heaters_persistent"
+                persist_dir.mkdir(exist_ok=True)
+                
+                # Create persistent file with S3 key as filename (sanitized for filesystem)
+                persist_filename = s3_key.replace("/", "_").replace("\\", "_")
+                persistent_path = persist_dir / persist_filename
+                
+                # Copy file to persistent location
+                shutil.copy2(original_video_path, persistent_path)
+                logger.info(f"Created persistent file for Elixir caching: {persistent_path}")
+                
+                # Return persistent path for Elixir TempCache to handle
+                local_filepath = str(persistent_path)
+            else:
+                # Traditional approach: upload to S3 immediately
+                upload_to_s3(s3_client, s3_bucket_name, original_video_path, s3_key)
+                local_filepath = None
+            
+            # Step 6: Return structured data for Elixir to process
             result = {
                 "status": "success",
-                "filepath": s3_key,
+                "filepath": s3_key,  # Future S3 path (for database)
                 "duration_seconds": metadata.get("duration_seconds"),
                 "fps": metadata.get("fps"),
                 "width": metadata.get("width"),
@@ -321,6 +339,10 @@ def run_download(
                     "s3_bucket": s3_bucket_name
                 }
             }
+            
+            # Add local path if using temp cache
+            if use_temp_cache and local_filepath:
+                result["local_filepath"] = local_filepath
             
             # Validate required fields before returning
             required_fields = ["filepath", "duration_seconds", "fps", "width", "height"]

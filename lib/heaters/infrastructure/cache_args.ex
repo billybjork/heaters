@@ -22,7 +22,7 @@ defmodule Heaters.Infrastructure.CacheArgs do
         source_video_path: "source_videos/video.mp4",
         proxy_video_path: "proxies/video_proxy.mp4"
       }
-      
+
       resolved = CacheArgs.resolve_cached_paths(args)
       # Returns:
       # %{
@@ -78,9 +78,8 @@ defmodule Heaters.Infrastructure.CacheArgs do
       |> Enum.reduce(%{}, fn {key, value}, acc ->
         acc = Map.put(acc, key, value)
 
-        # Cache files that end with "_path"
+        # Cache files that end with "_path" and have S3 keys
         if String.ends_with?(to_string(key), "_path") and is_binary(value) do
-          # Extract filename for local caching
           case extract_temp_file_path(results, key) do
             {:ok, local_path} ->
               case TempCache.put(value, local_path) do
@@ -93,8 +92,14 @@ defmodule Heaters.Infrastructure.CacheArgs do
                   Map.put(acc, "#{key}_cached", false)
               end
 
-            {:error, _} ->
+            {:error, :not_available} ->
+              # No local path available, this is fine for non-temp-cache tasks
+              Logger.debug("CacheArgs: No local path available for #{key}")
               acc
+
+            {:error, reason} ->
+              Logger.warning("CacheArgs: Cannot extract local path for #{key}: #{inspect(reason)}")
+              Map.put(acc, "#{key}_cached", false)
           end
         else
           acc
@@ -113,19 +118,22 @@ defmodule Heaters.Infrastructure.CacheArgs do
   to their final S3 destinations.
   """
   @spec finalize_cached_files([String.t()]) :: :ok
-  def finalize_cached_files(s3_keys) when is_list(s3_keys) do
-    s3_keys
-    |> Enum.each(fn s3_key ->
-      case TempCache.finalize_to_s3(s3_key) do
+  def finalize_cached_files(cache_keys) when is_list(cache_keys) do
+    cache_keys
+    |> Enum.each(fn cache_key ->
+      # For temp cache keys, we need to get the S3 destination from the cached file
+      s3_destination = resolve_s3_destination(cache_key)
+      
+      case TempCache.finalize_to_s3(cache_key, s3_destination, "STANDARD") do
         :ok ->
-          Logger.debug("CacheArgs: Finalized #{s3_key}")
+          Logger.info("CacheArgs: Finalized #{cache_key} to #{s3_destination}")
 
         {:error, :not_found} ->
-          # File wasn't cached, that's fine
-          :ok
+          # File wasn't cached, that's fine (may have been uploaded directly)
+          Logger.debug("CacheArgs: Cache key #{cache_key} not found, skipping")
 
         {:error, reason} ->
-          Logger.error("CacheArgs: Failed to finalize #{s3_key}: #{inspect(reason)}")
+          Logger.error("CacheArgs: Failed to finalize #{cache_key}: #{inspect(reason)}")
       end
     end)
 
@@ -133,6 +141,51 @@ defmodule Heaters.Infrastructure.CacheArgs do
   end
 
   ## Private Functions
+
+  defp resolve_s3_destination(cache_key) do
+    if String.starts_with?(cache_key, "temp_") do
+      # Parse temp cache key to get source video ID and file type
+      case parse_temp_cache_key(cache_key) do
+        {:ok, source_video_id, file_type} ->
+          # Query database for the actual S3 path
+          get_s3_path_from_database(source_video_id, file_type)
+          
+        {:error, _} ->
+          # Fallback to using cache key as destination
+          cache_key
+      end
+    else
+      # For S3 keys, use them directly
+      cache_key
+    end
+  end
+
+  defp parse_temp_cache_key("temp_" <> rest) do
+    case String.split(rest, "_", parts: 2) do
+      [id_str, file_type] ->
+        case Integer.parse(id_str) do
+          {source_video_id, ""} -> {:ok, source_video_id, file_type}
+          _ -> {:error, :invalid_id}
+        end
+      _ -> {:error, :invalid_format}
+    end
+  end
+  
+  defp parse_temp_cache_key(_), do: {:error, :not_temp_key}
+  
+  defp get_s3_path_from_database(source_video_id, file_type) do
+    case Heaters.Videos.Queries.get_source_video(source_video_id) do
+      {:ok, source_video} ->
+        case file_type do
+          "proxy" -> source_video.proxy_filepath
+          "master" -> source_video.master_filepath
+          "source" -> source_video.filepath
+          _ -> nil
+        end
+        
+      {:error, _} -> nil
+    end
+  end
 
   defp is_s3_path_key?(key) do
     key_str = to_string(key)
@@ -145,10 +198,57 @@ defmodule Heaters.Infrastructure.CacheArgs do
     String.to_atom("#{base}_local_path")
   end
 
-  defp extract_temp_file_path(_results, _key) do
-    # This would need to be implemented based on how Python tasks
-    # provide local file paths. For now, we'll assume they don't
-    # provide this information directly.
-    {:error, :not_available}
+  defp extract_temp_file_path(results, key) do
+    # Extract local file paths from Python task results for caching
+    # Python tasks return local paths with "_local_path" suffix when using temp cache
+    key_str = to_string(key)
+    local_path_key = String.replace_suffix(key_str, "_path", "_local_path")
+    
+    case Map.get(results, local_path_key) do
+      nil ->
+        # Try alternative patterns that might be used by Python tasks
+        alt_patterns = [
+          "#{key_str}_local",
+          "local_#{key_str}",
+          "#{String.replace_suffix(key_str, "_path", "")}_local_path"
+        ]
+        
+        case find_local_path_in_results(results, alt_patterns) do
+          {:ok, local_path} -> {:ok, local_path}
+          {:error, :not_found} -> {:error, :not_available}
+        end
+        
+      local_path when is_binary(local_path) ->
+        # Validate that the local path exists
+        if File.exists?(local_path) do
+          {:ok, local_path}
+        else
+          Logger.warning("CacheArgs: Local path #{local_path} does not exist")
+          {:error, :file_not_found}
+        end
+        
+      _ ->
+        {:error, :invalid_path}
+    end
+  end
+  
+  # Helper to find local paths using alternative naming patterns
+  defp find_local_path_in_results(results, patterns) when is_list(patterns) do
+    case patterns do
+      [] ->
+        {:error, :not_found}
+        
+      [pattern | remaining] ->
+        case Map.get(results, pattern) do
+          nil -> find_local_path_in_results(results, remaining)
+          local_path when is_binary(local_path) and local_path != "" ->
+            if File.exists?(local_path) do
+              {:ok, local_path}
+            else
+              find_local_path_in_results(results, remaining)
+            end
+          _ -> find_local_path_in_results(results, remaining)
+        end
+    end
   end
 end

@@ -35,7 +35,7 @@ defmodule Heaters.Videos.Preprocess.Worker do
 
   alias Heaters.Videos.{SourceVideo, Queries}
   alias Heaters.Videos.Preprocess.StateManager
-  alias Heaters.Infrastructure.Orchestration.{WorkerBehavior, FFmpegConfig}
+  alias Heaters.Infrastructure.Orchestration.{WorkerBehavior, FFmpegConfig, PipelineConfig}
   alias Heaters.Infrastructure.{PyRunner, TempCache}
   require Logger
 
@@ -169,12 +169,12 @@ defmodule Heaters.Videos.Preprocess.Worker do
     cache_results = %{}
 
     cache_results =
-      if proxy_local_path,
+      if not is_nil(proxy_local_path) and proxy_local_path != "",
         do: Map.put(cache_results, :proxy, proxy_local_path),
         else: cache_results
 
     cache_results =
-      if master_local_path and not skip_master,
+      if not is_nil(master_local_path) and master_local_path != "" and not skip_master,
         do: Map.put(cache_results, :master, master_local_path),
         else: cache_results
 
@@ -226,12 +226,22 @@ defmodule Heaters.Videos.Preprocess.Worker do
           |> maybe_put(:height, metadata["height"])
 
         case StateManager.complete_preprocessing(source_video.id, update_attrs) do
-          {:ok, _final_video} ->
+          {:ok, final_video} ->
             Logger.info(
               "PreprocessWorker: Successfully completed preprocessing for video #{source_video.id} (temp cached)"
             )
 
-            :ok
+            # Chain directly to next stage using centralized pipeline configuration
+            case PipelineConfig.maybe_chain_next_job(__MODULE__, final_video) do
+              :ok ->
+                Logger.info("PreprocessWorker: Successfully chained to next pipeline stage")
+                :ok
+              
+              {:error, reason} ->
+                Logger.warning("PreprocessWorker: Failed to chain to next stage: #{inspect(reason)}")
+                # Fallback to dispatcher-based processing
+                :ok
+            end
 
           {:error, reason} ->
             Logger.error("PreprocessWorker: Failed to update video state: #{inspect(reason)}")
@@ -264,12 +274,22 @@ defmodule Heaters.Videos.Preprocess.Worker do
       |> maybe_put(:height, metadata["height"])
 
     case StateManager.complete_preprocessing(source_video.id, update_attrs) do
-      {:ok, _final_video} ->
+      {:ok, final_video} ->
         Logger.info(
           "PreprocessWorker: Successfully completed preprocessing for video #{source_video.id}"
         )
 
-        :ok
+        # Chain directly to next stage using centralized pipeline configuration
+        case PipelineConfig.maybe_chain_next_job(__MODULE__, final_video) do
+          :ok ->
+            Logger.info("PreprocessWorker: Successfully chained to next pipeline stage")
+            :ok
+          
+          {:error, reason} ->
+            Logger.warning("PreprocessWorker: Failed to chain to next stage: #{inspect(reason)}")
+            # Fallback to dispatcher-based processing
+            :ok
+        end
 
       {:error, reason} ->
         Logger.error("PreprocessWorker: Failed to update video state: #{inspect(reason)}")
@@ -294,11 +314,11 @@ defmodule Heaters.Videos.Preprocess.Worker do
 
   # Check if normalized download output can be reused as proxy
   # This implements the "smart proxy reuse" optimization from the workflow report
-  defp can_reuse_normalized_as_proxy?(source_video, local_source_path) do
+  defp can_reuse_normalized_as_proxy?(_source_video, local_source_path) do
     # Only reuse if the source was normalized (indicating it came from yt-dlp primary download)
-    normalized = get_in(source_video, [:metadata, "normalized"]) || false
-
-    if normalized do
+    # Note: metadata is not stored in the SourceVideo struct, so we'll check other indicators
+    # For now, assume normalization happened if we have a valid local source path from download
+    if local_source_path != "" do
       # Check if the normalized file meets proxy requirements
       case analyze_video_for_proxy_reuse(local_source_path) do
         {:ok, analysis} ->

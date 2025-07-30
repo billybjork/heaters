@@ -41,7 +41,7 @@ defmodule Heaters.Videos.DetectScenes.Worker do
   alias Heaters.Videos.{SourceVideo, Queries}
   alias Heaters.Videos.DetectScenes.StateManager
   alias Heaters.Clips.VirtualClips
-  alias Heaters.Infrastructure.Orchestration.WorkerBehavior
+  alias Heaters.Infrastructure.Orchestration.{WorkerBehavior, PipelineConfig}
   alias Heaters.Infrastructure.{PyRunner, TempCache}
   require Logger
 
@@ -137,12 +137,21 @@ defmodule Heaters.Videos.DetectScenes.Worker do
   end
 
   defp execute_scene_detection(source_video) do
-    # Try to get proxy file from temp cache first, fallback to S3
-    proxy_path_result =
-      TempCache.get_or_download(
-        source_video.proxy_filepath,
-        operation_name: "DetectScenesWorker"
-      )
+    # Try to get proxy file from temp cache first (using temp cache key), then fallback to S3
+    temp_cache_key = "temp_#{source_video.id}_proxy"
+    
+    proxy_path_result = case TempCache.get(temp_cache_key) do
+      {:ok, cached_path} ->
+        Logger.info("DetectScenesWorker: Using temp cached proxy: #{cached_path}")
+        {:ok, cached_path, :cache_hit}
+      
+      {:error, _} ->
+        # Fallback to S3 download if not in temp cache
+        TempCache.get_or_download(
+          source_video.proxy_filepath,
+          operation_name: "DetectScenesWorker"
+        )
+    end
 
     case proxy_path_result do
       {:ok, local_proxy_path, cache_status} ->
@@ -200,12 +209,22 @@ defmodule Heaters.Videos.DetectScenes.Worker do
         )
 
         case StateManager.complete_scene_detection(source_video.id) do
-          {:ok, _final_video} ->
+          {:ok, final_video} ->
             Logger.info(
               "DetectScenesWorker: Successfully completed scene detection for video #{source_video.id}"
             )
 
-            :ok
+            # Chain directly to next stage using centralized pipeline configuration
+            case PipelineConfig.maybe_chain_next_job(__MODULE__, final_video) do
+              :ok ->
+                Logger.info("DetectScenesWorker: Successfully chained to next pipeline stage")
+                :ok
+              
+              {:error, reason} ->
+                Logger.warning("DetectScenesWorker: Failed to chain to next stage: #{inspect(reason)}")
+                # Fallback to dispatcher-based processing
+                :ok
+            end
 
           {:error, reason} ->
             Logger.error("DetectScenesWorker: Failed to update video state: #{inspect(reason)}")

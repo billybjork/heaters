@@ -12,6 +12,7 @@ from the original video files stored by the download task.
 
 import json
 import logging
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
@@ -25,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 def run_preprocess(source_video_path: str, source_video_id: int, video_title: str, 
-                  master_args: list, proxy_args: list, **kwargs) -> Dict[str, Any]:
+                  master_args: list, proxy_args: list, use_temp_cache: bool = False,
+                  skip_master: bool = False, reuse_as_proxy: bool = False, **kwargs) -> Dict[str, Any]:
     """
     Create master and proxy from original source video.
     
@@ -38,6 +40,9 @@ def run_preprocess(source_video_path: str, source_video_id: int, video_title: st
         video_title: Title for generating output filenames
         master_args: FFmpeg arguments for master encoding (from FFmpegConfig)
         proxy_args: FFmpeg arguments for proxy encoding (from FFmpegConfig)
+        use_temp_cache: If True, cache files locally instead of uploading to S3 immediately
+        skip_master: If True, skip master file generation for cost optimization
+        reuse_as_proxy: If True, try to reuse source as proxy if compatible
         
     Returns:
         {
@@ -63,9 +68,16 @@ def run_preprocess(source_video_path: str, source_video_id: int, video_title: st
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_dir_path = Path(temp_dir)
             
-            # Download source video
-            local_source_path = temp_dir_path / "source.mp4"
-            download_from_s3(source_video_path, local_source_path)
+            # Get source video (from cache or S3)
+            if Path(source_video_path).exists():
+                # Source is already a local file (from temp cache)
+                logger.info(f"Using cached source video: {source_video_path}")
+                local_source_path = Path(source_video_path)
+            else:
+                # Source is S3 path - download it
+                logger.info(f"Downloading source video from S3: {source_video_path}")
+                local_source_path = temp_dir_path / "source.mp4"
+                download_from_s3(source_video_path, local_source_path)
             
             # Extract metadata from source
             metadata = extract_video_metadata(local_source_path)
@@ -76,26 +88,79 @@ def run_preprocess(source_video_path: str, source_video_id: int, video_title: st
             master_s3_key = f"masters/{sanitized_title}_{source_video_id}_master.mkv"
             proxy_s3_key = f"proxies/{sanitized_title}_{source_video_id}_proxy.mp4"
             
-            # Create master (lossless)
-            master_local = temp_dir_path / "master.mkv"
-            create_master(local_source_path, master_local, metadata, master_args)
+            # Handle proxy creation/reuse
+            if reuse_as_proxy:
+                logger.info("Attempting to reuse source file as proxy")
+                # Copy source file as proxy (smart reuse optimization)
+                proxy_local = temp_dir_path / "proxy.mp4"
+                shutil.copy2(local_source_path, proxy_local)
+                # Still extract keyframes from the proxy
+                keyframe_offsets = extract_keyframe_offsets(proxy_local)
+            else:
+                # Create proxy (all I-frame)
+                proxy_local = temp_dir_path / "proxy.mp4"
+                keyframe_offsets = create_proxy(local_source_path, proxy_local, metadata, proxy_args)
             
-            # Create proxy (all I-frame)
-            proxy_local = temp_dir_path / "proxy.mp4"
-            keyframe_offsets = create_proxy(local_source_path, proxy_local, metadata, proxy_args)
+            # Handle master creation
+            master_local = None
+            if not skip_master:
+                master_local = temp_dir_path / "master.mkv"
+                create_master(local_source_path, master_local, metadata, master_args)
             
-            # Upload both files to S3
-            upload_to_s3(master_local, master_s3_key, storage_class="GLACIER")
-            upload_to_s3(proxy_local, proxy_s3_key, storage_class="STANDARD")
-            
-            # Return success result
-            return {
-                "status": "success",
-                "master_path": master_s3_key,
-                "proxy_path": proxy_s3_key,
-                "keyframe_offsets": keyframe_offsets,
-                "metadata": metadata
-            }
+            # Handle upload vs temp cache
+            if use_temp_cache:
+                # Create cache directory
+                cache_dir = Path(tempfile.gettempdir()) / "heaters_preprocess_cache"
+                cache_dir.mkdir(exist_ok=True)
+                
+                # Cache proxy file
+                proxy_cache_filename = proxy_s3_key.replace("/", "_").replace("\\", "_")
+                proxy_cached_path = cache_dir / proxy_cache_filename
+                shutil.copy2(proxy_local, proxy_cached_path)
+                logger.info(f"Cached proxy to: {proxy_cached_path}")
+                
+                # Cache master file if generated
+                master_cached_path = None
+                if master_local and master_local.exists():
+                    master_cache_filename = master_s3_key.replace("/", "_").replace("\\", "_")
+                    master_cached_path = cache_dir / master_cache_filename
+                    shutil.copy2(master_local, master_cached_path)
+                    logger.info(f"Cached master to: {master_cached_path}")
+                
+                # Return with local paths
+                result = {
+                    "status": "success",
+                    "proxy_path": proxy_s3_key,  # Future S3 path
+                    "proxy_local_path": str(proxy_cached_path),  # Current local path
+                    "keyframe_offsets": keyframe_offsets,
+                    "metadata": metadata
+                }
+                
+                if master_cached_path:
+                    result["master_path"] = master_s3_key  # Future S3 path
+                    result["master_local_path"] = str(master_cached_path)  # Current local path
+                    
+                return result
+                
+            else:
+                # Traditional approach: upload to S3 immediately
+                upload_to_s3(proxy_local, proxy_s3_key, storage_class="STANDARD")
+                
+                if master_local and master_local.exists():
+                    upload_to_s3(master_local, master_s3_key, storage_class="GLACIER")
+                
+                # Return success result
+                result = {
+                    "status": "success",
+                    "proxy_path": proxy_s3_key,
+                    "keyframe_offsets": keyframe_offsets,
+                    "metadata": metadata
+                }
+                
+                if master_local and master_local.exists():
+                    result["master_path"] = master_s3_key
+                    
+                return result
             
     except Exception as e:
         logger.error(f"Preprocess failed for video {source_video_id}: {e}")

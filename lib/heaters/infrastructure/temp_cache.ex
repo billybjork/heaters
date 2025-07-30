@@ -27,7 +27,6 @@ defmodule Heaters.Infrastructure.TempCache do
   """
 
   require Logger
-  alias Heaters.Clips.Shared.TempManager
 
   @cache_timeout_ms :timer.hours(1)
 
@@ -113,16 +112,19 @@ defmodule Heaters.Infrastructure.TempCache do
 
   This should be called at the end of pipeline processing to finalize storage.
   """
-  @spec finalize_to_s3(String.t(), String.t()) :: :ok | {:error, any()}
-  def finalize_to_s3(s3_key, storage_class \\ "STANDARD") do
-    case get(s3_key) do
+  @spec finalize_to_s3(String.t(), String.t() | nil, String.t()) :: :ok | {:error, any()}
+  def finalize_to_s3(cache_key, s3_destination \\ nil, storage_class \\ "STANDARD") do
+    # Default s3_destination to cache_key for backward compatibility
+    s3_key = s3_destination || cache_key
+    
+    case get(cache_key) do
       {:ok, cached_path} ->
         result = upload_to_s3(cached_path, s3_key, storage_class)
         cleanup_cache_entry(cached_path)
         result
 
       {:error, :not_found} ->
-        Logger.warning("TempCache: Cannot finalize #{s3_key} - not found in cache")
+        Logger.warning("TempCache: Cannot finalize #{cache_key} - not found in cache")
         {:error, :not_found}
 
       {:error, reason} ->
@@ -237,12 +239,14 @@ defmodule Heaters.Infrastructure.TempCache do
   ## Private Functions
 
   defp ensure_cache_dir() do
-    case TempManager.create_temp_directory("cache") do
-      {:ok, temp_dir} ->
-        cache_dir = Path.join(temp_dir, "pipeline_cache")
-        File.mkdir_p(cache_dir)
+    # Use a shared persistent cache directory instead of job-specific temp dirs
+    # This allows sharing cached files between different worker processes
+    cache_dir = Path.join(System.tmp_dir!(), "heaters_shared_cache")
+    
+    case File.mkdir_p(cache_dir) do
+      :ok ->
         {:ok, cache_dir}
-
+      
       {:error, reason} ->
         {:error, reason}
     end

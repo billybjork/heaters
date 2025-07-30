@@ -19,6 +19,7 @@ defmodule Heaters.Videos.SourceVideo do
           keyframe_offsets: list() | nil,
           master_filepath: String.t() | nil,
           downloaded_at: DateTime.t() | nil,
+          cache_finalized_at: DateTime.t() | nil,
           inserted_at: DateTime.t(),
           updated_at: DateTime.t()
         }
@@ -40,6 +41,7 @@ defmodule Heaters.Videos.SourceVideo do
     field(:keyframe_offsets, {:array, :integer})
     field(:master_filepath, :string)
     field(:downloaded_at, :utc_datetime)
+    field(:cache_finalized_at, :utc_datetime)
     timestamps(type: :utc_datetime)
   end
 
@@ -64,7 +66,8 @@ defmodule Heaters.Videos.SourceVideo do
       :proxy_filepath,
       :keyframe_offsets,
       :master_filepath,
-      :downloaded_at
+      :downloaded_at,
+      :cache_finalized_at
     ])
     |> validate_required([:ingest_state])
   end

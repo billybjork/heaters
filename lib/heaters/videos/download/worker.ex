@@ -28,7 +28,7 @@ defmodule Heaters.Videos.Download.Worker do
   alias Heaters.Videos.Queries, as: VideoQueries
   alias Heaters.Infrastructure.{PyRunner, TempCache}
   alias Heaters.Videos.Download
-  alias Heaters.Infrastructure.Orchestration.WorkerBehavior
+  alias Heaters.Infrastructure.Orchestration.{WorkerBehavior, PipelineConfig}
   require Logger
 
   # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
@@ -91,21 +91,31 @@ defmodule Heaters.Videos.Download.Worker do
           metadata = convert_keys_to_atoms(result)
 
           # Handle both temp cache and traditional S3 results
+          # Check for local_filepath to detect temp cache usage
           completion_result =
-            if Map.get(result, "use_temp_cache", false) do
+            if Map.get(result, "local_filepath") do
               handle_temp_cache_download_completion(source_video_id, metadata)
             else
               Download.complete_downloading(source_video_id, metadata)
             end
 
           case completion_result do
-            {:ok, _updated_video} ->
+            {:ok, updated_video} ->
               Logger.info(
                 "DownloadWorker: Successfully completed download for source_video_id: #{source_video_id}"
               )
 
-              # Pipeline will automatically pick up videos in 'downloaded' state for preprocessing
-              :ok
+              # Chain directly to next stage using centralized pipeline configuration
+              case PipelineConfig.maybe_chain_next_job(__MODULE__, updated_video) do
+                :ok ->
+                  Logger.info("DownloadWorker: Successfully chained to next pipeline stage")
+                  :ok
+                
+                {:error, reason} ->
+                  Logger.warning("DownloadWorker: Failed to chain to next stage: #{inspect(reason)}")
+                  # Fallback to dispatcher-based processing
+                  :ok
+              end
 
             {:error, reason} ->
               Logger.error("DownloadWorker: Failed to update video metadata: #{inspect(reason)}")
