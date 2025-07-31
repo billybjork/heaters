@@ -403,8 +403,9 @@ def download_from_s3(s3_path: str, local_path: Path) -> None:
 
 
 def upload_to_s3(local_path: Path, s3_key: str, storage_class: str = "STANDARD") -> None:
-    """Upload local file to S3 using centralized S3 handler"""
-    from utils.s3_handler import get_s3_config, upload_to_s3 as s3_upload
+    """Upload local file to S3 using centralized S3 handler with optimized transfer settings"""
+    from utils.s3_handler import get_s3_config, get_transfer_config, upload_to_s3 as s3_upload
     
     s3_client, bucket_name = get_s3_config()
-    s3_upload(s3_client, bucket_name, local_path, s3_key, storage_class) 
+    transfer_config = get_transfer_config()  # Fresh config for each upload
+    s3_upload(s3_client, bucket_name, local_path, s3_key, storage_class, transfer_config) 

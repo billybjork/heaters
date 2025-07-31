@@ -23,18 +23,10 @@ defmodule HeatersWeb.Router do
     post("/submit_video", VideoController, :create)
   end
 
-  # Video streaming endpoints
-  scope "/videos", HeatersWeb do
-    # No pipeline - direct HTTP streaming with custom headers
-    get("/clips/:clip_id/stream/:version", VideoController, :stream_clip)
-    get("/clips/:clip_id/stream", VideoController, :stream_clip)
-  end
+  # Video streaming endpoints removed - using nginx MP4 dynamic clipping
+  # Routes moved to nginx service at /proxy/<s3_key>?start=X&end=Y
 
-  # Debug endpoints (development only)
-  scope "/debug", HeatersWeb do
-    get("/ffmpeg/reset", VideoController, :reset_ffmpeg_pool)
-    get("/ffmpeg/status", VideoController, :ffmpeg_pool_status)
-  end
+  # Debug endpoints removed - FFmpeg infrastructure no longer used
 
   # Other scopes may use custom stacks.
   # scope "/api", HeatersWeb do

@@ -79,3 +79,4 @@ services:
       - app-network
     tty: true
     stdin_open: true
+

@@ -24,12 +24,12 @@ class StreamingVideoPlayer {
       showLoadingSpinner: true,
       ...options
     };
-    
+
     this.playerType = null; // 'ffmpeg_stream' or 'direct_s3'
     this.isLoading = false;
     this.isLoadingNewVideo = false;
     this.loadingSpinner = null;
-    
+
     this.init();
   }
 
@@ -37,10 +37,10 @@ class StreamingVideoPlayer {
     // Don't override template attributes - they're set correctly
     // this.video.preload = this.options.preload;
     // this.video.controls = this.options.controls;
-    
+
     // Add loading state management
     this.setupLoadingSpinner();
-    
+
     // Add event listeners for streaming behavior
     this.video.addEventListener('loadstart', this.handleLoadStart.bind(this));
     this.video.addEventListener('loadedmetadata', this.handleLoadedMetadata.bind(this));
@@ -48,20 +48,20 @@ class StreamingVideoPlayer {
     this.video.addEventListener('canplaythrough', this.handleCanPlayThrough.bind(this));
     this.video.addEventListener('waiting', this.handleWaiting.bind(this));
     this.video.addEventListener('error', this.handleError.bind(this));
-    
+
     // Add custom clip ended event for looping
     this.video.addEventListener('ended', this.handleEnded.bind(this));
-    
+
     console.log('[StreamingVideoPlayer] Initialized');
   }
 
   setupLoadingSpinner() {
     if (!this.options.showLoadingSpinner) return;
-    
+
     // Find existing loading spinner in the template
     const container = this.video.parentElement;
     this.loadingSpinner = container?.querySelector('.streaming-video-loading');
-    
+
     if (!this.loadingSpinner) {
       console.warn('[StreamingVideoPlayer] Loading spinner not found in template');
     }
@@ -80,28 +80,28 @@ class StreamingVideoPlayer {
     }
 
     console.log(`[StreamingVideoPlayer] Loading ${playerType} video: ${videoUrl}`);
-    
+
     // Clean handshake to prevent AbortError
-    try { 
-      await this.video.pause(); 
-    } catch (_) {}
-    
+    try {
+      await this.video.pause();
+    } catch (_) { }
+
     this.video.src = '';
     this.video.load();
-    
+
     this.playerType = playerType;
-    
+
     // Show loading spinner for FFmpeg streams (they have startup latency)
     if (playerType === 'ffmpeg_stream') {
       this.showLoading('Streaming clip...');
     }
-    
+
     // Set new clip
     this.video.src = videoUrl;
-    
+
     // Swallow AbortError safely
-    this.video.play().catch(() => {});
-    
+    this.video.play().catch(() => { });
+
     // Log clip info for debugging
     if (clipInfo) {
       console.log(`[StreamingVideoPlayer] Clip info:`, clipInfo);
@@ -116,13 +116,13 @@ class StreamingVideoPlayer {
    */
   async switchClip(videoUrl, playerType = 'ffmpeg_stream', clipInfo = null) {
     console.log(`[StreamingVideoPlayer] Switching to new clip: ${videoUrl}`);
-    
+
     // Pause current playback
     this.video.pause();
-    
+
     // Load new clip
     await this.loadVideo(videoUrl, playerType, clipInfo);
-    
+
     // Auto-play new clip (browser permitting)
     try {
       await this.video.play();
@@ -146,7 +146,13 @@ class StreamingVideoPlayer {
    */
   handleLoadedMetadata() {
     console.log('[StreamingVideoPlayer] Metadata loaded - clip ready');
-    // Metadata loaded, but might still be buffering
+
+    // Reset timeline for Media Fragments URLs to hide time offset (Safari fix)
+    if (this.playerType === 'direct_s3' && this.video.currentTime > 0.01 &&
+      this.video.dataset.clipOffsetReset !== '1') {
+      this.video.currentTime = 0;
+      this.video.dataset.clipOffsetReset = '1';
+    }
   }
 
   /**
@@ -163,7 +169,7 @@ class StreamingVideoPlayer {
   handleCanPlayThrough() {
     console.log('[StreamingVideoPlayer] Can play through - hiding loading spinner and starting autoplay');
     this.hideLoading();
-    
+
     // Try autoplay immediately
     this.attemptAutoplay();
   }
@@ -178,7 +184,7 @@ class StreamingVideoPlayer {
       console.log('[StreamingVideoPlayer] Autoplay succeeded');
     } catch (error) {
       console.log('[StreamingVideoPlayer] Autoplay failed:', error);
-      
+
       // Try one more time after a brief delay
       setTimeout(async () => {
         try {
@@ -207,34 +213,34 @@ class StreamingVideoPlayer {
    */
   handleError(event) {
     // Ignore empty src errors during video transitions
-    if (this.video.error && this.video.error.code === 4 && 
-        (this.video.error.message.includes('Empty src attribute') || 
-         this.video.error.message.includes('MEDIA_ELEMENT_ERROR: Empty src attribute'))) {
+    if (this.video.error && this.video.error.code === 4 &&
+      (this.video.error.message.includes('Empty src attribute') ||
+        this.video.error.message.includes('MEDIA_ELEMENT_ERROR: Empty src attribute'))) {
       console.log('[StreamingVideoPlayer] Ignoring empty src error during video transition');
       return;
     }
-    
+
     // Ignore errors during new video loading
     if (this.isLoadingNewVideo) {
       console.log('[StreamingVideoPlayer] Ignoring error during new video load');
       return;
     }
-    
+
     console.error('[StreamingVideoPlayer] Video error:', event);
     console.error('[StreamingVideoPlayer] Video error details:', {
       error: this.video.error,
       networkState: this.video.networkState,
-      readyState: this.video.readyState,  
+      readyState: this.video.readyState,
       currentSrc: this.video.currentSrc
     });
-    
+
     if (this.video.error) {
       console.error('[StreamingVideoPlayer] MediaError code:', this.video.error.code);
       console.error('[StreamingVideoPlayer] MediaError message:', this.video.error.message);
     }
-    
+
     this.hideLoading();
-    
+
     // Dispatch custom error event
     this.video.dispatchEvent(new CustomEvent('streamingerror', {
       detail: {
@@ -249,13 +255,13 @@ class StreamingVideoPlayer {
    */
   handleEnded() {
     console.log('[StreamingVideoPlayer] Clip ended - looping back to start');
-    
+
     // Reset to beginning and continue playing
     this.video.currentTime = 0;
     this.video.play().catch(error => {
       console.log('[StreamingVideoPlayer] Loop playback failed:', error);
     });
-    
+
     // Dispatch custom event for clip end (useful for sequential playback)
     this.video.dispatchEvent(new CustomEvent('clipended', {
       detail: {
@@ -272,7 +278,7 @@ class StreamingVideoPlayer {
    */
   showLoading(message = 'Loading...') {
     if (!this.loadingSpinner) return;
-    
+
     this.isLoading = true;
     this.loadingSpinner.querySelector('.loading-text').textContent = message;
     this.loadingSpinner.style.display = 'block';
@@ -283,7 +289,7 @@ class StreamingVideoPlayer {
    */
   hideLoading() {
     if (!this.loadingSpinner) return;
-    
+
     this.isLoading = false;
     this.loadingSpinner.style.display = 'none';
   }
@@ -362,7 +368,7 @@ class StreamingVideoPlayer {
    */
   destroy() {
     console.log('[StreamingVideoPlayer] Destroying player...');
-    
+
     // Stop playback gracefully before cleanup
     try {
       if (!this.video.paused) {
@@ -371,7 +377,7 @@ class StreamingVideoPlayer {
     } catch (error) {
       // Ignore errors during destruction
     }
-    
+
     // Remove event listeners
     this.video.removeEventListener('loadstart', this.handleLoadStart);
     this.video.removeEventListener('loadedmetadata', this.handleLoadedMetadata);
@@ -380,21 +386,21 @@ class StreamingVideoPlayer {
     this.video.removeEventListener('waiting', this.handleWaiting);
     this.video.removeEventListener('error', this.handleError);
     this.video.removeEventListener('ended', this.handleEnded);
-    
+
     // Hide loading spinner (don't remove as it's part of the template)
     if (this.loadingSpinner) {
       this.hideLoading();
       this.loadingSpinner = null;
     }
-    
+
     // Clear state flags
     this.isLoadingNewVideo = false;
     this.isLoading = false;
-    
+
     // Clear video source
     this.video.src = '';
     this.video.load();
-    
+
     console.log('[StreamingVideoPlayer] Destroyed');
   }
 }

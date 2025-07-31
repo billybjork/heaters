@@ -46,7 +46,7 @@ defmodule HeatersWeb.StreamingVideoPlayer do
 
     # Use a stable ID based on clip to prevent unnecessary DOM recreation
     video_id = assigns.id || "video-player-#{assigns.clip.id}"
-    
+
     assigns =
       assigns
       |> assign(:video_url, video_url)

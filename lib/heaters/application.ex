@@ -17,8 +17,7 @@ defmodule Heaters.Application do
       {DNSCluster, query: Application.get_env(:heaters, :dns_cluster_query) || :ignore},
       {Oban, Application.fetch_env!(:heaters, Oban)},
       {Phoenix.PubSub, name: Heaters.PubSub},
-      # FFmpeg process pool for video streaming
-      HeatersWeb.FFmpegPool,
+      # FFmpeg process pool removed - using nginx MP4 dynamic clipping
       # Start a worker by calling: Heaters.Worker.start_link(arg)
       # {Heaters.Worker, arg},
       # Start to serve requests, typically the last entry

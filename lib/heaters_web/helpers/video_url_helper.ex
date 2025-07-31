@@ -2,7 +2,7 @@ defmodule HeatersWeb.VideoUrlHelper do
   @moduledoc """
   Helper functions for generating CloudFront video streaming URLs.
 
-  Provides URL generation for virtual clips using CloudFront's native byte-range 
+  Provides URL generation for virtual clips using CloudFront's native byte-range
   capabilities and direct URLs for physical clips.
 
   CloudFront automatically handles HTTP Range requests, so we generate simple URLs
@@ -29,16 +29,7 @@ defmodule HeatersWeb.VideoUrlHelper do
   """
   @spec get_video_url(map(), map()) :: {:ok, String.t(), atom()} | {:error, String.t()}
   def get_video_url(%{is_virtual: true} = clip, source_video) do
-    case source_video.proxy_filepath do
-      nil ->
-        {:error, "No proxy file available for virtual clip"}
-
-      _proxy_path ->
-        # Generate versioned streaming URL for virtual clips
-        version = generate_clip_version(clip)
-        url = "/videos/clips/#{clip.id}/stream/#{version}"
-        {:ok, url, :ffmpeg_stream}
-    end
+    build_media_fragment_url(clip, source_video)
   end
 
   def get_video_url(%{is_virtual: false} = clip, _source_video) do
@@ -124,6 +115,25 @@ defmodule HeatersWeb.VideoUrlHelper do
 
   # Private functions
 
+  defp build_media_fragment_url(clip, source_video) do
+    case source_video.proxy_filepath do
+      nil ->
+        {:error, "No proxy file available for virtual clip"}
+
+      proxy_filepath ->
+        s3_key = extract_s3_key(proxy_filepath)
+        cloudfront_domain = Application.fetch_env!(:heaters, :cloudfront_domain)
+
+        start = :erlang.float_to_binary(clip.start_time_seconds, decimals: 3)
+        finish = :erlang.float_to_binary(clip.end_time_seconds, decimals: 3)
+
+        # Use HTML5 Media Fragments for browser-native byte-range streaming
+        url = "https://#{cloudfront_domain}/#{URI.encode(s3_key)}#t=#{start},#{finish}"
+        # Tell JS it's a direct file
+        {:ok, url, :direct_s3}
+    end
+  end
+
   defp extract_s3_key(s3_path) do
     case String.starts_with?(s3_path, "s3://") do
       true ->
@@ -170,7 +180,7 @@ defmodule HeatersWeb.VideoUrlHelper do
         )
 
         # Fallback to direct S3 URL if presigned URL generation fails
-        region = Application.get_env(:heaters, :aws_region, "us-east-1")
+        region = Application.get_env(:heaters, :aws_region, "us-west-1")
 
         case region do
           "us-east-1" -> "https://#{bucket_name}.s3.amazonaws.com/#{s3_key}"
@@ -191,19 +201,5 @@ defmodule HeatersWeb.VideoUrlHelper do
       Application.get_env(:heaters, :s3)[:dev_bucket_name] ||
       System.get_env("S3_DEV_BUCKET_NAME") ||
       "default-bucket"
-  end
-
-  # Generate a version string for clip cache busting.
-  # Uses clip updated_at timestamp to create a cache-busting version parameter.
-  # This ensures CloudFront cache is invalidated when clip cut points change.
-  defp generate_clip_version(%{updated_at: updated_at}) when not is_nil(updated_at) do
-    updated_at
-    |> DateTime.to_unix(:millisecond)
-    |> Integer.to_string()
-  end
-
-  defp generate_clip_version(_clip) do
-    # Fallback for clips without updated_at - use current timestamp for cache busting
-    System.system_time(:millisecond) |> Integer.to_string()
   end
 end
