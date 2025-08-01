@@ -1,19 +1,19 @@
 defmodule HeatersWeb.VideoUrlHelper do
   @moduledoc """
-  Helper functions for generating CloudFront video streaming URLs.
+  Helper functions for generating video URLs for the tiny-file approach.
 
-  Provides URL generation for virtual clips using CloudFront's native byte-range
-  capabilities and direct URLs for physical clips.
+  Provides URL generation for virtual clips using the tiny-file approach (small MP4 files
+  generated on-demand) and direct URLs for physical clips.
 
-  CloudFront automatically handles HTTP Range requests, so we generate simple URLs
-  and let the native HTML5 video element handle seeking via byte-range requests.
+  The tiny-file approach replaces Media Fragments with actual small files that play
+  instantly with correct timeline duration.
   """
 
   @doc """
-  Generate CloudFront streaming URL for virtual or physical clips.
+  Generate video URL for clips using the tiny-file approach.
 
-  For virtual clips, returns the proxy URL which supports byte-range requests.
-  For physical clips, returns the direct clip file URL.
+  For virtual clips, this triggers temp file generation in development or checks for
+  exported clips in production. For physical clips, returns direct S3 URLs.
 
   ## Parameters
   - `clip`: Clip struct with timing information
@@ -21,15 +21,16 @@ defmodule HeatersWeb.VideoUrlHelper do
 
   ## Examples
 
-      # Virtual clip - uses proxy file for byte-range streaming
-      {:ok, url, :cloudfront_range} = get_video_url(virtual_clip, source_video)
+      # Virtual clip - uses tiny-file approach
+      {:ok, url, :direct_s3} = get_video_url(virtual_clip, source_video)
 
       # Physical clip - uses direct file URL
       {:ok, url, :direct_s3} = get_video_url(physical_clip, source_video)
   """
-  @spec get_video_url(map(), map()) :: {:ok, String.t(), atom()} | {:error, String.t()}
+  @spec get_video_url(map(), map()) ::
+          {:ok, String.t(), atom()} | {:loading, nil} | {:error, String.t()}
   def get_video_url(%{is_virtual: true} = clip, source_video) do
-    build_media_fragment_url(clip, source_video)
+    build_virtual_clip_url(clip, source_video)
   end
 
   def get_video_url(%{is_virtual: false} = clip, _source_video) do
@@ -44,7 +45,7 @@ defmodule HeatersWeb.VideoUrlHelper do
   end
 
   @doc """
-  Check if a clip supports CloudFront streaming.
+  Check if a clip supports video streaming.
 
   Returns true if the clip has the necessary file available (proxy for virtual, clip file for physical).
   """
@@ -115,24 +116,43 @@ defmodule HeatersWeb.VideoUrlHelper do
 
   # Private functions
 
-  defp build_media_fragment_url(clip, source_video) do
-    case source_video.proxy_filepath do
-      nil ->
-        {:error, "No proxy file available for virtual clip"}
-
-      proxy_filepath ->
-        s3_key = extract_s3_key(proxy_filepath)
-        cloudfront_domain = Application.fetch_env!(:heaters, :cloudfront_domain)
-
-        start = :erlang.float_to_binary(clip.start_time_seconds, decimals: 3)
-        finish = :erlang.float_to_binary(clip.end_time_seconds, decimals: 3)
-
-        # Use HTML5 Media Fragments for browser-native byte-range streaming
-        url = "https://#{cloudfront_domain}/#{URI.encode(s3_key)}#t=#{start},#{finish}"
-        # Tell JS it's a direct file
-        {:ok, url, :direct_s3}
+  # Private function for virtual clip URL generation
+  defp build_virtual_clip_url(clip, source_video) do
+    if Mix.env() == :dev do
+      # Development: Generate temp file immediately
+      case Heaters.Clips.TempClip.build(Map.put(clip, :source_video, source_video)) do
+        {:ok, file_url} ->
+          {:ok, file_url, :direct_s3}
+          
+        {:error, reason} ->
+          {:error, reason}
+      end
+    else
+      # Production: Check for exported clip or queue export
+      build_production_clip_url(clip, source_video)
     end
   end
+
+  defp build_production_clip_url(%{export_key: export_key} = _clip, _source_video)
+       when not is_nil(export_key) do
+    # Clip already exported - return presigned URL
+    bucket_name = get_bucket_name()
+
+    case ExAws.S3.presigned_url(ExAws.Config.new(:s3), :get, bucket_name, export_key,
+           expires_in: 86400 * 30
+         ) do
+      {:ok, url} -> {:ok, url, :direct_s3}
+      {:error, reason} -> {:error, "Failed to generate presigned URL: #{inspect(reason)}"}
+    end
+  end
+
+  defp build_production_clip_url(%{id: _clip_id} = _clip, _source_video) do
+    # Clip not yet exported - queue export job (will be implemented in later phases)
+    # For now, return loading state
+    {:loading, nil}
+  end
+
+
 
   defp extract_s3_key(s3_path) do
     case String.starts_with?(s3_path, "s3://") do

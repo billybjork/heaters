@@ -166,6 +166,14 @@ config :ex_aws, :s3,
 #  CloudFront Video Streaming Configuration
 # ───────────────────────────────────────────
 config :heaters,
+  # FFmpeg binary path for development (supports Docker and local installations)
+  ffmpeg_bin:
+    if(System.get_env("DOCKER_ENV") == "true",
+      # Docker container path
+      do: "/usr/bin/ffmpeg",
+      # Local development
+      else: System.get_env("FFMPEG_BIN") || "/opt/homebrew/bin/ffmpeg"
+    ),
   # CloudFront distribution domain (fallback to S3 for development)
   cloudfront_domain: System.get_env("CLOUDFRONT_DEV_DOMAIN"),
   # S3 bucket configuration

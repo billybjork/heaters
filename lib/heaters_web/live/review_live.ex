@@ -1,6 +1,6 @@
 defmodule HeatersWeb.ReviewLive do
   use HeatersWeb, :live_view
-  import Phoenix.LiveView, only: [put_flash: 3, clear_flash: 1]
+  import Phoenix.LiveView, only: [put_flash: 3, clear_flash: 1, push_event: 3]
 
   # Components / helpers
   import HeatersWeb.StreamingVideoPlayer, only: [streaming_video_player: 1]
@@ -36,6 +36,13 @@ defmodule HeatersWeb.ReviewLive do
          )}
 
       [cur | fut] ->
+        # Subscribe to temp clip events for all clips
+        all_clips = [cur | fut]
+
+        Enum.each(all_clips, fn clip ->
+          Phoenix.PubSub.subscribe(Heaters.PubSub, "clips:#{clip.id}")
+        end)
+
         {:ok,
          socket
          |> assign(
@@ -121,6 +128,11 @@ defmodule HeatersWeb.ReviewLive do
       needed = @prefetch - (length(assigns.future) + 1)
       new_clips = ClipReview.next_pending_review_clips(needed, exclude_ids)
 
+      # Subscribe to temp clip events for new clips
+      Enum.each(new_clips, fn clip ->
+        Phoenix.PubSub.subscribe(Heaters.PubSub, "clips:#{clip.id}")
+      end)
+
       update(socket, :future, &(&1 ++ new_clips))
     else
       socket
@@ -160,6 +172,41 @@ defmodule HeatersWeb.ReviewLive do
     require Logger
     Logger.error("Persist for clip #{clip_id} crashed: #{inspect(reason)}")
     {:noreply, put_flash(socket, :error, "Action crashed: #{inspect(reason)}")}
+  end
+
+  # -------------------------------------------------------------------------
+  # PubSub message handlers
+  # -------------------------------------------------------------------------
+
+  @impl true
+  def handle_info(
+        %{
+          topic: "clips:" <> _clip_id,
+          event: "temp_ready",
+          payload: %{path: path, clip_id: clip_id}
+        },
+        socket
+      ) do
+    require Logger
+    Logger.info("ReviewLive: Received temp_ready for clip #{clip_id}, path: #{path}")
+    
+    # Send event to JavaScript hook to update the video player
+    result = push_event(socket, "temp_clip_ready", %{clip_id: clip_id, path: path})
+    Logger.info("ReviewLive: Sent push_event temp_clip_ready")
+    {:noreply, result}
+  end
+
+  @impl true
+  def handle_info(
+        %{
+          topic: "clips:" <> _clip_id,
+          event: "temp_error",
+          payload: %{error: error, clip_id: clip_id}
+        },
+        socket
+      ) do
+    # Send error event to JavaScript hook
+    {:noreply, push_event(socket, "temp_clip_error", %{clip_id: clip_id, error: error})}
   end
 
   # -------------------------------------------------------------------------

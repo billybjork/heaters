@@ -11,7 +11,7 @@ defmodule Heaters.Videos.Preprocess.Worker do
 
   1. Transition source video to "preprocessing" state
   2. Run Python preprocessing task to create master and proxy
-  3. Extract keyframe offsets for efficient WebCodecs seeking
+  3. Extract keyframe offsets for efficient seeking
   4. Upload both files to S3 (cold storage for master, hot for proxy)
   5. Update source video with file paths and keyframe data
 

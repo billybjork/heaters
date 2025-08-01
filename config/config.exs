@@ -20,13 +20,20 @@ config :heaters, Oban,
     # For video processing, clip processing, and edit operations
     media_processing: 5,
     # For dispatcher and archive operations
-    background_jobs: 2
+    background_jobs: 2,
+    # For temporary clip generation (dev)
+    temp_clips: 5,
+    # For clip exports (tiny-file approach)
+    exports: 5
   ]
 
 # General application configuration
 config :heaters,
   ecto_repos: [Heaters.Repo],
   generators: [timestamp_type: :utc_datetime]
+
+# Clip delivery method configuration
+config :heaters, :clip_delivery, :tiny_file
 
 # Tell Ecto/Postgres about our custom types (for the `vector` column)
 config :heaters, Heaters.Repo, types: Heaters.PostgresTypes

@@ -7,15 +7,15 @@ defmodule Heaters.Clips.Export.Worker do
 
   ## Storage Strategy & Quality Decision
 
-  **Why Proxy Instead of Gold Master:**
+  **Why Proxy Instead of Master:**
   - **Higher Quality**: Proxy uses CRF 20 vs old final_export CRF 23
-  - **Instant Access**: Proxy in S3 Standard vs gold master in S3 Glacier
+  - **Instant Access**: Proxy in S3 Standard vs master in S3 Glacier
   - **Stream Copy**: No re-encoding = zero quality loss + 10x faster
-  - **Cost Optimization**: Gold master in Glacier saves 95% storage costs
+  - **Cost Optimization**: Master in Glacier saves 95% storage costs
   - **Perfect for Streaming**: CRF 20 all-I-frame is ideal for Cloudflare Stream ingestion
 
-  **Gold Master**: Reserved for true archival/compliance, stored in S3 Glacier
-  **Proxy**: Dual-purpose for WebCodecs review AND final export source
+  **Master**: Reserved for true archival/compliance, stored in S3 Glacier
+  **Proxy**: Dual-purpose for review AND final export source
 
   ## Workflow
 

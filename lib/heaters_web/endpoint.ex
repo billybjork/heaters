@@ -31,6 +31,12 @@ defmodule HeatersWeb.Endpoint do
     plug(Phoenix.LiveReloader)
     plug(Phoenix.CodeReloader)
     plug(Phoenix.Ecto.CheckRepoStatus, otp_app: :heaters)
+
+    # Serve temporary clip files (dev only)
+    plug(Plug.Static,
+      at: "/temp",
+      from: {:file_system, System.tmp_dir!()}
+    )
   end
 
   plug(Phoenix.LiveDashboard.RequestLogger,

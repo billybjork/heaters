@@ -4,6 +4,7 @@ import { LiveSocket } from "phoenix_live_view"
 import { ReviewHotkeys } from "./review-hotkeys"
 import { StreamingVideoPlayerController } from "./streaming-video-player-controller"
 import { HoverPlay, ThumbHoverPlayer } from "./hover-play";
+import { StreamingVideoPlayer } from "./streaming-video-player";
 
 // Pull the CSRF token from the page
 let csrfToken = document
@@ -17,8 +18,8 @@ console.log("[DEBUG] Imported StreamingVideoPlayerController:", typeof Streaming
 let Hooks = {
   ReviewHotkeys,
   StreamingVideoPlayer: StreamingVideoPlayerController,
-  ThumbHoverPlayer,
-  HoverPlay
+  HoverPlay,
+  ThumbHoverPlayer
 }
 
 console.log("[DEBUG] Hooks object:", Object.keys(Hooks));
@@ -36,5 +37,6 @@ liveSocket.connect()
 
 // Expose for web console debug
 window.liveSocket = liveSocket
+window.StreamingVideoPlayer = StreamingVideoPlayer
 
 console.log("[DEBUG] LiveSocket assigned to window, hooks:", Object.keys(window.liveSocket?.opts?.hooks || {}));

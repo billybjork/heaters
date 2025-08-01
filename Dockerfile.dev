@@ -26,6 +26,9 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* \
   && ffmpeg -version
 
+# Force IPv4 preference to avoid DNS stalls with CloudFront
+RUN echo 'precedence ::ffff:0:0/96 100' >> /etc/gai.conf
+
 # Install Rust for rambo compilation
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:$PATH"

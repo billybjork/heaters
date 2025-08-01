@@ -61,6 +61,7 @@ services:
           memory: 2G
     volumes:
       - ./:/app
+      - ./priv/fixtures:/fixtures:ro  # Mount local proxy files for dev testing
       
     command: >
       sh -c "

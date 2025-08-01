@@ -11,7 +11,7 @@ defmodule Heaters.Repo.Migrations.FixKeyframeOffsetsColumnType do
     end
 
     execute """
-    COMMENT ON COLUMN source_videos.keyframe_offsets IS 'Array of byte offsets for keyframes in the proxy file, used for efficient WebCodecs seeking.';
+    COMMENT ON COLUMN source_videos.keyframe_offsets IS 'Array of byte offsets for keyframes in the proxy file, used for efficient seeking.';
     """
   end
 
@@ -22,7 +22,7 @@ defmodule Heaters.Repo.Migrations.FixKeyframeOffsetsColumnType do
     end
 
     execute """
-    COMMENT ON COLUMN source_videos.keyframe_offsets IS 'JSON array of byte offsets for keyframes in the proxy file, used for efficient WebCodecs seeking.';
+    COMMENT ON COLUMN source_videos.keyframe_offsets IS 'JSON array of byte offsets for keyframes in the proxy file, used for efficient seeking.';
     """
   end
 end

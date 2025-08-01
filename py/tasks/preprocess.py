@@ -3,7 +3,7 @@ Preprocess Task for Video Pipeline
 
 Handles creation of transcoded outputs from original source videos:
 1. Master - lossless MKV + FFV1 for archival storage
-2. Proxy - all-I-frame H.264 MP4 for efficient seeking in WebCodecs and export
+2. Proxy - all-I-frame H.264 MP4 for efficient seeking and export
 3. Keyframe offsets - byte positions for efficient seeking
 
 This is the main transcoding step that creates all necessary video formats
@@ -290,7 +290,7 @@ def create_proxy(source_path: Path, output_path: Path, metadata: Dict[str, Any],
 
 
 def extract_keyframe_offsets(video_path: Path) -> List[int]:
-    """Extract byte offsets of keyframes for efficient WebCodecs seeking"""
+    """Extract byte offsets of keyframes for efficient seeking"""
     try:
         cmd = [
             "ffprobe", "-v", "quiet", "-select_streams", "v:0",

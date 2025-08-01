@@ -1,23 +1,24 @@
 defmodule HeatersWeb.StreamingVideoPlayer do
   @moduledoc """
-  Phoenix LiveView component for server-side FFmpeg video streaming.
+  Phoenix LiveView component for tiny-file video streaming.
 
-  Provides a simple HTML5 video element that receives FFmpeg-segmented streams
-  for true virtual clip playback with zero client-side video processing.
+  Provides a simple HTML5 video element that plays small MP4 files generated
+  on-demand using FFmpeg stream copy for virtual clips.
 
   Key features:
-  - Server-side FFmpeg time segmentation (streams only exact clip ranges)
-  - Native HTML5 video element (no complex decoders or client processing)
-  - CloudFront caching of FFmpeg output for global distribution
-  - Support for both virtual clips (FFmpeg streaming) and physical clips (direct files)
-  - Each clip feels like a standalone video file with 0-based timeline
+  - Tiny files (2-5MB) generated on-demand using FFmpeg stream copy (no re-encoding)
+  - Instant playback with correct timeline duration (clips show their actual length)
+  - Native HTML5 video element (no complex streaming protocols)
+  - CloudFront caching for global distribution
+  - Support for both virtual clips (tiny files) and physical clips (direct files)
+  - Superior user experience compared to byte-range streaming
 
   ## Usage
 
       <.streaming_video_player clip={@current_clip} />
 
   The component automatically determines the appropriate video URL and player type
-  based on the clip's properties and the source video's available files.
+  based on the clip's properties and generates tiny files as needed.
   """
 
   use Phoenix.Component
@@ -56,7 +57,7 @@ defmodule HeatersWeb.StreamingVideoPlayer do
       |> assign(:clip_key, "clip-#{assigns.clip.id}")
 
     ~H"""
-    <div class="video-player-container">
+    <div class="video-player-container" id={"video-container-#{@clip.id}"}>
       <%= if @video_url do %>
         <video
           id={@video_id}
@@ -75,22 +76,22 @@ defmodule HeatersWeb.StreamingVideoPlayer do
         >
           <p>Your browser doesn't support HTML5 video streaming.</p>
         </video>
-        
-        <div class="streaming-video-loading">
+
+        <div class="streaming-video-loading" style="display: none;">
           <div class="spinner"></div>
           <div class="loading-text">Streaming clip...</div>
         </div>
       <% else %>
         <div class="video-player-error">
-          <p>Video not available for streaming.</p>
-          <p class="error-details">
-            <%= if @clip.is_virtual do %>
-              Virtual clip requires proxy file for FFmpeg streaming.
-            <% else %>
-              Physical clip file not found.
-            <% end %>
-          </p>
-        </div>
+            <p>Video not available for streaming.</p>
+            <p class="error-details">
+              <%= if @clip.is_virtual do %>
+                Virtual clip requires proxy file for FFmpeg streaming.
+              <% else %>
+                Physical clip file not found.
+              <% end %>
+            </p>
+          </div>
       <% end %>
     </div>
     """
@@ -117,6 +118,9 @@ defmodule HeatersWeb.StreamingVideoPlayer do
       {:ok, url, player_type} ->
         clip_info = build_clip_info(clip, player_type)
         {url, to_string(player_type), clip_info}
+
+      {:loading, nil} ->
+        {nil, "loading", %{}}
 
       {:error, _reason} ->
         {nil, "error", %{}}

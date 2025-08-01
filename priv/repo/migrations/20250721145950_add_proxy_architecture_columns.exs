@@ -56,7 +56,7 @@ defmodule Heaters.Repo.Migrations.AddProxyArchitectureColumns do
     """
 
     execute """
-    COMMENT ON COLUMN source_videos.keyframe_offsets IS 'JSON array of byte offsets for keyframes in the proxy file, used for efficient WebCodecs seeking.';
+    COMMENT ON COLUMN source_videos.keyframe_offsets IS 'JSON array of byte offsets for keyframes in the proxy file, used for efficient seeking.';
     """
 
     execute """

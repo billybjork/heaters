@@ -9,7 +9,7 @@ Heaters processes videos through a **virtual clip pipeline**: download → proxy
 - **Universal Download**: Handles both web-scraped and user-uploaded videos
 - **Proxy Generation**: Creates lossless master (FFV1/MKV, Glacier archival) and proxy (all-I-frame H.264, dual-purpose)
 - **Virtual Clips**: Database records with cut points; no physical files until final export
-- **Instant Review**: Server-side FFmpeg time segmentation with native HTML5 video for seeking and review actions (approve, skip, archive, group, cut point ops)  
+- **Instant Review**: Tiny-file video player with on-demand clip generation for seeking and review actions (approve, skip, archive, group, cut point ops)  
 - **Optimized Export**: Stream copy from proxy for 10x performance and superior quality
 
 **Key Benefits**: Zero re-encoding during review, optimized export performance, cost-effective storage, instant operations, universal workflow, maintainable codebase.
@@ -22,7 +22,39 @@ Heaters processes videos through a **virtual clip pipeline**: download → proxy
 - **ML Processing**: Python (PyTorch, Transformers)
 - **Media Processing**: Python (yt-dlp, FFmpeg)
 - **Storage**: AWS S3
-- **Frontend**: Server-side FFmpeg streaming, native HTML5 video, modular JS, Phoenix LiveView
+- **Frontend**: Tiny-file video player, native HTML5 video, modular JS, Phoenix LiveView
+
+### Tiny-File Video Player Implementation
+
+The video review interface uses a **tiny-file approach** that generates small MP4 files on-demand for superior user experience compared to traditional streaming methods.
+
+**How It Works**:
+- **On-Demand Generation**: When a virtual clip is accessed, FFmpeg generates a small (2-5MB) MP4 file using stream copy (no re-encoding)
+- **Instant Playback**: Files start playing immediately with correct timeline duration showing only the clip length
+- **Simple File Serving**: Uses standard HTTP file serving instead of complex streaming protocols
+- **Perfect Timeline**: Each clip displays its actual duration (e.g., 3.75 seconds) rather than the full source video length
+
+**Technical Implementation**:
+- **Development Mode**: Files generated in `/tmp` and served via Phoenix static file serving
+- **Production Mode**: Files uploaded to S3 with CloudFront caching for global distribution
+- **FFmpeg Stream Copy**: No re-encoding ensures zero quality loss and 10x faster generation
+- **Automatic Cleanup**: Temporary files auto-deleted after 15 minutes to manage disk space
+
+**Key Advantages**:
+- ✅ **Instant Playback**: 2-5MB files start immediately vs. waiting for byte-range chunks
+- ✅ **Perfect Timeline**: Shows exact clip duration eliminating user confusion
+- ✅ **Offline Development**: Works fully offline without CloudFront configuration
+- ✅ **Simple Debugging**: Standard file serving vs. complex range request debugging
+- ✅ **Browser Compatibility**: Works consistently across all browsers and devices
+- ✅ **Mobile Optimized**: Touch controls and timeline scrubbing work perfectly
+
+**Architecture Components**:
+- **`TempClip`**: Generates temporary clips in development using local proxy files
+- **`ClipExporter`**: Handles production export with S3 upload and database tracking
+- **`StreamingVideoPlayer`**: JavaScript component providing consistent playback experience
+- **`VideoUrlHelper`**: Manages URL generation and routing between development/production modes
+
+This approach eliminates the complexity and pain points of Media Fragments (byte-range streaming) while providing superior user experience and maintainable code.
 
 ## Architecture Principles
 
@@ -100,18 +132,18 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 
 ### Optimized Storage Strategy
 
-**Dual-Purpose Proxy**: Single proxy file serves both CloudFront streaming review and final export, eliminating redundant file operations.
+**Dual-Purpose Proxy**: Single proxy file serves both tiny-file video review and final export, eliminating redundant file operations.
 
 **Cost-Effective Archival**: Master stored in S3 Glacier (95% storage savings) for compliance/archival only.
 
 **Export Performance**: Stream copy from proxy achieves 10x performance improvement with superior quality (CRF 20 vs deprecated CRF 23).
 
-**I/O Optimization**: Direct S3 access via presigned URLs with byte-range seeking eliminates proxy download bottleneck.
+**I/O Optimization**: Direct S3 access via presigned URLs eliminates proxy download bottleneck.
 
 ## Context Responsibilities
 
 - **`Videos`**: Source video lifecycle (download, preprocess, detect scenes, cache finalization)
-- **`Clips`**: Virtual clip management, review workflow, artifact management, export
+- **`Clips`**: Virtual clip management, review workflow, artifact management, tiny-file generation (`TempClip`), export
 - **`Infrastructure`**: I/O adapters (S3, FFmpeg, Python), temp cache system, declarative configuration (`PipelineConfig`, `FFmpegConfig`, `YtDlpConfig`), worker behaviors
 - **Python Tasks**: Focused execution of media processing, scene detection, S3 operations with configuration provided by Elixir
 
@@ -126,11 +158,11 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 
 1. **Zero Re-encoding During Review**: Virtual clips are DB records only; instant operations
 2. **Superior Quality**: Export from high-quality proxy (CRF 20) with zero transcoding loss
-3. **Optimized I/O Performance**: 78% S3 operation reduction via temp caching; direct byte-range access
+3. **Optimized I/O Performance**: 78% S3 operation reduction via temp caching; direct access
 4. **FLAME Environment Ready**: Near-zero pipeline latency via direct job chaining
 5. **Universal Workflow**: Handles all ingest types with smart optimization detection
-6. **True Virtual Clips**: Server-side FFmpeg time segmentation streams only exact clip ranges
-7. **Instant Review**: Each clip feels like a standalone video file with 0-based timeline
+6. **True Virtual Clips**: Tiny MP4 files generated on-demand with exact clip content using FFmpeg stream copy
+7. **Instant Review**: Each clip plays as a standalone video file with correct timeline duration
 8. **Maintainable Codebase**: Declarative configuration, modular design, centralized logic
 9. **Production Reliable**: Resumable, idempotent, robust with graceful fallbacks
 

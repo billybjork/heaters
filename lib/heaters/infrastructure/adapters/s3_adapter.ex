@@ -312,10 +312,9 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
   end
 
   @doc """
-  Generate CDN URL for streaming proxy videos with WebCodecs support.
+  Generate CDN URL for streaming proxy videos.
 
-  This generates URLs that support HTTP Range requests, which are critical
-  for WebCodecs to efficiently seek and decode video frames.
+  This generates URLs that support HTTP Range requests for efficient video streaming.
 
   ## Examples
 
@@ -345,10 +344,9 @@ defmodule Heaters.Infrastructure.Adapters.S3Adapter do
   end
 
   @doc """
-  Get range of bytes from S3 object to support WebCodecs seeking.
+  Get range of bytes from S3 object for efficient video streaming.
 
-  This is critical for WebCodecs performance - allows downloading only
-  the keyframes needed for a specific time range.
+  This allows downloading only the specific byte ranges needed for video seeking.
 
   ## Examples
 

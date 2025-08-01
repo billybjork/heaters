@@ -21,6 +21,9 @@ defmodule HeatersWeb.Router do
     live("/review", ReviewLive)
     live("/query", QueryLive)
     post("/submit_video", VideoController, :create)
+
+    # Serve temporary clip files in development
+    get("/temp/:filename", VideoController, :serve_temp_file)
   end
 
   # Video streaming endpoints removed - using nginx MP4 dynamic clipping

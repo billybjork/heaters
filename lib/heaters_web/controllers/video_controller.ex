@@ -17,6 +17,41 @@ defmodule HeatersWeb.VideoController do
     end
   end
 
+  def serve_temp_file(conn, %{"filename" => filename}) do
+    # Only serve in development mode and only .mp4 files for security
+    if Mix.env() == :dev and String.ends_with?(filename, ".mp4") do
+      temp_path = Path.join(System.tmp_dir!(), filename)
+
+      if File.exists?(temp_path) do
+        # Get file modification time for cache busting
+        file_stat = File.stat!(temp_path)
+
+        mtime_unix =
+          file_stat.mtime |> :calendar.datetime_to_gregorian_seconds() |> Integer.to_string()
+
+        etag =
+          :crypto.hash(:md5, "#{filename}-#{mtime_unix}")
+          |> Base.encode16(case: :lower)
+
+        conn
+        |> put_resp_content_type("video/mp4")
+        |> put_resp_header("content-disposition", "inline")
+        |> put_resp_header("cache-control", "no-cache, no-store, must-revalidate")
+        |> put_resp_header("pragma", "no-cache")
+        |> put_resp_header("etag", etag)
+        |> send_file(200, temp_path)
+      else
+        conn
+        |> put_status(404)
+        |> json(%{error: "File not found"})
+      end
+    else
+      conn
+      |> put_status(404)
+      |> json(%{error: "Not found"})
+    end
+  end
+
   # FFmpeg streaming methods removed - using nginx MP4 dynamic clipping instead
 
   # Debug endpoints removed - FFmpeg infrastructure no longer used

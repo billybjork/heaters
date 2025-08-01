@@ -1,16 +1,16 @@
 /**
  * Streaming Video Player
  * 
- * HTML5 video player for server-side FFmpeg streaming.
+ * HTML5 video player for tiny-file video streaming.
  * 
  * This player handles two types of video sources:
- * 1. Virtual clips: Streamed via FFmpeg time segmentation (feels like standalone files)
+ * 1. Virtual clips: Small MP4 files (2-5MB) generated on-demand using FFmpeg stream copy
  * 2. Physical clips: Direct file URLs for exported clips
  * 
  * Key benefits:
- * - Virtual clips stream only exact time ranges (no full video downloads)
- * - Each clip feels like a standalone file with 0-based timeline
- * - Automatic loading indicators for FFmpeg startup latency
+ * - Virtual clips use tiny files with instant playback and correct timeline duration
+ * - Each clip feels like a standalone file with proper timeline (no byte-range confusion)
+ * - No complex streaming protocols - just simple file serving
  * - Simple, maintainable codebase with native HTML5 video
  * - Foundation for sequential clip playback
  */
@@ -90,6 +90,7 @@ class StreamingVideoPlayer {
     this.video.load();
 
     this.playerType = playerType;
+    this.clipInfo = clipInfo;  // Store clip info for later use
 
     // Show loading spinner for FFmpeg streams (they have startup latency)
     if (playerType === 'ffmpeg_stream') {
@@ -147,7 +148,7 @@ class StreamingVideoPlayer {
   handleLoadedMetadata() {
     console.log('[StreamingVideoPlayer] Metadata loaded - clip ready');
 
-    // Reset timeline for Media Fragments URLs to hide time offset (Safari fix)
+    // Reset timeline for tiny-file URLs to ensure clean playback
     if (this.playerType === 'direct_s3' && this.video.currentTime > 0.01 &&
       this.video.dataset.clipOffsetReset !== '1') {
       this.video.currentTime = 0;
@@ -251,16 +252,25 @@ class StreamingVideoPlayer {
   }
 
   /**
-   * Handle video end - loop back to beginning and continue playing
+   * Handle video end - for clips, just pause; for full videos, loop back to beginning
    */
   handleEnded() {
-    console.log('[StreamingVideoPlayer] Clip ended - looping back to start');
+    console.log('[StreamingVideoPlayer] Clip ended');
 
-    // Reset to beginning and continue playing
-    this.video.currentTime = 0;
-    this.video.play().catch(error => {
-      console.log('[StreamingVideoPlayer] Loop playback failed:', error);
-    });
+    // Check if this is a clip (based on player type or clip info)
+    const isClip = this.playerType === 'direct_s3' || this.clipInfo;
+
+    if (isClip) {
+      console.log('[StreamingVideoPlayer] Clip finished playing - stopping');
+      // For clips, just stay at the end (don't loop)
+    } else {
+      console.log('[StreamingVideoPlayer] Video ended - looping back to start');
+      // Reset to beginning and continue playing for full videos
+      this.video.currentTime = 0;
+      this.video.play().catch(error => {
+        console.log('[StreamingVideoPlayer] Loop playback failed:', error);
+      });
+    }
 
     // Dispatch custom event for clip end (useful for sequential playback)
     this.video.dispatchEvent(new CustomEvent('clipended', {

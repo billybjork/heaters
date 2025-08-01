@@ -7,7 +7,7 @@ defmodule Heaters.Infrastructure.Orchestration.FFmpegConfig do
 
   Each profile is optimized for its specific use case:
   - **master**: Lossless archival quality stored in S3 Glacier (cold storage)
-  - **proxy**: All-I-frame seeking optimization for WebCodecs review AND final export source
+  - **proxy**: All-I-frame seeking optimization for review AND final export source
   - **download_normalization**: Lightweight fixing of merge issues
   - **keyframe_extraction**: Efficient single-frame extraction
 
@@ -17,7 +17,7 @@ defmodule Heaters.Infrastructure.Orchestration.FFmpegConfig do
   Used only for true archival/compliance purposes, not regular exports.
 
   **Proxy**: Stored in S3 Standard for instant access. High quality (CRF 20) all-I-frame
-  encoding serves dual purpose: efficient WebCodecs review AND superior export source.
+  encoding serves dual purpose: efficient review AND superior export source.
 
   **Export Strategy**: Final clips are created via FFmpeg stream copy from proxy,
   providing zero quality loss and 10x faster processing with superior CRF 20 quality.

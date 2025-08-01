@@ -22,7 +22,7 @@ Creates MP4 files optimized for streaming/delivery using stream copy for maximum
 
 **Export Method:**
 Uses FFmpeg stream copy (`-c copy`) with S3 presigned URLs for optimal I/O efficiency:
-- Direct byte-range access to proxy files (no full download required)
+- Direct byte-range access to proxy files for efficient processing
 - Leverages :moov atom positioning (faststart) for instant seeking
 - Preserves exact quality while achieving 10x performance improvement
 
@@ -74,7 +74,7 @@ def run_export_clips(proxy_path: str, clips_data: list, source_video_id: int, vi
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_dir_path = Path(temp_dir)
             
-            # Generate presigned URL for efficient byte-range access
+            # Generate presigned URL for efficient access
             proxy_url = generate_presigned_url(proxy_path, expires_in=3600)
             
             # Extract video metadata from proxy (still needs local access for reliable metadata)
@@ -132,7 +132,7 @@ def export_single_clip(proxy_url: str, clip_data: dict, temp_dir: Path, video_ti
     Export a single clip from the proxy using cut points with stream copy for maximum quality.
     
     Uses FFmpeg stream copy with S3 presigned URL for optimal I/O efficiency:
-    - Direct byte-range access to S3 via presigned URL (no full download)
+    - Direct access to S3 via presigned URL (no full download)
     - Leverages :moov atom at file start (faststart) for instant seeking  
     - Preserves exact quality from proxy (CRF 20)
     - 10x faster than re-encoding approaches
