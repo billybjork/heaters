@@ -393,35 +393,20 @@ def normalize_video(input_path: Path, output_path: Path, normalize_args: list = 
                             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", 
                             "-movflags", "+faststart", "-f", "mp4"]
         
+        # Extract video duration for progress calculation
+        duration = extract_video_duration(input_path)
+        
         cmd = ["ffmpeg", "-i", str(input_path)] + normalize_args + ["-y", str(output_path)]
         
         logger.info(f"Starting normalization: {input_path.name}")
         logger.info(f"Input file size: {input_path.stat().st_size:,} bytes")
+        logger.info(f"Video duration: {duration:.2f} seconds")
         
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            universal_newlines=True
-        )
+        # Run FFmpeg with progress reporting
+        success = run_ffmpeg_with_progress(cmd, duration, "Normalization")
         
-        # Read stderr for progress information
-        stderr_output = []
-        while process.poll() is None:
-            line = process.stderr.readline()
-            if line:
-                stderr_output.append(line.strip())
-                if "time=" in line and "fps=" in line:
-                    logger.info(f"Normalization progress: {line.strip()}")
-        
-        return_code = process.wait()
-        
-        if return_code != 0:
-            logger.error(f"Normalization failed with return code {return_code}")
-            logger.error(f"FFmpeg stderr: {' '.join(stderr_output[-5:])}")
-            raise NormalizationError(f"FFmpeg normalization failed with return code {return_code}")
+        if not success:
+            raise NormalizationError("FFmpeg normalization failed")
         
         if not output_path.exists():
             raise NormalizationError(f"Normalized file was not created: {output_path}")
@@ -436,6 +421,78 @@ def normalize_video(input_path: Path, output_path: Path, normalize_args: list = 
     except Exception as e:
         logger.error(f"Normalization exception: {e}")
         raise NormalizationError(f"Normalization failed: {e}")
+
+
+def extract_video_duration(video_path: Path) -> float:
+    """Extract video duration using ffprobe"""
+    try:
+        cmd = [
+            "ffprobe", "-v", "quiet", "-print_format", "json", 
+            "-show_format", str(video_path)
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        data = json.loads(result.stdout)
+        return float(data["format"].get("duration", 0))
+    except Exception as e:
+        logger.warning(f"Failed to extract video duration: {e}")
+        return 0.0
+
+
+def run_ffmpeg_with_progress(cmd: list, duration: float, operation_name: str) -> bool:
+    """Run FFmpeg command with real-time progress reporting"""
+    try:
+        # Add progress reporting to stderr
+        cmd_with_progress = cmd + ["-progress", "pipe:2"]
+        
+        process = subprocess.Popen(
+            cmd_with_progress,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            universal_newlines=True
+        )
+        
+        # Read stderr for progress updates
+        while process.poll() is None:
+            line = process.stderr.readline()
+            if line and duration > 0:
+                if "out_time=" in line:
+                    try:
+                        time_str = line.split("out_time=")[1].split()[0]
+                        current_seconds = parse_time_string(time_str)
+                        progress = min(100, int((current_seconds / duration) * 100))
+                        if progress > 0 and progress % 10 == 0:  # Log every 10%
+                            logger.info(f"{operation_name}: {progress}% complete")
+                    except:
+                        pass
+        
+        return_code = process.wait()
+        
+        if return_code == 0:
+            logger.info(f"{operation_name}: Completed successfully")
+            return True
+        else:
+            logger.error(f"{operation_name}: FFmpeg failed with return code {return_code}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"{operation_name}: Exception running FFmpeg: {e}")
+        return False
+
+
+def parse_time_string(time_str: str) -> float:
+    """Parse time string in format HH:MM:SS.mmm to seconds"""
+    try:
+        parts = time_str.split(":")
+        if len(parts) == 3:
+            hours = float(parts[0])
+            minutes = float(parts[1])
+            seconds = float(parts[2])
+            return hours * 3600 + minutes * 60 + seconds
+        return 0.0
+    except:
+        return 0.0
 
 
 def extract_video_metadata(video_path: Path) -> dict:

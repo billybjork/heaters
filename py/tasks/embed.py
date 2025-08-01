@@ -252,16 +252,21 @@ def run_embed(
             
             # Step 2: Generate embeddings for each keyframe
             embeddings = []
+            total_keyframes = len(local_image_paths)
             for i, image_path in enumerate(local_image_paths):
-                logger.info(f"Generating embedding for keyframe {i+1}/{len(local_image_paths)}")
+                progress_percentage = int(((i + 1) / total_keyframes) * 100)
+                logger.info(f"Embedding generation: {progress_percentage}% complete ({i+1}/{total_keyframes} keyframes)")
                 embedding = generate_image_embedding(image_path, model, processor, model_type, device)
                 embeddings.append(embedding)
             
             # Step 3: Aggregate embeddings if needed
+            logger.info("Embedding generation: Aggregating embeddings")
             final_embedding = aggregate_embeddings(embeddings, aggregation_method)
             
             # Convert to list for JSON serialization
             embedding_vector = final_embedding.tolist()
+            
+            logger.info("Embedding generation: 100% complete")
             
             # Return structured data for Elixir to process
             return {

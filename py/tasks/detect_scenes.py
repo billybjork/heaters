@@ -151,16 +151,16 @@ def detect_scene_cuts(cap: cv2.VideoCapture, threshold: float, method: str, tota
         prev_hist = current_hist
         frame_num += 1
         
-        # Log progress every 5% (following ingest pattern)
+        # Log progress every 10% (consistent with other tasks)
         if total_frames > 0:
             current_percentage = int((frame_num / total_frames) * 100)
-            if current_percentage >= last_logged_percentage + 5 and current_percentage < 100:
-                print(f"Scene detection: {current_percentage}% complete ({frame_num}/{total_frames} frames)")
+            if current_percentage >= last_logged_percentage + 10 and current_percentage < 100:
+                logger.info(f"Scene detection: {current_percentage}% complete ({frame_num}/{total_frames} frames)")
                 last_logged_percentage = current_percentage
     
     # Log completion
     if total_frames > 0:
-        print(f"Scene detection: 100% complete ({frame_num}/{total_frames} frames)")
+        logger.info(f"Scene detection: 100% complete ({frame_num}/{total_frames} frames)")
     
     # Add final frame
     if frame_num > 0 and cut_frames[-1] != frame_num:

@@ -461,6 +461,15 @@ defmodule Heaters.Clips.Shared.FFmpegRunner do
       timestamps
       |> Enum.with_index()
       |> Enum.map(fn {timestamp, index} ->
+        # Log progress for each keyframe extraction
+        progress_percentage = trunc(index / length(timestamps) * 100)
+
+        if progress_percentage > 0 and rem(progress_percentage, 25) == 0 do
+          Logger.info(
+            "Keyframe extraction: #{progress_percentage}% complete (#{index + 1}/#{length(timestamps)} keyframes)"
+          )
+        end
+
         extract_single_keyframe_at_timestamp(
           video_path,
           output_dir,
@@ -474,6 +483,10 @@ defmodule Heaters.Clips.Shared.FFmpegRunner do
     # Check if any extractions failed
     case Enum.find(results, fn result -> match?({:error, _}, result) end) do
       nil ->
+        Logger.info(
+          "Keyframe extraction: 100% complete (#{length(timestamps)}/#{length(timestamps)} keyframes)"
+        )
+
         {:ok, Enum.map(results, fn {:ok, keyframe_data} -> keyframe_data end)}
 
       {:error, reason} ->
