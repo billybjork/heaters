@@ -89,6 +89,13 @@ Unified agent guidance for working with this codebase. See `lib/heaters/README.m
 - **LiveView patterns**: Follow Phoenix LiveView conventions for state management
 - **CSS classes**: Use semantic class names, prefer utility-first approach
 
+### Frontend Styling Guidelines
+- **No Tailwind CSS**: Do not use Tailwind CSS or any utility-first CSS frameworks
+- **Custom CSS**: Use traditional CSS with semantic class names and component-based styling
+- **CSS organization**: Keep styles in `assets/css/` directory with logical file organization
+- **Component styling**: Prefer scoped CSS classes that describe the component's purpose
+- **Responsive design**: Use standard CSS media queries and flexbox/grid for layouts
+
 ### Database Patterns
 - **Migrations**: Always review existing schema before proposing changes
 - **Queries**: Use Ecto.Query for complex queries, prefer composable functions
