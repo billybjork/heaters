@@ -4,14 +4,15 @@ defmodule HeatersWeb.Nav do
   use Phoenix.Component
   # <─ supplies the ~p sigil
   use HeatersWeb, :verified_routes
-  alias Heaters.Clips.Queries, as: ClipQueries
 
   # handy later for an "active" class; not used yet
   attr(:current_path, :string, required: true)
 
   def nav(assigns) do
     assigns =
-      assign_new(assigns, :pending_count, fn -> ClipQueries.pending_review_count() end)
+      assign_new(assigns, :pending_count, fn ->
+        Heaters.Media.Queries.Clip.pending_review_count()
+      end)
 
     ~H"""
     <header class="site-nav">

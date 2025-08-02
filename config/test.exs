@@ -45,7 +45,7 @@ config :logger, level: :warning
 config :phoenix, :plug_init_mode, :runtime
 
 # Configure PyRunner for testing
-config :heaters, Heaters.Infrastructure.PyRunner,
+config :heaters, Heaters.Processing.Py.Runner,
   python_executable: "/usr/bin/env python3",
   working_dir: System.tmp_dir!(),
   runner_script: "test/fixtures/mock_runner.py"

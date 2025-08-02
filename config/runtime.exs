@@ -301,8 +301,7 @@ if config_env() == :prod do
     if "default" in String.split(queues_str, ",", trim: true) do
       [
         Oban.Plugins.Pruner,
-        {Oban.Plugins.Cron,
-         crontab: [{"* * * * *", Heaters.Infrastructure.Orchestration.Dispatcher}]}
+        {Oban.Plugins.Cron, crontab: [{"* * * * *", Heaters.Pipeline.Dispatcher}]}
       ]
     else
       [Oban.Plugins.Pruner]
@@ -331,7 +330,7 @@ if config_env() == :prod do
         end
       end)
 
-  config :heaters, Heaters.Infrastructure.PyRunner,
+  config :heaters, Heaters.Processing.Py.Runner,
     python_executable: python_exe,
     working_dir: working_dir,
     runner_script: "py/runner.py"

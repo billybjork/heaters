@@ -115,7 +115,7 @@ config :heaters, Oban,
   plugins: [
     {Oban.Plugins.Cron,
      crontab: [
-       {"* * * * *", Heaters.Infrastructure.Orchestration.Dispatcher}
+       {"* * * * *", Heaters.Pipeline.Dispatcher}
      ]}
   ],
   queues: [
@@ -143,7 +143,7 @@ python_executable =
     Path.join(Path.expand("."), "py/venv/bin/python")
   end
 
-config :heaters, Heaters.Infrastructure.PyRunner,
+config :heaters, Heaters.Processing.Py.Runner,
   python_executable: python_executable,
   working_dir: if(in_docker, do: "/app", else: Path.expand(".")),
   runner_script: "py/runner.py"

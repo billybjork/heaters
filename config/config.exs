@@ -12,7 +12,7 @@ config :heaters, Oban,
     {Oban.Plugins.Cron,
      crontab: [
        # Every 60 seconds, run the Dispatcher worker
-       {"* * * * *", Heaters.Infrastructure.Orchestration.Dispatcher}
+       {"* * * * *", Heaters.Pipeline.Dispatcher}
      ]}
   ],
   queues: [
@@ -62,8 +62,11 @@ config :phoenix, :json_library, Jason
 config :elixir, :warnings_as_errors, false
 config :elixir, :ansi_enabled, true
 
+# Configure database port
+config :heaters, :repo_port, Heaters.Database.EctoAdapter
+
 # Configure PyRunner paths and executables
-config :heaters, Heaters.Infrastructure.PyRunner,
+config :heaters, Heaters.Processing.Py.Runner,
   python_executable: System.get_env("PYTHON_EXECUTABLE") || "python3",
   working_dir: System.get_env("PYTHON_WORKING_DIR") || File.cwd!(),
   runner_script: "py/runner.py"

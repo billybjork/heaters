@@ -5,8 +5,9 @@ defmodule HeatersWeb.ReviewLive do
   # Components / helpers
   import HeatersWeb.StreamingVideoPlayer, only: [streaming_video_player: 1]
 
-  alias Heaters.Clips.Review, as: ClipReview
-  alias Heaters.Clips.Clip
+  alias Heaters.Review.Queue, as: ClipReview
+  alias Heaters.Review.Actions, as: ClipActions
+  alias Heaters.Media.Clip
 
   # 1 current + 5 future
   @prefetch 6
@@ -108,7 +109,7 @@ defmodule HeatersWeb.ReviewLive do
 
   defp persist_async(socket, clip_id, action) do
     Phoenix.LiveView.start_async(socket, {:persist, clip_id}, fn ->
-      ClipReview.select_clip_and_fetch_next(%Clip{id: clip_id}, action)
+      ClipActions.select_clip_and_fetch_next(%Clip{id: clip_id}, action)
     end)
   end
 
@@ -189,7 +190,7 @@ defmodule HeatersWeb.ReviewLive do
       ) do
     require Logger
     Logger.info("ReviewLive: Received temp_ready for clip #{clip_id}, path: #{path}")
-    
+
     # Send event to JavaScript hook to update the video player
     result = push_event(socket, "temp_clip_ready", %{clip_id: clip_id, path: path})
     Logger.info("ReviewLive: Sent push_event temp_clip_ready")

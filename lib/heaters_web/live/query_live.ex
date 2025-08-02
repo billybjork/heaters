@@ -1,9 +1,9 @@
 defmodule HeatersWeb.QueryLive do
   use HeatersWeb, :live_view
 
-  alias Heaters.Clips.Embeddings, as: ClipEmbed
-  alias Heaters.Clips.Queries, as: ClipQueries
-  alias Heaters.Clips.Clip
+  alias Heaters.Processing.Embeddings, as: ClipEmbed
+  alias Heaters.Media.Queries.Clip, as: ClipQueries
+  alias Heaters.Media.Clip
 
   # How many similar clips per page
   @per_page 12

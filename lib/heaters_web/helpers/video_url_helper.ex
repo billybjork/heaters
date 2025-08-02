@@ -118,12 +118,14 @@ defmodule HeatersWeb.VideoUrlHelper do
 
   # Private function for virtual clip URL generation
   defp build_virtual_clip_url(clip, source_video) do
-    if Mix.env() == :dev do
+    if Application.get_env(:heaters, :env, :prod) == :dev do
       # Development: Generate temp file immediately
-      case Heaters.Clips.TempClip.build(Map.put(clip, :source_video, source_video)) do
+      case Heaters.Storage.PlaybackCache.TempClip.build(
+             Map.put(clip, :source_video, source_video)
+           ) do
         {:ok, file_url} ->
           {:ok, file_url, :direct_s3}
-          
+
         {:error, reason} ->
           {:error, reason}
       end
@@ -151,8 +153,6 @@ defmodule HeatersWeb.VideoUrlHelper do
     # For now, return loading state
     {:loading, nil}
   end
-
-
 
   defp extract_s3_key(s3_path) do
     case String.starts_with?(s3_path, "s3://") do

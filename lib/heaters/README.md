@@ -49,8 +49,8 @@ The video review interface uses a **tiny-file approach** that generates small MP
 - ✅ **Mobile Optimized**: Touch controls and timeline scrubbing work perfectly
 
 **Architecture Components**:
-- **`TempClip`**: Generates temporary clips in development using local proxy files
-- **`ClipExporter`**: Handles production export with S3 upload and database tracking
+- **`Storage.PlaybackCache.TempClip`**: Generates temporary clips in development using local proxy files
+- **`Processing.Render.Export`**: Handles production export with S3 upload and database tracking
 - **`StreamingVideoPlayer`**: JavaScript component providing consistent playback experience
 - **`VideoUrlHelper`**: Manages URL generation and routing between development/production modes
 
@@ -59,7 +59,7 @@ This approach eliminates the complexity and pain points of Media Fragments (byte
 ## Architecture Principles
 
 - **Functional Domain Modeling & "I/O at the Edges"**: All business logic is implemented as pure, testable functions, isolated from side effects. I/O operations (database, S3, FFmpeg, Python tasks) are handled only at the boundaries of the system, in orchestration or adapter modules. This separation ensures code is predictable, easy to test, and maintainable, with clear boundaries between pure logic and external effects.
-- **Declarative Pipeline Configuration**: Complete workflow defined as data in `PipelineConfig.stages()`, making it easy to see, modify, and test the entire pipeline flow without touching worker code.
+- **Declarative Pipeline Configuration**: Complete workflow defined as data in `Pipeline.Config.stages()`, making it easy to see, modify, and test the entire pipeline flow without touching worker code.
 - **Performance-First Optimizations**: Temp cache system eliminates 78% of S3 operations; direct job chaining eliminates dispatcher latency for FLAME environments.
 - **Semantic Organization**: Clear distinction between user edits and automated artifacts
 - **Direct Action Execution**: Review actions execute immediately; only simple UI-level undo (Ctrl+Z) remains
@@ -93,29 +93,31 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 ### Direct Job Chaining
 - **Zero Dispatcher Latency**: Workers directly invoke next stage workers upon completion
 - **FLAME Environment Optimized**: Reduces pipeline latency from 3 minutes to milliseconds
-- **Configuration-Driven**: All chaining logic defined in `PipelineConfig.stages()` with condition functions
+- **Configuration-Driven**: All chaining logic defined in `Pipeline.Config.stages()` with condition functions
 - **Graceful Fallback**: Failed chaining falls back to Oban-based processing
-- **Centralized Logic**: All chaining handled in `PipelineConfig.maybe_chain_next_job()`
+- **Centralized Logic**: All chaining handled in `Pipeline.Config.maybe_chain_next_job()`
 
 **Chaining Stages**:
 - Download → Preprocess (when download completes successfully)
-- Preprocess → Scene Detection (when preprocessing completes and splicing is needed)
-- Scene Detection → Cache Finalization (when scene detection completes)
+- Preprocess → Detect Scenes (when preprocessing completes and splicing is needed)
+- Detect Scenes → Upload Cache (when scene detection completes)
 - Other stages use standard Oban job scheduling
 
 ## Key Design Decisions
 
-### Enhanced Virtual Clips Organization
+### Context-Oriented Organization
 
-- **`virtual_clips/`**: Virtual clip management (core, cut point ops, MECE validation, audit trail)
-- **`artifacts/`**: Artifact management and S3 path utilities
-- **`shared/`**: Cross-context utilities (error handling)
-- **`export/`**: Final encoding/export
+- **`Media`**: Domain entities (clips, videos, virtual clips, artifacts) with CQRS separation (queries/, commands/)
+- **`Processing`**: All automated processing stages (download/, preprocess/, detect_scenes/, render/, keyframes/, embeddings/, py/)
+- **`Storage`**: All storage concerns with context separation (pipeline_cache/, playback_cache/, archive/, s3.ex)
+- **`Review`**: Human workflow (queue management, review actions)
+- **`Database`**: Persistence layer with ports & adapters pattern
+- **`Pipeline`**: Declarative orchestration configuration
 
 ### Centralized Media Processing Configuration
 
-- **FFmpeg Configuration**: All encoding profiles and settings managed in `FFmpegConfig` for consistency and maintainability
-- **yt-dlp Configuration**: All download strategies, format options, and quality settings managed in `YtDlpConfig` with validation
+- **FFmpeg Configuration**: All encoding profiles and settings managed in `Processing.Render.FFmpegConfig` for consistency and maintainability
+- **yt-dlp Configuration**: All download strategies, format options, and quality settings managed in `Processing.Download.YtDlpConfig` with validation
 - **"Dumb Python" Architecture**: Python tasks receive complete configuration from Elixir and focus purely on execution
 
 ### Direct Action Execution
@@ -142,10 +144,13 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 
 ## Context Responsibilities
 
-- **`Videos`**: Source video lifecycle (download, preprocess, detect scenes, cache finalization)
-- **`Clips`**: Virtual clip management, review workflow, artifact management, tiny-file generation (`TempClip`), export
-- **`Infrastructure`**: I/O adapters (S3, FFmpeg, Python), temp cache system, declarative configuration (`PipelineConfig`, `FFmpegConfig`, `YtDlpConfig`), worker behaviors
-- **Python Tasks**: Focused execution of media processing, scene detection, S3 operations with configuration provided by Elixir
+- **`Media`**: Pure domain entities (videos, clips, virtual clips, artifacts) and domain helpers
+- **`Review`**: Human-driven review workflow (queues, LiveView helpers, actions)
+- **`Processing`**: Automated CPU work (download → preprocess → detect_scenes → render/export → keyframes → embeddings)
+- **`Storage`**: All storage concerns (temp cache, S3 adapters, archive, temp dirs, playback cache for tiny-file generation)
+- **`Database`**: Database operations and persistence layer (repo port, ecto adapter)
+- **`Pipeline`**: Declarative orchestration metadata & helpers (stage map, dispatcher, worker behaviour)
+- **`Python Tasks`**: Focused execution of media processing, scene detection, S3 operations with configuration provided by Elixir
 
 ## Production Reliability Features
 
@@ -172,10 +177,10 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 
 The system uses a **quality-first download strategy** with robust fallback mechanisms to ensure best possible video quality (including 4K/8K when available).
 
-⚠️  **CRITICAL**: All download configuration is now centralized in `YtDlpConfig` with built-in validation to prevent quality-reducing mistakes. Do not modify format strings or client configurations without reviewing the module documentation.
+⚠️  **CRITICAL**: All download configuration is now centralized in `Processing.Download.YtDlpConfig` with built-in validation to prevent quality-reducing mistakes. Do not modify format strings or client configurations without reviewing the module documentation.
 
 **Architecture**:
-- **Configuration**: Complete yt-dlp setup managed in `YtDlpConfig` module
+- **Configuration**: Complete yt-dlp setup managed in `Processing.Download.YtDlpConfig` module
 - **Execution**: Python task receives configuration and focuses on execution only
 - **Validation**: Built-in checks prevent configurations that reduce quality from 4K to 360p
 
