@@ -1,24 +1,29 @@
 defmodule Heaters.Media.Videos do
   @moduledoc """
-  All operations for `Heaters.Media.Video` domain objects.
+  Core domain operations for `Heaters.Media.Video` objects.
 
-  This module consolidates all video-related business operations (both reads and writes)
-  into a single, cohesive interface. The actual schema definition remains in 
-  `Heaters.Media.Video`.
+  This module consolidates video domain operations into a single, cohesive interface.
+  The actual schema definition remains in `Heaters.Media.Video`.
+
+  ## When to Add Functions Here
+
+  - **CRUD Operations**: Creating, reading, updating videos
+  - **Domain State Management**: Video state transitions, cache finalization
+  - **Business Logic**: Video submission workflow, URL validation
+  - **Generic Queries**: Simple state-based queries (`get_videos_by_state`)
+
+  ## When NOT to Add Functions Here
+
+  - **Pipeline Orchestration**: Queries for pipeline stage discovery → `Pipeline.Queries`
+  - **Processing-Specific**: Single processing stage queries → respective processing modules
+  - **Review Workflow**: Video review operations → `Review` context
 
   ## Design Philosophy
 
   - **Schema Separation**: `Heaters.Media.Video` defines the data structure
-  - **Operations Consolidation**: This module (`Videos`) provides all business operations
-  - **Pragmatic Approach**: Consolidates operations while maintaining clear organization
-  - **Single Import**: `alias Heaters.Media.Videos` provides access to all video operations
-
-  ## Function Organization
-
-  - **CRUD Operations**: Basic create, read, update functions
-  - **State Management**: Pipeline state transitions and cache finalization
-  - **Query Functions**: Specialized queries for pipeline stages and resumable processing
-  - **Submit Operations**: Video submission and ingestion workflow
+  - **Domain Focus**: This module provides core video business operations
+  - **Pure Domain Logic**: No pipeline orchestration or workflow-specific concerns
+  - **Single Import**: `alias Heaters.Media.Videos` provides access to video domain operations
 
   All DB interaction goes through `Heaters.Repo`, keeping "I/O at the edges".
   """
@@ -33,7 +38,7 @@ defmodule Heaters.Media.Videos do
   # ---------------------------------------------------------------------------
 
   @doc """
-  Get a source video by ID. 
+  Get a source video by ID.
   Returns {:ok, source_video} if found, {:error, :not_found} otherwise.
   """
   @spec get_source_video(integer()) :: {:ok, Video.t()} | {:error, :not_found}
@@ -103,61 +108,6 @@ defmodule Heaters.Media.Videos do
   @spec get_videos_by_state(String.t()) :: [Video.t()]
   def get_videos_by_state(state) when is_binary(state) do
     from(s in Video, where: s.ingest_state == ^state)
-    |> Repo.all()
-  end
-
-  @doc """
-  Get all source videos that need ingest processing (new, downloading, or download_failed).
-  This enables resumable processing of interrupted jobs.
-  """
-  @spec get_videos_needing_ingest() :: [Video.t()]
-  def get_videos_needing_ingest() do
-    states = ["new", "downloading", "download_failed"]
-
-    from(s in Video, where: s.ingest_state in ^states)
-    |> Repo.all()
-  end
-
-  @doc """
-  Get all source videos that need preprocessing (downloaded without proxy_filepath).
-  This enables resumable processing of interrupted jobs.
-  """
-  @spec get_videos_needing_preprocessing() :: [Video.t()]
-  def get_videos_needing_preprocessing() do
-    from(s in Video,
-      where: s.ingest_state == "downloaded" and is_nil(s.proxy_filepath)
-    )
-    |> Repo.all()
-  end
-
-  @doc """
-  Get all source videos that need scene detection (preprocessed with needs_splicing = true).
-  This enables resumable processing of interrupted jobs.
-  """
-  @spec get_videos_needing_scene_detection() :: [Video.t()]
-  def get_videos_needing_scene_detection() do
-    from(s in Video,
-      where: not is_nil(s.proxy_filepath) and s.needs_splicing == true
-    )
-    |> Repo.all()
-  end
-
-  @doc """
-  Get all source videos that need cache finalization.
-
-  Videos need cache finalization if:
-  - Scene detection is complete (needs_splicing = false)
-  - Cache has not been finalized yet (cache_finalized_at is null)
-  - Has files that might be cached (has filepath, proxy_filepath, or master_filepath)
-  """
-  @spec get_videos_needing_cache_finalization() :: [Video.t()]
-  def get_videos_needing_cache_finalization() do
-    from(s in Video,
-      where:
-        s.needs_splicing == false and
-          is_nil(s.cache_finalized_at) and
-          (not is_nil(s.filepath) or not is_nil(s.proxy_filepath) or not is_nil(s.master_filepath))
-    )
     |> Repo.all()
   end
 

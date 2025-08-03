@@ -56,8 +56,8 @@ defmodule Heaters.Pipeline.Config do
   - Other stages use standard Oban job scheduling
   """
 
-  alias Heaters.Media.Videos
   alias Heaters.Media.Clips
+  alias Heaters.Pipeline.Queries, as: PipelineQueries
   alias Heaters.Processing.Download.Worker, as: DownloadWorker
   alias Heaters.Processing.Preprocess.Worker, as: PreprocessWorker
   alias Heaters.Processing.DetectScenes.Worker, as: DetectScenesWorker
@@ -85,7 +85,7 @@ defmodule Heaters.Pipeline.Config do
       # Stage 1: Download (chains to preprocessing)
       %{
         label: "videos needing download",
-        query: fn -> Videos.get_videos_needing_ingest() end,
+        query: fn -> PipelineQueries.get_videos_needing_ingest() end,
         build: fn video -> DownloadWorker.new(%{source_video_id: video.id}) end,
         next_stage: %{
           worker: PreprocessWorker,
@@ -99,7 +99,7 @@ defmodule Heaters.Pipeline.Config do
       # Stage 2: Preprocess (chains to scene detection)
       %{
         label: "videos needing preprocessing → proxy generation",
-        query: fn -> Videos.get_videos_needing_preprocessing() end,
+        query: fn -> PipelineQueries.get_videos_needing_preprocessing() end,
         build: fn video -> PreprocessWorker.new(%{source_video_id: video.id}) end,
         next_stage: %{
           worker: DetectScenesWorker,
@@ -115,7 +115,7 @@ defmodule Heaters.Pipeline.Config do
       # Stage 3: Scene detection (chains to cache upload)
       %{
         label: "videos needing scene detection → virtual clips",
-        query: fn -> Videos.get_videos_needing_scene_detection() end,
+        query: fn -> PipelineQueries.get_videos_needing_scene_detection() end,
         build: fn video -> DetectScenesWorker.new(%{source_video_id: video.id}) end,
         next_stage: %{
           worker: UploadCacheWorker,
@@ -133,7 +133,7 @@ defmodule Heaters.Pipeline.Config do
       # Stage 4: Cache upload (no chaining - end of video processing)
       %{
         label: "videos needing cache upload → S3 upload",
-        query: fn -> Videos.get_videos_needing_cache_finalization() end,
+        query: fn -> PipelineQueries.get_videos_needing_cache_finalization() end,
         build: fn video -> UploadCacheWorker.new(%{source_video_id: video.id}) end
         # No next_stage - this is the end of the video processing pipeline
       },
@@ -141,7 +141,7 @@ defmodule Heaters.Pipeline.Config do
       # Stage 5: Rolling Export (virtual clips → physical clips)
       %{
         label: "approved virtual clips → rolling export",
-        query: fn -> Clips.get_virtual_clips_ready_for_export() end,
+        query: fn -> PipelineQueries.get_virtual_clips_ready_for_export() end,
         build: fn clip ->
           ExportWorker.new(%{
             clip_id: clip.id,
@@ -153,14 +153,14 @@ defmodule Heaters.Pipeline.Config do
       # Stage 6: Keyframes (operates on exported physical clips)
       %{
         label: "exported clips needing keyframes",
-        query: fn -> Clips.get_clips_needing_keyframes() end,
+        query: fn -> PipelineQueries.get_clips_needing_keyframes() end,
         build: fn clip -> KeyframeWorker.new(%{clip_id: clip.id, strategy: "multi"}) end
       },
 
       # Stage 7: Embeddings (operates on keyframed clips)
       %{
         label: "keyframed clips needing embeddings",
-        query: fn -> Clips.get_clips_needing_embeddings() end,
+        query: fn -> PipelineQueries.get_clips_needing_embeddings() end,
         build: fn clip ->
           EmbeddingWorker.new(%{
             clip_id: clip.id,

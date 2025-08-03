@@ -1,25 +1,30 @@
 defmodule Heaters.Media.Clips do
   @moduledoc """
-  All operations for `Heaters.Media.Clip` domain objects.
+  Core domain operations for `Heaters.Media.Clip` objects.
 
-  This module consolidates all clip-related business operations (both reads and writes)
-  into a single, cohesive interface. The actual schema definition remains in 
-  `Heaters.Media.Clip`.
+  This module consolidates clip domain operations into a single, cohesive interface.
+  The actual schema definition remains in `Heaters.Media.Clip`.
+
+  ## When to Add Functions Here
+
+  - **CRUD Operations**: Creating, reading, updating, deleting clips
+  - **State Management**: Clip state transitions and failure handling
+  - **Domain Validation**: Business logic validation (existence checks, state validation)
+  - **Bulk Operations**: Batch processing of clips
+  - **Generic Queries**: Simple state-based queries (`get_clips_by_state`)
+
+  ## When NOT to Add Functions Here
+
+  - **Pipeline Orchestration**: Queries for pipeline stage discovery → `Pipeline.Queries`
+  - **Review Workflow**: Queue management, review counts → `Review.Queue`
+  - **Processing-Specific**: Single processing stage queries → respective processing modules
 
   ## Design Philosophy
 
   - **Schema Separation**: `Heaters.Media.Clip` defines the data structure
-  - **Operations Consolidation**: This module (`Clips`) provides all business operations
-  - **Pragmatic Approach**: Consolidates operations while maintaining clear organization
-  - **Single Import**: `alias Heaters.Media.Clips` provides access to all clip operations
-
-  ## Function Organization
-
-  - **CRUD Operations**: Basic create, read, update, delete functions
-  - **State Management**: State transitions and failure handling
-  - **Bulk Operations**: Batch processing and bulk database operations  
-  - **Query Functions**: Specialized queries for pipeline stages
-  - **Validation**: Data validation and existence checks
+  - **Domain Focus**: This module provides core clip business operations
+  - **Pure Domain Logic**: No pipeline orchestration or workflow-specific concerns
+  - **Single Import**: `alias Heaters.Media.Clips` provides access to clip domain operations
 
   All DB interaction goes through `Heaters.Repo`, keeping "I/O at the edges".
   """
@@ -190,67 +195,6 @@ defmodule Heaters.Media.Clips do
   def get_clips_by_state(state) when is_binary(state) do
     from(c in Clip, where: c.ingest_state == ^state)
     |> Repo.all()
-  end
-
-  @doc """
-  Get all clips that need keyframe extraction (review_approved, keyframing, or keyframe_failed).
-  This enables resumable processing of interrupted jobs.
-  """
-  @spec get_clips_needing_keyframes() :: [Clip.t()]
-  def get_clips_needing_keyframes() do
-    states = ["review_approved", "keyframing", "keyframe_failed"]
-
-    from(c in Clip, where: c.ingest_state in ^states)
-    |> Repo.all()
-  end
-
-  @doc """
-  Get all clips that need embedding generation (keyframed, embedding, or embedding_failed).
-  This enables resumable processing of interrupted jobs.
-  """
-  @spec get_clips_needing_embeddings() :: [Clip.t()]
-  def get_clips_needing_embeddings() do
-    states = ["keyframed", "embedding", "embedding_failed"]
-
-    from(c in Clip, where: c.ingest_state in ^states)
-    |> Repo.all()
-  end
-
-  @doc """
-  Get all virtual clips that are ready for export (review_approved state).
-  This enables the export worker to find approved virtual clips for final encoding.
-  """
-  @spec get_virtual_clips_ready_for_export() :: [Clip.t()]
-  def get_virtual_clips_ready_for_export() do
-    from(c in Clip,
-      where: c.is_virtual == true and c.ingest_state == "review_approved"
-    )
-    |> Repo.all()
-  end
-
-  @doc """
-  Get all source videos that have approved virtual clips ready for export.
-  This enables the pipeline dispatcher to find source videos with clips to export.
-  """
-  @spec get_source_videos_with_clips_ready_for_export() :: [integer()]
-  def get_source_videos_with_clips_ready_for_export() do
-    from(c in Clip,
-      where: c.is_virtual == true and c.ingest_state == "review_approved",
-      select: c.source_video_id,
-      distinct: true
-    )
-    |> Repo.all()
-  end
-
-  @doc """
-  Fast count of clips still in `pending_review`.
-  """
-  @spec pending_review_count() :: integer()
-  def pending_review_count do
-    Clip
-    |> where([c], c.ingest_state == "pending_review" and is_nil(c.reviewed_at))
-    |> select([c], count("*"))
-    |> Repo.one()
   end
 
   # ---------------------------------------------------------------------------

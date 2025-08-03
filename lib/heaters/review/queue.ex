@@ -1,9 +1,25 @@
 defmodule Heaters.Review.Queue do
   @moduledoc """
-  Review queue management for clips.
+  Review queue management and workflow queries.
 
-  Handles the review queue operations including fetching pending clips
-  and loading clips with their associations.
+  This module handles all aspects of the human review workflow including
+  queue operations, status tracking, and review-specific queries.
+
+  ## When to Add Functions Here
+
+  - **Queue Management**: Fetching pending clips, queue ordering, exclusions
+  - **Review Counts**: Pending review counts, queue status metrics
+  - **Review Workflow**: Human-driven workflow operations and states
+  - **Queue Performance**: Loading clips with associations for review UI
+
+  ## When NOT to Add Functions Here
+
+  - **Core Domain Operations**: Basic clip CRUD, state management → `Media.Clips`
+  - **Pipeline Orchestration**: Stage discovery queries → `Pipeline.Queries`
+  - **Review Actions**: Approve, skip, archive actions → `Review.Actions`
+
+  Focuses specifically on queue management and workflow support for the
+  human review process.
   """
 
   import Ecto.Query, warn: false
@@ -56,5 +72,19 @@ defmodule Heaters.Review.Queue do
     |> limit(^limit)
     |> preload([:source_video, :clip_artifacts])
     |> Repo.all()
+  end
+
+  @doc """
+  Fast count of clips still in `pending_review`.
+
+  This provides an efficient count for queue status displays and
+  review workflow management.
+  """
+  @spec pending_review_count() :: integer()
+  def pending_review_count do
+    Clip
+    |> where([c], c.ingest_state == "pending_review" and is_nil(c.reviewed_at))
+    |> select([c], count("*"))
+    |> Repo.one()
   end
 end

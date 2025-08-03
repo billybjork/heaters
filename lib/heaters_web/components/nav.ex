@@ -5,7 +5,7 @@ defmodule HeatersWeb.Nav do
   # <─ supplies the ~p sigil
   use HeatersWeb, :verified_routes
 
-  alias Heaters.Media.Clips
+  alias Heaters.Review.Queue
 
   # handy later for an "active" class; not used yet
   attr(:current_path, :string, required: true)
@@ -13,7 +13,7 @@ defmodule HeatersWeb.Nav do
   def nav(assigns) do
     assigns =
       assign_new(assigns, :pending_count, fn ->
-        Clips.pending_review_count()
+        Queue.pending_review_count()
       end)
 
     ~H"""
