@@ -11,7 +11,7 @@ defmodule HeatersWeb.Nav do
   def nav(assigns) do
     assigns =
       assign_new(assigns, :pending_count, fn ->
-        Heaters.Media.Queries.Clip.pending_review_count()
+        Heaters.Media.Clips.pending_review_count()
       end)
 
     ~H"""

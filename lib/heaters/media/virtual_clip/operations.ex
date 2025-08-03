@@ -554,7 +554,7 @@ defmodule Heaters.Media.VirtualClip.Operations do
         }
       end)
 
-    case Heaters.Media.Commands.Clip.create_clips(clips_data) do
+    case Heaters.Media.Clips.create_clips(clips_data) do
       {_count, clips} ->
         Logger.info(
           "VirtualClip.Operations: Successfully created #{length(clips)} virtual clips for source_video_id: #{source_video_id}"

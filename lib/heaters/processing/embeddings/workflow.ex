@@ -11,7 +11,7 @@ defmodule Heaters.Processing.Embeddings.Workflow do
   alias Heaters.Media.Clip
   alias Heaters.Processing.Embeddings.Embedding
   alias Heaters.Processing.Embeddings.Types.EmbedResult
-  alias Heaters.Media.Queries.Clip, as: ClipQueries
+  alias Heaters.Media.Clips
   require Logger
 
   @doc """
@@ -19,7 +19,7 @@ defmodule Heaters.Processing.Embeddings.Workflow do
   """
   @spec start_embedding(integer()) :: {:ok, Clip.t()} | {:error, any()}
   def start_embedding(clip_id) do
-    with {:ok, clip} <- ClipQueries.get_clip(clip_id),
+    with {:ok, clip} <- Clips.get_clip(clip_id),
          :ok <- validate_state_transition(clip.ingest_state, "embedding") do
       update_clip(clip, %{
         ingest_state: "embedding",
@@ -36,7 +36,7 @@ defmodule Heaters.Processing.Embeddings.Workflow do
     start_time = System.monotonic_time()
 
     case Repo.transaction(fn ->
-           with {:ok, clip} <- ClipQueries.get_clip(clip_id),
+           with {:ok, clip} <- Clips.get_clip(clip_id),
                 {:ok, updated_clip} <-
                   update_clip(clip, %{
                     ingest_state: "embedded",
@@ -93,7 +93,7 @@ defmodule Heaters.Processing.Embeddings.Workflow do
   end
 
   def mark_failed(clip_id, failure_state, error_reason) when is_integer(clip_id) do
-    with {:ok, clip} <- ClipQueries.get_clip(clip_id) do
+    with {:ok, clip} <- Clips.get_clip(clip_id) do
       mark_failed(clip, failure_state, error_reason)
     end
   end

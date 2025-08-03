@@ -29,7 +29,7 @@ defmodule Heaters.Media.Artifact.Operations do
 
   alias Heaters.Repo
   alias Heaters.Media.Clip
-  alias Heaters.Media.Queries.Video, as: VideoQueries
+  alias Heaters.Media.Videos
   alias Heaters.Media.Artifact.ClipArtifact
   require Logger
 
@@ -51,7 +51,7 @@ defmodule Heaters.Media.Artifact.Operations do
   @spec build_artifact_prefix(Clip.t(), String.t()) :: String.t()
   def build_artifact_prefix(%Clip{source_video_id: source_video_id}, artifact_type) do
     # Get the source video to access the title
-    case VideoQueries.get_source_video(source_video_id) do
+    case Videos.get_source_video(source_video_id) do
       {:ok, source_video} ->
         sanitized_title = Heaters.Utils.sanitize_filename(source_video.title)
         "clip_artifacts/#{sanitized_title}/#{artifact_type}"

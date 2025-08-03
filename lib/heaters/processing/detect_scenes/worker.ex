@@ -39,7 +39,7 @@ defmodule Heaters.Processing.DetectScenes.Worker do
     unique: [period: 900, fields: [:args]]
 
   alias Heaters.Repo
-  alias Heaters.Media.{Video, Queries}
+  alias Heaters.Media.{Video, Videos}
   alias Heaters.Processing.DetectScenes.StateManager
   alias Heaters.Media.VirtualClip
   alias Heaters.Pipeline.WorkerBehavior
@@ -57,7 +57,7 @@ defmodule Heaters.Processing.DetectScenes.Worker do
       "DetectScenesWorker: Starting scene detection for source_video_id: #{source_video_id}"
     )
 
-    with {:ok, source_video} <- Queries.Video.get_source_video(source_video_id) do
+    with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
       handle_scene_detection(source_video)
     else
       {:error, :not_found} ->

@@ -5,8 +5,7 @@ defmodule Heaters.Storage.Archive.Worker do
     unique: [period: 300, fields: [:args]]
 
   import Ecto.Query, warn: false
-  alias Heaters.Media.Queries.Clip, as: ClipQueries
-  alias Heaters.Media.Commands.Clip, as: ClipCommands
+  alias Heaters.Media.Clips
   alias Heaters.Repo
   alias Heaters.Storage.S3
   alias Heaters.Media.Clip
@@ -19,7 +18,7 @@ defmodule Heaters.Storage.Archive.Worker do
 
   @impl WorkerBehavior
   def handle_work(%{"clip_id" => clip_id}) do
-    with {:ok, clip} <- ClipQueries.get_clip_with_artifacts(clip_id),
+    with {:ok, clip} <- Clips.get_clip_with_artifacts(clip_id),
          :ok <- check_idempotency(clip) do
       # 1. Delete files from S3 using Elixir S3 context
       case S3.delete_clip_and_artifacts(clip) do
@@ -37,7 +36,7 @@ defmodule Heaters.Storage.Archive.Worker do
             "ArchiveWorker: S3 deletion failed for clip #{clip_id}: #{inspect(reason)}"
           )
 
-          ClipCommands.update_clip(clip, %{
+          Clips.update_clip(clip, %{
             ingest_state: "archive_failed",
             last_error: "S3 Deletion Failed: #{inspect(reason)}"
           })

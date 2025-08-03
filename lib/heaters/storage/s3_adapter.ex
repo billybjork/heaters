@@ -11,7 +11,7 @@ defmodule Heaters.Storage.S3Adapter do
 
   alias Heaters.Storage.S3
   alias Heaters.Media.Clip
-  alias Heaters.Media.Queries.Video, as: VideoQueries
+  alias Heaters.Media.Videos
 
   @doc """
   Download a clip's video file to a local directory.
@@ -382,7 +382,7 @@ defmodule Heaters.Storage.S3Adapter do
 
   defp build_artifact_prefix(%Clip{source_video_id: source_video_id}, artifact_type) do
     # Get the source video to access the title
-    case VideoQueries.get_source_video(source_video_id) do
+    case Videos.get_source_video(source_video_id) do
       {:ok, source_video} ->
         sanitized_title = Heaters.Utils.sanitize_filename(source_video.title)
         "clip_artifacts/#{sanitized_title}/#{artifact_type}"

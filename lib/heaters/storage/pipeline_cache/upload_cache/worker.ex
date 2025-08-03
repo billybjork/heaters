@@ -35,8 +35,7 @@ defmodule Heaters.Storage.PipelineCache.UploadCache.Worker do
 
   alias Heaters.Repo
   alias Heaters.Media.Video, as: SourceVideo
-  alias Heaters.Media.Queries.Video, as: Queries
-  alias Heaters.Media.Commands.Video, as: VideoCommand
+  alias Heaters.Media.Videos
   alias Heaters.Pipeline.WorkerBehavior
   alias Heaters.Storage.PipelineCache.CacheArgs
   require Logger
@@ -51,7 +50,7 @@ defmodule Heaters.Storage.PipelineCache.UploadCache.Worker do
       "UploadCacheWorker: Starting cache upload for source_video_id: #{source_video_id}"
     )
 
-    with {:ok, source_video} <- Queries.get_source_video(source_video_id) do
+    with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
       handle_upload(source_video)
     else
       {:error, :not_found} ->
@@ -152,7 +151,7 @@ defmodule Heaters.Storage.PipelineCache.UploadCache.Worker do
   end
 
   defp mark_upload_complete(source_video) do
-    case VideoCommand.update_cache_finalized_at(source_video) do
+    case Videos.update_cache_finalized_at(source_video) do
       {:ok, _updated_video} ->
         Logger.info(
           "UploadCacheWorker: Successfully completed cache upload for video #{source_video.id}"

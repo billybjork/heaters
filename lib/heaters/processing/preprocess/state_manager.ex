@@ -18,7 +18,7 @@ defmodule Heaters.Processing.Preprocess.StateManager do
 
   alias Heaters.Repo
   alias Heaters.Media.Video
-  alias Heaters.Media.Queries.Video, as: VideoQueries
+  alias Heaters.Media.Videos
   require Logger
 
   @doc """
@@ -38,7 +38,7 @@ defmodule Heaters.Processing.Preprocess.StateManager do
   """
   @spec start_preprocessing(integer()) :: {:ok, Video.t()} | {:error, any()}
   def start_preprocessing(source_video_id) do
-    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id),
+    with {:ok, source_video} <- Videos.get_source_video(source_video_id),
          :ok <-
            validate_preprocessing_state_transition(source_video.ingest_state, "preprocessing") do
       update_source_video(source_video, %{
@@ -71,7 +71,7 @@ defmodule Heaters.Processing.Preprocess.StateManager do
   """
   @spec complete_preprocessing(integer(), map()) :: {:ok, Video.t()} | {:error, any()}
   def complete_preprocessing(source_video_id, update_attrs) do
-    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
+    with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
       final_attrs =
         Map.merge(update_attrs, %{
           ingest_state: "preprocessed",
@@ -102,7 +102,7 @@ defmodule Heaters.Processing.Preprocess.StateManager do
   """
   @spec mark_preprocessing_failed(integer(), any()) :: {:ok, Video.t()} | {:error, any()}
   def mark_preprocessing_failed(source_video_id, error_reason) when is_integer(source_video_id) do
-    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
+    with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
       error_message = format_error_message(error_reason)
 
       Logger.error(

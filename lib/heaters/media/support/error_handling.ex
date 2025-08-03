@@ -30,7 +30,7 @@ defmodule Heaters.Media.Support.ErrorHandling do
 
   alias Heaters.Repo
   alias Heaters.Media.Clip
-  alias Heaters.Media.Queries.Clip, as: ClipQueries
+  alias Heaters.Media.Clips
   require Logger
 
   @doc """
@@ -72,7 +72,7 @@ defmodule Heaters.Media.Support.ErrorHandling do
   end
 
   def mark_failed(clip_id, failure_state, error_reason) when is_integer(clip_id) do
-    with {:ok, clip} <- ClipQueries.get_clip(clip_id) do
+    with {:ok, clip} <- Clips.get_clip(clip_id) do
       mark_failed(clip, failure_state, error_reason)
     end
   end

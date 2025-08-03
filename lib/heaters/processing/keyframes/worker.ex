@@ -6,7 +6,7 @@ defmodule Heaters.Processing.Keyframes.Worker do
 
   alias Heaters.Processing.Keyframes.Core
   alias Heaters.Media.Support.Types
-  alias Heaters.Media.Queries.Clip, as: ClipQueries
+  alias Heaters.Media.Clips
   alias Heaters.Pipeline.WorkerBehavior
 
   @complete_states [
@@ -24,7 +24,7 @@ defmodule Heaters.Processing.Keyframes.Worker do
       "KeyframeWorker: Starting keyframe extraction for clip_id: #{clip_id}, strategy: #{strategy}"
     )
 
-    with {:ok, clip} <- ClipQueries.get_clip_with_artifacts(clip_id),
+    with {:ok, clip} <- Clips.get_clip_with_artifacts(clip_id),
          :ok <- check_idempotency(clip) do
       case Core.run_keyframe_extraction(clip_id, strategy) do
         {:ok, %Types.KeyframeResult{status: "success", keyframe_count: count}} ->

@@ -8,7 +8,7 @@ defmodule Heaters.Processing.Download.Core do
 
   alias Heaters.Repo
   alias Heaters.Media.Video, as: SourceVideo
-  alias Heaters.Media.Queries.Video, as: VideoQueries
+  alias Heaters.Media.Videos
   require Logger
 
   defp format_changeset_errors(changeset) do
@@ -34,7 +34,7 @@ defmodule Heaters.Processing.Download.Core do
   """
   @spec start_downloading(integer()) :: {:ok, SourceVideo.t()} | {:error, any()}
   def start_downloading(source_video_id) do
-    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id),
+    with {:ok, source_video} <- Videos.get_source_video(source_video_id),
          :ok <- validate_state_transition(source_video.ingest_state, "downloading") do
       update_source_video(source_video, %{
         ingest_state: "downloading",
@@ -65,7 +65,7 @@ defmodule Heaters.Processing.Download.Core do
       # Extract title from nested metadata
       |> maybe_put(:title, get_in(metadata, [:metadata, :title]))
 
-    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
+    with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
       update_source_video(source_video, attrs)
     end
   end
@@ -89,7 +89,7 @@ defmodule Heaters.Processing.Download.Core do
 
   def mark_failed(source_video_id, failure_state, error_reason)
       when is_integer(source_video_id) do
-    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
+    with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
       mark_failed(source_video, failure_state, error_reason)
     end
   end

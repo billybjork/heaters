@@ -19,7 +19,7 @@ defmodule Heaters.Processing.Render.Export.StateManager do
 
   alias Heaters.Repo
   alias Heaters.Media.Clip
-  alias Heaters.Media.Queries.Clip, as: ClipQueries
+  alias Heaters.Media.Clips
   require Logger
 
   @doc """
@@ -78,7 +78,7 @@ defmodule Heaters.Processing.Render.Export.StateManager do
   """
   @spec complete_export(integer(), map()) :: {:ok, Clip.t()} | {:error, any()}
   def complete_export(clip_id, update_attrs) do
-    with {:ok, clip} <- ClipQueries.get_clip(clip_id) do
+    with {:ok, clip} <- Clips.get_clip(clip_id) do
       final_attrs =
         Map.merge(update_attrs, %{
           last_error: nil
@@ -108,7 +108,7 @@ defmodule Heaters.Processing.Render.Export.StateManager do
   """
   @spec mark_export_failed(integer(), any()) :: {:ok, Clip.t()} | {:error, any()}
   def mark_export_failed(clip_id, error_reason) when is_integer(clip_id) do
-    with {:ok, clip} <- ClipQueries.get_clip(clip_id) do
+    with {:ok, clip} <- Clips.get_clip(clip_id) do
       error_message = format_error_message(error_reason)
 
       Logger.error("StateManager: Marking clip #{clip.id} as export_failed: #{error_message}")

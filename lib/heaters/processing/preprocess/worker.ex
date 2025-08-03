@@ -33,7 +33,7 @@ defmodule Heaters.Processing.Preprocess.Worker do
     queue: :media_processing,
     unique: [period: 300, fields: [:args], keys: [:source_video_id]]
 
-  alias Heaters.Media.{Video, Queries}
+  alias Heaters.Media.{Video, Videos}
   alias Heaters.Processing.Preprocess.StateManager
   alias Heaters.Pipeline.WorkerBehavior
   alias Heaters.Processing.Render.FFmpegConfig
@@ -51,7 +51,7 @@ defmodule Heaters.Processing.Preprocess.Worker do
       "PreprocessWorker: Starting preprocessing for source_video_id: #{source_video_id}"
     )
 
-    with {:ok, source_video} <- Queries.Video.get_source_video(source_video_id) do
+    with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
       handle_preprocessing(source_video)
     else
       {:error, :not_found} ->

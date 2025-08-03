@@ -23,7 +23,7 @@ defmodule Heaters.Processing.Download.Worker do
     # 10 minutes with source_video_id uniqueness only
     unique: [period: 600, fields: [:args], keys: [:source_video_id]]
 
-  alias Heaters.Media.Queries.Video, as: VideoQueries
+  alias Heaters.Media.Videos
   alias Heaters.Processing.Py.Runner, as: PyRunner
   alias Heaters.Storage.PipelineCache.TempCache
   alias Heaters.Processing.Download.{Core, YtDlpConfig}
@@ -38,7 +38,7 @@ defmodule Heaters.Processing.Download.Worker do
 
   @impl WorkerBehavior
   def handle_work(%{"source_video_id" => source_video_id} = args) do
-    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
+    with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
       case check_idempotency(source_video) do
         :ok ->
           handle_ingest_work(args)
@@ -55,7 +55,7 @@ defmodule Heaters.Processing.Download.Worker do
   defp handle_ingest_work(%{"source_video_id" => source_video_id}) do
     Logger.info("DownloadWorker: Starting download for source_video_id: #{source_video_id}")
 
-    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id),
+    with {:ok, source_video} <- Videos.get_source_video(source_video_id),
          {:ok, updated_video} <- ensure_downloading_state(source_video) do
       Logger.info(
         "DownloadWorker: Running PyRunner for source_video_id: #{source_video_id}, URL: #{updated_video.original_url}"

@@ -2,7 +2,7 @@ defmodule HeatersWeb.QueryLive do
   use HeatersWeb, :live_view
 
   alias Heaters.Processing.Embeddings, as: ClipEmbed
-  alias Heaters.Media.Queries.Clip, as: ClipQueries
+  alias Heaters.Media.Clips
   alias Heaters.Media.Clip
 
   # How many similar clips per page
@@ -45,7 +45,7 @@ defmodule HeatersWeb.QueryLive do
   @impl true
   def handle_event("pick_main", %{"clip_id" => id_str}, socket) do
     id = String.to_integer(id_str)
-    main = ClipQueries.get_clip!(id)
+    main = Clips.get_clip!(id)
     %{filters: f, sort_asc?: sa} = socket.assigns
     sims = ClipEmbed.similar_clips(id, f, sa, 1, @per_page)
 

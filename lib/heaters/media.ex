@@ -3,22 +3,24 @@ defmodule Heaters.Media do
   COMPATIBILITY LAYER: This module provides compatibility functions for Media operations.
 
   This compatibility layer delegates calls to the appropriate modules in the Media namespace.
-  Please update your code to use the specific modules directly.
+  Please update your code to use the specific modules directly:
+
+  - Use `Heaters.Media.Clips` for all clip operations
+  - Use `Heaters.Media.Videos` for all video operations
   """
 
-  alias Heaters.Media.Queries.Clip, as: ClipQueries
-  alias Heaters.Media.Queries.Video, as: VideoQueries
-  alias Heaters.Media.Commands.Clip, as: ClipCommands
+  alias Heaters.Media.Clips
+  alias Heaters.Media.Videos
 
-  # Clip queries
-  defdelegate get_clip(clip_id), to: ClipQueries
-  defdelegate get_clip_with_artifacts(clip_id), to: ClipQueries
-  defdelegate get_clip!(id), to: ClipQueries
-  defdelegate change_clip(clip, attrs), to: ClipCommands
-  defdelegate update_clip(clip, attrs), to: ClipCommands
-  defdelegate pending_review_count(), to: ClipQueries
-  defdelegate get_clips_by_state(state), to: ClipQueries
+  # Clip operations
+  defdelegate get_clip(clip_id), to: Clips
+  defdelegate get_clip_with_artifacts(clip_id), to: Clips
+  defdelegate get_clip!(id), to: Clips
+  defdelegate change_clip(clip, attrs), to: Clips
+  defdelegate update_clip(clip, attrs), to: Clips
+  defdelegate pending_review_count(), to: Clips
+  defdelegate get_clips_by_state(state), to: Clips
 
-  # Video queries
-  defdelegate get_source_video(id), to: VideoQueries
+  # Video operations
+  defdelegate get_source_video(id), to: Videos
 end

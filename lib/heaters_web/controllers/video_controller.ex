@@ -1,10 +1,10 @@
 defmodule HeatersWeb.VideoController do
   use HeatersWeb, :controller
   require Logger
-  alias Heaters.Media.Commands.Video, as: VideoCommands
+  alias Heaters.Media.Videos
 
   def create(conn, %{"url" => url}) do
-    case VideoCommands.submit(url) do
+    case Videos.submit(url) do
       :ok ->
         conn
         |> put_flash(:info, "Submitted!")

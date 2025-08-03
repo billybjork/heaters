@@ -18,7 +18,7 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
 
   alias Heaters.Repo
   alias Heaters.Media.Video
-  alias Heaters.Media.Queries.Video, as: VideoQueries
+  alias Heaters.Media.Videos
   require Logger
 
   @doc """
@@ -38,7 +38,7 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
   """
   @spec start_scene_detection(integer()) :: {:ok, Video.t()} | {:error, any()}
   def start_scene_detection(source_video_id) do
-    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id),
+    with {:ok, source_video} <- Videos.get_source_video(source_video_id),
          :ok <- validate_scene_detection_prerequisites(source_video) do
       update_source_video(source_video, %{
         ingest_state: "scene_detection",
@@ -64,7 +64,7 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
   """
   @spec complete_scene_detection(integer()) :: {:ok, Video.t()} | {:error, any()}
   def complete_scene_detection(source_video_id) do
-    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
+    with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
       update_source_video(source_video, %{
         ingest_state: "virtual_clips_created",
         needs_splicing: false,
@@ -86,7 +86,7 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
   """
   @spec mark_scene_detection_complete(integer()) :: {:ok, Video.t()} | {:error, any()}
   def mark_scene_detection_complete(source_video_id) do
-    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
+    with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
       update_source_video(source_video, %{
         needs_splicing: false
       })
@@ -114,7 +114,7 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
   @spec mark_scene_detection_failed(integer(), any()) :: {:ok, Video.t()} | {:error, any()}
   def mark_scene_detection_failed(source_video_id, error_reason)
       when is_integer(source_video_id) do
-    with {:ok, source_video} <- VideoQueries.get_source_video(source_video_id) do
+    with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
       error_message = format_error_message(error_reason)
 
       Logger.error(

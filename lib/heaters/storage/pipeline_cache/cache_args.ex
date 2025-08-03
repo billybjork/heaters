@@ -179,7 +179,7 @@ defmodule Heaters.Storage.PipelineCache.CacheArgs do
   defp parse_temp_cache_key(_), do: {:error, :not_temp_key}
 
   defp get_s3_path_from_database(source_video_id, file_type) do
-    case Heaters.Media.Queries.Video.get_source_video(source_video_id) do
+    case Heaters.Media.Videos.get_source_video(source_video_id) do
       {:ok, source_video} ->
         case file_type do
           "proxy" -> source_video.proxy_filepath

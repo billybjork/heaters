@@ -18,7 +18,7 @@ defmodule Heaters.Processing.Keyframes.Core do
   alias Heaters.Processing.Keyframes.{Strategy, Validation}
 
   # Infrastructure adapters (I/O operations)
-  alias Heaters.Media.Commands.Clip, as: ClipCommand
+  alias Heaters.Media.Clips
   alias Heaters.Processing.Render.FFmpegAdapter
   alias Heaters.Storage.S3
   alias Heaters.Storage.PipelineCache.TempCache
@@ -58,7 +58,7 @@ defmodule Heaters.Processing.Keyframes.Core do
   ## Private Implementation
 
   defp get_clip_with_validation(clip_id) do
-    case ClipCommand.get_with_artifacts(clip_id) do
+    case Clips.get_clip_with_artifacts(clip_id) do
       {:ok, clip} -> {:ok, clip}
       {:error, :not_found} -> {:error, "Clip not found: #{clip_id}"}
     end
@@ -73,7 +73,7 @@ defmodule Heaters.Processing.Keyframes.Core do
   end
 
   defp transition_to_keyframing(clip) do
-    ClipCommand.update_state(clip, "keyframing")
+    Clips.update_state(clip, "keyframing")
   end
 
   defp build_artifact_prefix(clip) do
@@ -242,7 +242,7 @@ defmodule Heaters.Processing.Keyframes.Core do
 
   defp update_clip_to_keyframed(clip_id, _keyframe_metadata) do
     with {:ok, clip} <- Heaters.Media.get_clip(clip_id) do
-      ClipCommand.update_state(clip, "keyframed")
+      Clips.update_state(clip, "keyframed")
     end
   end
 
@@ -265,7 +265,7 @@ defmodule Heaters.Processing.Keyframes.Core do
     error_message = ErrorFormatting.format_error(reason)
 
     with {:ok, clip} <- Heaters.Media.get_clip(clip.id) do
-      case ClipCommand.mark_failed(clip, "keyframe_failed", error_message) do
+      case Clips.mark_failed(clip, "keyframe_failed", error_message) do
         {:ok, _} ->
           Logger.error("Marked clip #{clip.id} as keyframe_failed: #{error_message}")
 
