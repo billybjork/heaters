@@ -19,7 +19,7 @@ defmodule Heaters.Storage.PipelineCache.TempCache do
 
       # OLD: Upload immediately
       upload_to_s3(local_file, s3_key)
-      
+
       # NEW: Cache locally and upload only at end
       TempCache.put(s3_key, local_file)
       # ... pass s3_key through Oban args
@@ -146,7 +146,7 @@ defmodule Heaters.Storage.PipelineCache.TempCache do
   - opts: Options for download operation if needed
     - :operation_name: Name to use in log messages
 
-  ## Returns  
+  ## Returns
   {:ok, local_path, :cache_hit} | {:ok, local_path, :downloaded} | {:error, reason}
   """
   @spec get_or_download(String.t(), keyword()) ::
@@ -358,7 +358,7 @@ defmodule Heaters.Storage.PipelineCache.TempCache do
 
     case upload_result do
       {:ok, _} ->
-        Logger.info("TempCache: Successfully finalized #{s3_key} to S3 (#{storage_class})")
+        Logger.info("TempCache: Successfully uploaded #{s3_key} to S3 (#{storage_class})")
         :ok
 
       {:error, reason} ->

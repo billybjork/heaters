@@ -184,7 +184,7 @@ defmodule Heaters.Processing.Preprocess.Worker do
       {:ok, cached_results} ->
         Logger.info("PreprocessWorker: Cached results for pipeline chaining")
 
-        # Generate S3 paths but don't upload yet - cache for later finalization
+        # Generate S3 paths but don't upload yet - cache for later upload
         proxy_s3_key = generate_s3_key(source_video, "proxy", ".mp4")
 
         master_s3_key =

@@ -52,7 +52,7 @@ defmodule Heaters.Pipeline.Config do
   The pipeline supports direct job chaining for performance optimization:
   - Download → Preprocess (when download completes successfully)
   - Preprocess → Scene Detection (when preprocessing completes and splicing is needed)
-  - Scene Detection → Cache Finalization (when scene detection completes)
+  - Scene Detection → Cache Upload (when scene detection completes)
   - Other stages use standard Oban job scheduling
   """
 
@@ -133,7 +133,7 @@ defmodule Heaters.Pipeline.Config do
       # Stage 4: Cache upload (no chaining - end of video processing)
       %{
         label: "videos needing cache upload → S3 upload",
-        query: fn -> PipelineQueries.get_videos_needing_cache_finalization() end,
+        query: fn -> PipelineQueries.get_videos_needing_cache_upload() end,
         build: fn video -> UploadCacheWorker.new(%{source_video_id: video.id}) end
         # No next_stage - this is the end of the video processing pipeline
       },

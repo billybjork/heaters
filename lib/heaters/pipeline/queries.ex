@@ -84,18 +84,18 @@ defmodule Heaters.Pipeline.Queries do
   end
 
   @doc """
-  Get all source videos that need cache finalization.
+  Get all source videos that need cache upload.
 
-  Videos need cache finalization if:
+  Videos need cache upload if:
   - Scene detection is complete (needs_splicing = false)
-  - Cache has not been finalized yet (cache_finalized_at is null)
+  - Cache has not been uploaded yet (cache_finalized_at is null)
   - Has files that might be cached (has filepath, proxy_filepath, or master_filepath)
 
   ## Pipeline Usage
-  Used by `Pipeline.Config` stage discovery for cache finalization.
+  Used by `Pipeline.Config` stage discovery for cache upload processing.
   """
-  @spec get_videos_needing_cache_finalization() :: [Video.t()]
-  def get_videos_needing_cache_finalization() do
+  @spec get_videos_needing_cache_upload() :: [Video.t()]
+  def get_videos_needing_cache_upload() do
     from(s in Video,
       where:
         s.needs_splicing == false and

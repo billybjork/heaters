@@ -129,7 +129,7 @@ defmodule Heaters.Storage.PipelineCache.CacheArgs do
 
       case TempCache.finalize_to_s3(cache_key, s3_destination, "STANDARD") do
         :ok ->
-          Logger.info("CacheArgs: Finalized #{cache_key} to #{s3_destination}")
+          Logger.info("CacheArgs: Uploaded #{cache_key} to #{s3_destination}")
 
         {:error, :not_found} ->
           # File wasn't cached, that's fine (may have been uploaded directly)

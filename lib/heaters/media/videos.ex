@@ -8,7 +8,7 @@ defmodule Heaters.Media.Videos do
   ## When to Add Functions Here
 
   - **CRUD Operations**: Creating, reading, updating videos
-  - **Domain State Management**: Video state transitions, cache finalization
+  - **Domain State Management**: Video state transitions, cache upload
   - **Business Logic**: Video submission workflow, URL validation
   - **Generic Queries**: Simple state-based queries (`get_videos_by_state`)
 
@@ -65,7 +65,7 @@ defmodule Heaters.Media.Videos do
 
   @doc """
   Update the cache_finalized_at timestamp for a video.
-  Used to mark when cache finalization process is complete.
+  Used to mark when cache upload process is complete.
   """
   @spec update_cache_finalized_at(Video.t()) :: {:ok, Video.t()} | {:error, any()}
   def update_cache_finalized_at(%Video{} = video) do

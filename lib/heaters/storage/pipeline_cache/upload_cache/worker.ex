@@ -42,10 +42,10 @@ defmodule Heaters.Storage.PipelineCache.UploadCache.Worker do
 
   @impl WorkerBehavior
   def handle_work(args) do
-    handle_finalization_work(args)
+    handle_upload_work(args)
   end
 
-  defp handle_finalization_work(%{"source_video_id" => source_video_id}) do
+  defp handle_upload_work(%{"source_video_id" => source_video_id}) do
     Logger.info(
       "UploadCacheWorker: Starting cache upload for source_video_id: #{source_video_id}"
     )
