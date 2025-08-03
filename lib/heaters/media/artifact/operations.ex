@@ -56,10 +56,6 @@ defmodule Heaters.Media.Artifact.Operations do
       # For keyframes
       prefix = Artifacts.Operations.build_artifact_prefix(clip, "keyframes")
       # Returns: "clip_artifacts/Berlin_Skies_Snow_VANS/keyframes"
-
-      # For sprites
-      prefix = Artifacts.Operations.build_artifact_prefix(clip, "sprite_sheets")
-      # Returns: "clip_artifacts/Berlin_Skies_Snow_VANS/sprite_sheets"
   """
   @spec build_artifact_prefix(Clip.t(), String.t()) :: String.t()
   def build_artifact_prefix(%Clip{source_video_id: source_video_id}, artifact_type) do
@@ -83,7 +79,7 @@ defmodule Heaters.Media.Artifact.Operations do
 
   ## Parameters
   - `clip_id`: The ID of the clip the artifacts belong to
-  - `artifact_type`: The type of artifacts being created (e.g., "keyframe", "sprite")
+  - `artifact_type`: The type of artifacts being created (e.g., "keyframe")
   - `artifacts_data`: List of artifact data maps containing s3_key and metadata
 
   ## Artifact Data Format

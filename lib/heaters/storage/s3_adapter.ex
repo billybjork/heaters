@@ -24,7 +24,7 @@ defmodule Heaters.Storage.S3Adapter do
   - All functions accept domain objects (Clip structs, etc.) rather than raw S3 keys
   - S3 paths are constructed from domain object properties (video titles, clip IDs)
   - Metadata is enriched with domain-specific information
-  - Operations are named from the domain perspective (upload_sprite, upload_master)
+  - Operations are named from the domain perspective (upload_master, upload_proxy)
 
   All functions in this module perform I/O operations with domain-specific logic.
   """

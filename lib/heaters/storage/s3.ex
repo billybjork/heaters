@@ -193,7 +193,7 @@ defmodule Heaters.Storage.S3 do
   ## Examples
 
       S3.upload_file("/tmp/video.mp4", "clips/new_video.mp4")
-      S3.upload_file("/tmp/sprite.jpg", "artifacts/sprite.jpg", operation_name: "Sprite")
+      S3.upload_file("/tmp/keyframe.jpg", "artifacts/keyframe.jpg", operation_name: "Keyframe")
       S3.upload_file("/tmp/master.mkv", "masters/master.mkv", storage_class: "GLACIER")
 
   ## Returns
