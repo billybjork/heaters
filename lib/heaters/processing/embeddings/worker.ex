@@ -4,7 +4,7 @@ defmodule Heaters.Processing.Embeddings.Worker do
     # 10 minutes, prevent duplicate embedding jobs
     unique: [period: 600, fields: [:args]]
 
-  alias Heaters.Processing.Embeddings
+  alias Heaters.Processing.Embeddings.Workflow
   alias Heaters.Processing.Py.Runner, as: PyRunner
   alias Heaters.Pipeline.WorkerBehavior
   require Logger
@@ -57,7 +57,7 @@ defmodule Heaters.Processing.Embeddings.Worker do
 
       _ ->
         # Transition to embedding state
-        Embeddings.start_embedding(clip_id)
+        Workflow.start_embedding(clip_id)
     end
   end
 
@@ -76,14 +76,14 @@ defmodule Heaters.Processing.Embeddings.Worker do
           "EmbeddingWorker: Python embedding completed successfully for clip #{clip.id}"
         )
 
-        Embeddings.process_embedding_success(clip, result)
+        Workflow.process_embedding_success(clip, result)
 
       {:error, reason} ->
         Logger.error(
           "EmbeddingWorker: Python embedding failed for clip #{clip.id}: #{inspect(reason)}"
         )
 
-        Embeddings.mark_failed(clip, "embedding_failed", reason)
+        Workflow.mark_failed(clip, "embedding_failed", reason)
     end
   end
 
