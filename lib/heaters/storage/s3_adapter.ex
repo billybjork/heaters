@@ -30,8 +30,6 @@ defmodule Heaters.Storage.S3Adapter do
   """
 
   alias Heaters.Storage.S3
-  alias Heaters.Media.Clip
-  alias Heaters.Media.Videos
 
   require Logger
 
@@ -302,19 +300,6 @@ defmodule Heaters.Storage.S3Adapter do
   end
 
   # Private helper functions
-
-  defp build_artifact_prefix(%Clip{source_video_id: source_video_id}, artifact_type) do
-    # Get the source video to access the title
-    case Videos.get_source_video(source_video_id) do
-      {:ok, source_video} ->
-        sanitized_title = Heaters.Utils.sanitize_filename(source_video.title)
-        "clip_artifacts/#{sanitized_title}/#{artifact_type}"
-
-      {:error, _} ->
-        # Fallback to ID-based structure if title lookup fails
-        "clip_artifacts/video_#{source_video_id}/#{artifact_type}"
-    end
-  end
 
   defp get_file_size(file_path) do
     case File.stat(file_path) do
