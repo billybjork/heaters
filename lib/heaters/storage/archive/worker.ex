@@ -7,7 +7,7 @@ defmodule Heaters.Storage.Archive.Worker do
   import Ecto.Query, warn: false
   alias Heaters.Media.Clips
   alias Heaters.Repo
-  alias Heaters.Storage.S3
+  alias Heaters.Storage.S3Adapter
   alias Heaters.Media.Clip
   alias Heaters.Pipeline.WorkerBehavior
   alias Ecto.Multi
@@ -20,8 +20,8 @@ defmodule Heaters.Storage.Archive.Worker do
   def handle_work(%{"clip_id" => clip_id}) do
     with {:ok, clip} <- Clips.get_clip_with_artifacts(clip_id),
          :ok <- check_idempotency(clip) do
-      # 1. Delete files from S3 using Elixir S3 context
-      case S3.delete_clip_and_artifacts(clip) do
+      # 1. Delete files from S3 using S3Adapter for domain-specific operations
+      case S3Adapter.delete_clip_and_artifacts(clip) do
         {:ok, deleted_count} ->
           Logger.info(
             "ArchiveWorker: Successfully deleted #{deleted_count} S3 objects for clip #{clip_id}"

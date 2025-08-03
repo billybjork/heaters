@@ -1,10 +1,30 @@
 defmodule Heaters.Storage.S3Adapter do
   @moduledoc """
-  Domain-specific S3 adapter providing clip and artifact operations.
+  Domain-specific S3 adapter providing clip, artifact, and video operations.
 
-  This adapter provides domain-specific S3 operations that add business logic
-  beyond basic file operations. For basic S3 operations (upload_file, download_file,
-  delete_file, head_object), use Heaters.Storage.S3 directly.
+  This adapter provides S3 operations that involve business logic and knowledge
+  of domain objects (clips, videos, artifacts). For basic S3 file operations
+  without domain logic, use `Heaters.Storage.S3` directly.
+
+  ## When to Use This Module
+
+  - **Domain-specific operations**: Working with clips, videos, artifacts, or other domain objects
+  - **Business logic**: S3 path construction from domain data, metadata enrichment
+  - **Complex workflows**: Master/proxy uploads, artifact management, CDN operations
+  - **Domain deletions**: Cleaning up domain objects and their related S3 resources
+
+  ## When to Use S3 Instead
+
+  - **Basic file operations**: Simple upload/download/delete without domain knowledge
+  - **Generic S3 operations**: Working with raw S3 keys and files
+  - **Infrastructure operations**: Bucket management, batch operations
+
+  ## Design Principles
+
+  - All functions accept domain objects (Clip structs, etc.) rather than raw S3 keys
+  - S3 paths are constructed from domain object properties (video titles, clip IDs)
+  - Metadata is enriched with domain-specific information
+  - Operations are named from the domain perspective (upload_sprite, upload_master)
 
   All functions in this module perform I/O operations with domain-specific logic.
   """
@@ -13,136 +33,39 @@ defmodule Heaters.Storage.S3Adapter do
   alias Heaters.Media.Clip
   alias Heaters.Media.Videos
 
+  require Logger
+
   @doc """
-  Download a clip's video file to a local directory.
+  Deletes a clip and its associated artifacts from S3.
+
+  This is a domain-specific operation that understands the relationship between
+  clips and their artifacts, gathering all related S3 keys for batch deletion.
 
   ## Examples
 
-      {:ok, "/tmp/video.mp4"} = S3Adapter.download_clip_video(clip, "/tmp")
-      {:error, reason} = S3Adapter.download_clip_video(clip, "/invalid/path")
+      {:ok, 5} = S3Adapter.delete_clip_and_artifacts(clip_with_artifacts)
+      {:ok, 0} = S3Adapter.delete_clip_and_artifacts(clip_without_files)
+
+  ## Returns
+  - `{:ok, deleted_count}` on success
+  - `{:error, reason}` on failure
   """
-  @spec download_clip_video(map(), String.t(), String.t()) :: {:ok, String.t()} | {:error, any()}
-  def download_clip_video(clip, temp_dir, local_filename) do
-    local_path = Path.join(temp_dir, local_filename)
-    s3_key = String.trim_leading(clip.clip_filepath, "/")
+  @spec delete_clip_and_artifacts(map()) :: {:ok, integer()} | {:error, any()}
+  def delete_clip_and_artifacts(clip) do
+    # Get all S3 keys to delete
+    artifact_keys = Enum.map(clip.clip_artifacts || [], & &1.s3_key)
 
-    case S3.download_file(s3_key, local_path, operation_name: "ClipDownload") do
-      {:ok, ^local_path} -> {:ok, local_path}
-      error -> error
-    end
-  end
+    all_keys =
+      [clip.clip_filepath | artifact_keys]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.reject(&(&1 == ""))
 
-  @doc """
-  Upload a sprite sheet to S3 and return metadata.
-
-  ## Examples
-
-      upload_data = %{s3_key: "sprites/sprite.jpg", metadata: %{file_size: 1024}}
-      {:ok, ^upload_data} = S3Adapter.upload_sprite("/tmp/sprite.jpg", clip, "sprite.jpg")
-  """
-  @spec upload_sprite(String.t(), Clip.t(), String.t(), map()) :: {:ok, map()} | {:error, any()}
-  def upload_sprite(local_sprite_path, %Clip{} = clip, filename, sprite_metadata \\ %{})
-      when is_binary(local_sprite_path) and is_binary(filename) and is_map(sprite_metadata) do
-    s3_prefix = build_artifact_prefix(clip, "sprite_sheets")
-    s3_key = "#{s3_prefix}/#{filename}"
-
-    case S3.upload_file(local_sprite_path, s3_key, operation_name: "SpriteUpload") do
-      {:ok, _upload_result} ->
-        file_size = get_file_size(local_sprite_path)
-
-        # Merge sprite generation metadata with upload metadata
-        combined_metadata =
-          sprite_metadata
-          |> Map.put("file_size", file_size)
-          |> Map.put("filename", filename)
-          |> Map.put("upload_timestamp", DateTime.utc_now())
-
-        result = %{
-          s3_key: s3_key,
-          metadata: combined_metadata
-        }
-
-        {:ok, result}
-
-      error ->
-        error
-    end
-  end
-
-  @doc """
-  Upload keyframe images to S3.
-
-  Returns a list of artifact data for each uploaded keyframe.
-  """
-  @spec upload_keyframes(list(String.t()), Clip.t(), String.t()) ::
-          {:ok, list(map())} | {:error, any()}
-  def upload_keyframes(local_keyframe_paths, %Clip{} = _clip, prefix)
-      when is_list(local_keyframe_paths) and is_binary(prefix) do
-    results =
-      local_keyframe_paths
-      |> Enum.with_index()
-      |> Enum.map(fn {local_path, index} ->
-        filename = "keyframe_#{index + 1}.jpg"
-        s3_key = "#{prefix}/#{filename}"
-
-        case S3.upload_file(local_path, s3_key, operation_name: "KeyframeUpload") do
-          {:ok, _upload_result} ->
-            file_size = get_file_size(local_path)
-
-            {:ok,
-             %{
-               s3_key: s3_key,
-               metadata: %{
-                 file_size: file_size,
-                 filename: filename,
-                 position: index + 1,
-                 upload_timestamp: DateTime.utc_now()
-               }
-             }}
-
-          error ->
-            error
-        end
-      end)
-
-    # Check if all uploads succeeded
-    case Enum.find(results, fn result -> match?({:error, _}, result) end) do
-      nil ->
-        # All uploads succeeded
-        artifacts = Enum.map(results, fn {:ok, artifact} -> artifact end)
-        {:ok, artifacts}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  @doc """
-  Upload a processed video (for split/merge operations) to S3.
-  """
-  @spec upload_processed_video(String.t(), Clip.t(), String.t()) :: {:ok, map()} | {:error, any()}
-  def upload_processed_video(local_video_path, %Clip{} = clip, filename)
-      when is_binary(local_video_path) and is_binary(filename) do
-    s3_prefix = build_artifact_prefix(clip, "processed")
-    s3_key = "#{s3_prefix}/#{filename}"
-
-    case S3.upload_file(local_video_path, s3_key, operation_name: "ProcessedVideo") do
-      {:ok, _upload_result} ->
-        file_size = get_file_size(local_video_path)
-
-        result = %{
-          s3_key: s3_key,
-          metadata: %{
-            file_size: file_size,
-            filename: filename,
-            upload_timestamp: DateTime.utc_now()
-          }
-        }
-
-        {:ok, result}
-
-      error ->
-        error
+    if Enum.empty?(all_keys) do
+      Logger.info("No S3 keys to delete for clip #{clip.id}")
+      {:ok, 0}
+    else
+      Logger.info("Deleting #{length(all_keys)} S3 objects for clip #{clip.id}")
+      S3.delete_s3_objects(all_keys)
     end
   end
 

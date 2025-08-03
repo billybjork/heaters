@@ -1,11 +1,26 @@
 defmodule Heaters.Storage.S3 do
   @moduledoc """
-  Context for S3 operations, including file deletion, download, and upload.
-  Provides a unified interface for S3 operations across the application.
+  Basic S3 operations providing direct AWS S3 functionality.
+
+  This module provides low-level S3 operations with minimal business logic.
+  For domain-specific S3 operations that involve business rules or knowledge
+  about clips, artifacts, videos, etc., use `Heaters.Storage.S3Adapter` instead.
+
+  ## When to Use This Module
+
+  - **Basic file operations**: upload_file, download_file, delete_file, head_object
+  - **Generic S3 operations**: No knowledge of domain objects (clips, videos, artifacts)
+  - **Infrastructure-level operations**: Bucket configuration, batch operations
+  - **Utility functions**: file_exists?, upload_file_simple, etc.
+
+  ## When to Use S3Adapter Instead
+
+  - **Domain-specific operations**: Operations involving clips, videos, or artifacts
+  - **Business logic**: S3 paths derived from domain objects, metadata handling
+  - **Complex workflows**: Master/proxy uploads, artifact management, CDN URL generation
 
   This module handles S3 operations that were previously done in Python,
-  particularly for cleanup operations like archiving clips, and now also
-  handles download/upload operations for transformation workflows.
+  particularly for basic file operations and batch processing.
   """
 
   require Logger
@@ -13,28 +28,7 @@ defmodule Heaters.Storage.S3 do
   # S3 limit for delete_objects operation
   @max_delete_batch_size 1000
 
-  @doc """
-  Deletes a clip and its associated artifacts from S3.
-  Returns {:ok, deleted_count} or {:error, reason}.
-  """
-  @spec delete_clip_and_artifacts(map()) :: {:ok, integer()} | {:error, any()}
-  def delete_clip_and_artifacts(clip) do
-    # Get all S3 keys to delete
-    artifact_keys = Enum.map(clip.clip_artifacts || [], & &1.s3_key)
 
-    all_keys =
-      [clip.clip_filepath | artifact_keys]
-      |> Enum.reject(&is_nil/1)
-      |> Enum.reject(&(&1 == ""))
-
-    if Enum.empty?(all_keys) do
-      Logger.info("No S3 keys to delete for clip #{clip.id}")
-      {:ok, 0}
-    else
-      Logger.info("Deleting #{length(all_keys)} S3 objects for clip #{clip.id}")
-      delete_s3_objects(all_keys)
-    end
-  end
 
   @doc """
   Deletes a list of S3 objects in batches.
