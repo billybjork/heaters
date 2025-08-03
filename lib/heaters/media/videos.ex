@@ -10,7 +10,7 @@ defmodule Heaters.Media.Videos do
 
   - **Schema Separation**: `Heaters.Media.Video` defines the data structure
   - **Operations Consolidation**: This module (`Videos`) provides all business operations
-  - **Pragmatic Approach**: Eliminates CQRS complexity while maintaining clear organization
+  - **Pragmatic Approach**: Consolidates operations while maintaining clear organization
   - **Single Import**: `alias Heaters.Media.Videos` provides access to all video operations
 
   ## Function Organization

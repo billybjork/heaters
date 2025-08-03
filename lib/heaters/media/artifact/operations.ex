@@ -1,30 +1,43 @@
 defmodule Heaters.Media.Artifact.Operations do
   @moduledoc """
-  Artifact management operations and utilities.
+  Shared artifact operations and utilities.
 
-  This module provides shared utilities for artifact generation and management
-  across all artifact types (keyframes, sprites, etc.).
+  This module provides common operations used across all clip artifact types
+  (keyframes, object masks, pose estimation masks, etc.). Unlike the domain-specific
+  `Clips` and `Videos` modules, this contains cross-cutting artifact utilities.
 
-  ## Responsibilities
+  ## Design Philosophy
 
-  - **Artifact Creation**: `create_artifacts/3` for database artifact creation
-  - **S3 Path Management**: `build_artifact_prefix/2` for consistent S3 paths
-  - **Error Handling**: Specialized error handling for artifact operations
+  - **Shared Utilities**: Common operations used by multiple artifact processors
+  - **Cross-Cutting Concerns**: S3 path management and database operations shared across artifact types
+  - **Consistency**: Ensures uniform artifact creation patterns across all processing stages
+  - **Extensibility**: Designed to support future artifact types without duplication
 
-  ## Usage
+  ## Shared Responsibilities
 
-  For artifact generation (pipeline stages):
+  - **Database Operations**: `create_artifacts/3` for consistent artifact creation across all types
+  - **S3 Path Management**: `build_artifact_prefix/2` for consistent S3 organization structure
+  - **Validation**: Shared validation logic that applies to all artifact types
+  - **Error Handling**: Standardized error handling and logging for artifact operations
 
-      # Keyframe extraction (after export)
-      {:ok, result} = Artifacts.Keyframe.run_keyframe_extraction(clip_id, "multi")
+  ## Usage Patterns
 
-  For artifact utilities (used internally by artifact modules):
+  Used by artifact processors (keyframes, future mask/pose processors):
 
-      # Artifact creation
-      Artifacts.Operations.create_artifacts(clip_id, "keyframe", artifacts_data)
+      # Database artifact creation (used by all processors)
+      Artifact.Operations.create_artifacts(clip_id, "keyframe", artifacts_data)
+      Artifact.Operations.create_artifacts(clip_id, "object_mask", mask_data)
+      Artifact.Operations.create_artifacts(clip_id, "pose_estimation", pose_data)
 
-      # S3 path management
-      prefix = Artifacts.Operations.build_artifact_prefix(clip, "keyframes")
+      # S3 path management (ensures consistent directory structure)
+      prefix = Artifact.Operations.build_artifact_prefix(clip, "keyframes")
+      # Returns: "clip_artifacts/Berlin_Skies_Snow_VANS/keyframes"
+
+  ## Architecture Note
+
+  This module follows a "shared service" pattern rather than a domain object pattern.
+  It provides utilities that multiple artifact processors depend on, ensuring consistency
+  and reducing duplication across different artifact generation workflows.
   """
 
   alias Heaters.Repo

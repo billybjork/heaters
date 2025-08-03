@@ -10,7 +10,7 @@ defmodule Heaters.Media.Clips do
 
   - **Schema Separation**: `Heaters.Media.Clip` defines the data structure
   - **Operations Consolidation**: This module (`Clips`) provides all business operations
-  - **Pragmatic Approach**: Eliminates CQRS complexity while maintaining clear organization
+  - **Pragmatic Approach**: Consolidates operations while maintaining clear organization
   - **Single Import**: `alias Heaters.Media.Clips` provides access to all clip operations
 
   ## Function Organization
