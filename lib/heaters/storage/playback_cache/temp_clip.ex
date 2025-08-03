@@ -8,7 +8,7 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
 
   require Logger
 
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   @tmp_dir System.tmp_dir!()
   @ffmpeg_bin Application.compile_env(:heaters, :ffmpeg_bin, "/usr/bin/ffmpeg")
 
@@ -51,9 +51,9 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
 
   # Handle clip without preloaded source_video
   def build(%{id: id} = _clip) do
-    case @repo_port.get(Heaters.Media.Clip, id) do
+    case Repo.get(Heaters.Media.Clip, id) do
       {:ok, clip} ->
-        case @repo_port.preload(clip, :source_video) do
+        case Repo.preload(clip, :source_video) do
           loaded_clip -> build(loaded_clip)
         end
 

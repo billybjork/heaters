@@ -33,7 +33,7 @@ defmodule Heaters.Storage.PipelineCache.UploadCache.Worker do
     queue: :media_processing,
     unique: [period: 900, fields: [:args]]
 
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.Video, as: SourceVideo
   alias Heaters.Media.Queries.Video, as: Queries
   alias Heaters.Media.Commands.Video, as: VideoCommand
@@ -102,7 +102,7 @@ defmodule Heaters.Storage.PipelineCache.UploadCache.Worker do
         select: count("*")
       )
 
-    @repo_port.one(query) > 0
+    Repo.one(query) > 0
   end
 
   defp run_upload_task(source_video) do

@@ -7,7 +7,7 @@ defmodule Heaters.Review.Queue do
   """
 
   import Ecto.Query, warn: false
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.Clip
 
   # -------------------------------------------------------------------------
@@ -22,7 +22,7 @@ defmodule Heaters.Review.Queue do
       left_join: ca in assoc(c, :clip_artifacts),
       preload: [source_video: sv, clip_artifacts: ca]
     )
-    |> @repo_port.one!()
+    |> Repo.one!()
   end
 
   # -------------------------------------------------------------------------
@@ -55,6 +55,6 @@ defmodule Heaters.Review.Queue do
     )
     |> limit(^limit)
     |> preload([:source_video, :clip_artifacts])
-    |> @repo_port.all()
+    |> Repo.all()
   end
 end

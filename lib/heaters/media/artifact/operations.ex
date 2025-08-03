@@ -27,7 +27,7 @@ defmodule Heaters.Media.Artifact.Operations do
       prefix = Artifacts.Operations.build_artifact_prefix(clip, "keyframes")
   """
 
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.Clip
   alias Heaters.Media.Queries.Video, as: VideoQueries
   alias Heaters.Media.Artifact.ClipArtifact
@@ -105,7 +105,7 @@ defmodule Heaters.Media.Artifact.Operations do
 
     case validate_artifact_changesets(validated_changesets) do
       :ok ->
-        case @repo_port.insert_all(ClipArtifact, artifacts_attrs, returning: true) do
+        case Repo.insert_all(ClipArtifact, artifacts_attrs, returning: true) do
           {count, artifacts} when count > 0 ->
             Logger.info(
               "Artifacts.Operations: Successfully created #{count} #{artifact_type} artifacts for clip_id: #{clip_id}"

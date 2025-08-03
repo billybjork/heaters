@@ -8,7 +8,7 @@ defmodule Heaters.Storage.PlaybackCache.TempClipJob do
 
   use Oban.Worker, queue: :temp_clips, max_attempts: 1
 
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   require Logger
 
   @impl Oban.Worker
@@ -16,8 +16,8 @@ defmodule Heaters.Storage.PlaybackCache.TempClipJob do
     Logger.info("TempClipJob: Starting async generation for clip #{clip_id}")
 
     clip =
-      @repo_port.get!(Heaters.Media.Clip, clip_id)
-      |> @repo_port.preload(:source_video)
+      Repo.get!(Heaters.Media.Clip, clip_id)
+      |> Repo.preload(:source_video)
 
     case Heaters.Storage.PlaybackCache.TempClip.build(clip) do
       {:ok, "/temp/" <> filename} ->

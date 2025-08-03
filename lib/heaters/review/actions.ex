@@ -9,7 +9,7 @@ defmodule Heaters.Review.Actions do
 
   import Ecto.Query, warn: false
   alias Ecto.Query, as: Q
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.Clip
   alias Heaters.Media.VirtualClip
   require Logger
@@ -35,14 +35,14 @@ defmodule Heaters.Review.Actions do
     db_action = Map.get(@action_map, ui_action, ui_action)
 
     # Update clip state and fetch next in a single transaction
-    @repo_port.transaction(fn ->
+    Repo.transaction(fn ->
       # Handle undo action specially - cancel pending jobs and reset states
       if db_action == "selected_undo" do
         # Cancel any pending merge/split jobs for this clip
         cancel_pending_jobs_for_clip(clip_id)
 
         # Reset clip to pending_review state and clear grouping
-        @repo_port.update_all(
+        Repo.update_all(
           from(c in Clip, where: c.id == ^clip_id),
           set: [
             reviewed_at: nil,
@@ -53,7 +53,7 @@ defmodule Heaters.Review.Actions do
       end
 
       {:ok, %{rows: rows}} =
-        @repo_port.query(
+        Repo.query(
           """
           WITH upd AS (
             UPDATE clips
@@ -98,9 +98,9 @@ defmodule Heaters.Review.Actions do
   def request_group_and_fetch_next(%Clip{id: prev_id}, %Clip{id: curr_id}) do
     now = DateTime.utc_now()
 
-    @repo_port.transaction(fn ->
+    Repo.transaction(fn ->
       # Mark both clips as reviewed, set grouping metadata, and advance to review_approved
-      @repo_port.update_all(
+      Repo.update_all(
         from(c in Clip, where: c.id == ^prev_id),
         set: [
           reviewed_at: now,
@@ -109,7 +109,7 @@ defmodule Heaters.Review.Actions do
         ]
       )
 
-      @repo_port.update_all(
+      Repo.update_all(
         from(c in Clip, where: c.id == ^curr_id),
         set: [
           reviewed_at: now,
@@ -131,7 +131,7 @@ defmodule Heaters.Review.Actions do
           lock: "FOR UPDATE SKIP LOCKED",
           select: c.id
         )
-        |> @repo_port.one()
+        |> Repo.one()
 
       next_clip = if next_id, do: Heaters.Review.Queue.load_clip_with_assocs(next_id)
       {next_clip, %{clip_id_source: curr_id, clip_id_target: prev_id, action: "group"}}
@@ -162,7 +162,7 @@ defmodule Heaters.Review.Actions do
     import Ecto.Query
 
     # Check if this is a virtual clip operation that was already completed instantly
-    clip = @repo_port.get(Clip, clip_id)
+    clip = Repo.get(Clip, clip_id)
 
     case clip do
       %Clip{ingest_state: state} when state in ["split_virtual"] ->
@@ -183,7 +183,7 @@ defmodule Heaters.Review.Actions do
   defp handle_virtual_split(%Clip{id: clip_id} = clip, frame_num) do
     now = DateTime.utc_now()
 
-    @repo_port.transaction(fn ->
+    Repo.transaction(fn ->
       # Split cut points to create two new virtual clips
       case split_virtual_cut_points(clip.cut_points, frame_num) do
         {:ok, {first_cut_points, second_cut_points}} ->
@@ -195,7 +195,7 @@ defmodule Heaters.Review.Actions do
                ) do
             {:ok, [first_clip, second_clip]} ->
               # Mark original clip as split/reviewed
-              @repo_port.update_all(
+              Repo.update_all(
                 from(c in Clip, where: c.id == ^clip_id),
                 set: [
                   reviewed_at: now,
@@ -223,7 +223,7 @@ defmodule Heaters.Review.Actions do
 
             {:error, reason} ->
               Logger.error("Review: Failed to create split virtual clips: #{inspect(reason)}")
-              @repo_port.rollback(reason)
+              Repo.rollback(reason)
           end
 
         {:error, reason} ->
@@ -231,7 +231,7 @@ defmodule Heaters.Review.Actions do
             "Review: Invalid split frame #{frame_num} for virtual clip #{clip_id}: #{reason}"
           )
 
-          @repo_port.rollback(reason)
+          Repo.rollback(reason)
       end
     end)
   end
@@ -240,7 +240,7 @@ defmodule Heaters.Review.Actions do
          %Clip{ingest_state: "split_virtual", grouped_with_clip_id: _first_split_id} = clip
        ) do
     # Undo virtual split: delete split clips and restore original clip
-    @repo_port.transaction(fn ->
+    Repo.transaction(fn ->
       # Find and delete the split clips (they should have metadata indicating they came from this clip)
       split_clips =
         from(c in Clip,
@@ -248,16 +248,16 @@ defmodule Heaters.Review.Actions do
             c.is_virtual == true and
               fragment("?->>'split_from' = ?", c.processing_metadata, ^to_string(clip.id))
         )
-        |> @repo_port.all()
+        |> Repo.all()
 
       split_clip_ids = Enum.map(split_clips, & &1.id)
 
       if not Enum.empty?(split_clip_ids) do
-        @repo_port.delete_all(from(c in Clip, where: c.id in ^split_clip_ids))
+        Repo.delete_all(from(c in Clip, where: c.id in ^split_clip_ids))
       end
 
       # Restore original clip to pending_review
-      @repo_port.update_all(
+      Repo.update_all(
         from(c in Clip, where: c.id == ^clip.id),
         set: [
           reviewed_at: nil,
@@ -293,7 +293,7 @@ defmodule Heaters.Review.Actions do
         lock: "FOR UPDATE SKIP LOCKED",
         select: c.id
       )
-      |> @repo_port.one()
+      |> Repo.one()
 
     if next_id, do: Heaters.Review.Queue.load_clip_with_assocs(next_id)
   end

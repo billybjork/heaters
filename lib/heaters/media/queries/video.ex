@@ -7,14 +7,14 @@ defmodule Heaters.Media.Queries.Video do
   """
 
   import Ecto.Query, warn: false
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.Video
 
   @doc """
   Get a source video by ID. Returns {:ok, source_video} if found, {:error, :not_found} otherwise.
   """
   def get_source_video(id) do
-    case @repo_port.get(Video, id) do
+    case Repo.get(Video, id) do
       nil -> {:error, :not_found}
       source_video -> {:ok, source_video}
     end
@@ -25,7 +25,7 @@ defmodule Heaters.Media.Queries.Video do
   """
   def get_videos_by_state(state) when is_binary(state) do
     from(s in Video, where: s.ingest_state == ^state)
-    |> @repo_port.all()
+    |> Repo.all()
   end
 
   @doc """
@@ -36,7 +36,7 @@ defmodule Heaters.Media.Queries.Video do
     states = ["new", "downloading", "download_failed"]
 
     from(s in Video, where: s.ingest_state in ^states)
-    |> @repo_port.all()
+    |> Repo.all()
   end
 
   @doc """
@@ -47,7 +47,7 @@ defmodule Heaters.Media.Queries.Video do
     from(s in Video,
       where: s.ingest_state == "downloaded" and is_nil(s.proxy_filepath)
     )
-    |> @repo_port.all()
+    |> Repo.all()
   end
 
   @doc """
@@ -58,7 +58,7 @@ defmodule Heaters.Media.Queries.Video do
     from(s in Video,
       where: not is_nil(s.proxy_filepath) and s.needs_splicing == true
     )
-    |> @repo_port.all()
+    |> Repo.all()
   end
 
   @doc """
@@ -76,6 +76,6 @@ defmodule Heaters.Media.Queries.Video do
           is_nil(s.cache_finalized_at) and
           (not is_nil(s.filepath) or not is_nil(s.proxy_filepath) or not is_nil(s.master_filepath))
     )
-    |> @repo_port.all()
+    |> Repo.all()
   end
 end

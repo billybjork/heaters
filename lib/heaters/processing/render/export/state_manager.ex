@@ -17,7 +17,7 @@ defmodule Heaters.Processing.Render.Export.StateManager do
   - Virtual to physical clip transitions
   """
 
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.Clip
   alias Heaters.Media.Queries.Clip, as: ClipQueries
   require Logger
@@ -148,7 +148,7 @@ defmodule Heaters.Processing.Render.Export.StateManager do
 
   defp update_clips_batch(clips, attrs) do
     # Use database transaction for atomic batch update
-    @repo_port.transaction(fn ->
+    Repo.transaction(fn ->
       clips
       |> Enum.map(&update_single_clip(&1, attrs))
       |> handle_batch_update_results()
@@ -171,14 +171,14 @@ defmodule Heaters.Processing.Render.Export.StateManager do
       _ ->
         error_count = length(errors)
         Logger.error("StateManager: Failed to update #{error_count} clips")
-        @repo_port.rollback("Failed to update #{error_count} clips")
+        Repo.rollback("Failed to update #{error_count} clips")
     end
   end
 
   defp update_single_clip(%Clip{} = clip, attrs) do
     clip
     |> Clip.changeset(attrs)
-    |> @repo_port.update([])
+    |> Repo.update([])
   end
 
   defp format_error_message(error) when is_binary(error), do: error

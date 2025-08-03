@@ -8,7 +8,7 @@ defmodule Heaters.Processing.Embeddings.Search do
   """
 
   import Ecto.Query, warn: false
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.Clip
   alias Heaters.Processing.Embeddings.Embedding
 
@@ -20,14 +20,14 @@ defmodule Heaters.Processing.Embeddings.Search do
       |> distinct([e], e.model_name)
       |> order_by([e], asc: e.model_name)
       |> select([e], e.model_name)
-      |> @repo_port.all()
+      |> Repo.all()
 
     gen_strats =
       Embedding
       |> distinct([e], e.generation_strategy)
       |> order_by([e], asc: e.generation_strategy)
       |> select([e], e.generation_strategy)
-      |> @repo_port.all()
+      |> Repo.all()
 
     source_videos =
       from(c in Clip,
@@ -37,7 +37,7 @@ defmodule Heaters.Processing.Embeddings.Search do
         order_by: sv.title,
         select: {sv.id, sv.title}
       )
-      |> @repo_port.all()
+      |> Repo.all()
 
     %{model_names: model_names, generation_strategies: gen_strats, source_videos: source_videos}
   end
@@ -78,10 +78,10 @@ defmodule Heaters.Processing.Embeddings.Search do
     |> order_by(fragment("RANDOM()"))
     |> limit(1)
     |> select([_e, c], c)
-    |> @repo_port.one()
+    |> Repo.one()
     |> case do
       nil -> nil
-      clip -> @repo_port.preload(clip, :source_video)
+      clip -> Repo.preload(clip, :source_video)
     end
   end
 
@@ -101,7 +101,7 @@ defmodule Heaters.Processing.Embeddings.Search do
       |> where([e], e.clip_id == ^main_clip_id)
       |> maybe_filter(m, g)
       |> select([e], e.embedding)
-      |> @repo_port.one!()
+      |> Repo.one!()
 
     Embedding
     |> where([e], e.clip_id != ^main_clip_id)
@@ -119,9 +119,9 @@ defmodule Heaters.Processing.Embeddings.Search do
         similarity_pct: fragment("round((1 - (? <=> ?)) * 100)::int", e.embedding, ^main_vec)
       }
     )
-    |> @repo_port.all()
+    |> Repo.all()
     |> Enum.map(fn %{clip: clip} = row ->
-      %{row | clip: @repo_port.preload(clip, [:clip_artifacts])}
+      %{row | clip: Repo.preload(clip, [:clip_artifacts])}
     end)
   end
 
@@ -134,7 +134,7 @@ defmodule Heaters.Processing.Embeddings.Search do
     |> where([e], e.clip_id == ^clip_id)
     |> where([e], e.model_name == ^model_name)
     |> where([e], e.generation_strategy == ^generation_strategy)
-    |> @repo_port.exists?()
+    |> Repo.exists?()
   end
 
   # Private helper functions

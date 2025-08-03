@@ -7,7 +7,7 @@ defmodule Heaters.Media.Queries.Clip do
   """
 
   import Ecto.Query, warn: false
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.Clip
 
   @doc """
@@ -15,7 +15,7 @@ defmodule Heaters.Media.Queries.Clip do
   """
   def get_clips_by_state(state) when is_binary(state) do
     from(c in Clip, where: c.ingest_state == ^state)
-    |> @repo_port.all()
+    |> Repo.all()
   end
 
   @doc """
@@ -26,7 +26,7 @@ defmodule Heaters.Media.Queries.Clip do
     states = ["review_approved", "keyframing", "keyframe_failed"]
 
     from(c in Clip, where: c.ingest_state in ^states)
-    |> @repo_port.all()
+    |> Repo.all()
   end
 
   @doc """
@@ -37,7 +37,7 @@ defmodule Heaters.Media.Queries.Clip do
     states = ["keyframed", "embedding", "embedding_failed"]
 
     from(c in Clip, where: c.ingest_state in ^states)
-    |> @repo_port.all()
+    |> Repo.all()
   end
 
   @doc """
@@ -45,7 +45,7 @@ defmodule Heaters.Media.Queries.Clip do
   Returns {:ok, clip} if found, {:error, :not_found} otherwise.
   """
   def get_clip(id) do
-    case @repo_port.get(Clip, id) do
+    case Repo.get(Clip, id) do
       nil -> {:error, :not_found}
       clip -> {:ok, clip}
     end
@@ -56,9 +56,9 @@ defmodule Heaters.Media.Queries.Clip do
   Returns {:ok, clip} if found, {:error, :not_found} otherwise.
   """
   def get_clip_with_artifacts(id) do
-    case @repo_port.get(Clip, id) do
+    case Repo.get(Clip, id) do
       nil -> {:error, :not_found}
-      clip -> {:ok, @repo_port.preload(clip, :clip_artifacts)}
+      clip -> {:ok, Repo.preload(clip, :clip_artifacts)}
     end
   end
 
@@ -66,7 +66,7 @@ defmodule Heaters.Media.Queries.Clip do
   Get a clip by ID. Raises if not found.
   """
   def get_clip!(id) do
-    @repo_port.get!(Clip, id) |> @repo_port.preload([:source_video, :clip_artifacts])
+    Repo.get!(Clip, id) |> Repo.preload([:source_video, :clip_artifacts])
   end
 
   @doc """
@@ -77,7 +77,7 @@ defmodule Heaters.Media.Queries.Clip do
     from(c in Clip,
       where: c.is_virtual == true and c.ingest_state == "review_approved"
     )
-    |> @repo_port.all()
+    |> Repo.all()
   end
 
   @doc """
@@ -90,7 +90,7 @@ defmodule Heaters.Media.Queries.Clip do
       select: c.source_video_id,
       distinct: true
     )
-    |> @repo_port.all()
+    |> Repo.all()
   end
 
   @doc "Fast count of clips still in `pending_review`."
@@ -98,7 +98,7 @@ defmodule Heaters.Media.Queries.Clip do
     Clip
     |> where([c], c.ingest_state == "pending_review" and is_nil(c.reviewed_at))
     |> select([c], count("*"))
-    |> @repo_port.one()
+    |> Repo.one()
   end
 
   @doc """

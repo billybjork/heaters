@@ -12,7 +12,7 @@ defmodule Heaters.Media.VirtualClip.Operations do
   """
 
   import Ecto.Query, warn: false
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.Clip
   alias Heaters.Media.VirtualClip.Operation
   alias Heaters.Media.VirtualClip
@@ -38,7 +38,7 @@ defmodule Heaters.Media.VirtualClip.Operations do
   @spec add_cut_point(integer(), integer(), integer()) ::
           {:ok, {Clip.t(), Clip.t()}} | {:error, any()}
   def add_cut_point(source_video_id, frame_number, user_id) do
-    @repo_port.transaction(fn ->
+    Repo.transaction(fn ->
       # 1. Find virtual clip that contains this frame
       case find_virtual_clip_containing_frame(source_video_id, frame_number) do
         {:ok, target_clip} ->
@@ -58,11 +58,11 @@ defmodule Heaters.Media.VirtualClip.Operations do
               )
 
             {:error, reason} ->
-              @repo_port.rollback(reason)
+              Repo.rollback(reason)
           end
 
         {:error, reason} ->
-          @repo_port.rollback(reason)
+          Repo.rollback(reason)
       end
     end)
   end
@@ -86,7 +86,7 @@ defmodule Heaters.Media.VirtualClip.Operations do
   @spec remove_cut_point(integer(), integer(), integer()) ::
           {:ok, Clip.t()} | {:error, any()}
   def remove_cut_point(source_video_id, frame_number, user_id) do
-    @repo_port.transaction(fn ->
+    Repo.transaction(fn ->
       # 1. Find two adjacent clips that share this cut point
       case find_adjacent_clips_at_frame(source_video_id, frame_number) do
         {:ok, {first_clip, second_clip}} ->
@@ -106,7 +106,7 @@ defmodule Heaters.Media.VirtualClip.Operations do
           )
 
         {:error, reason} ->
-          @repo_port.rollback(reason)
+          Repo.rollback(reason)
       end
     end)
   end
@@ -131,7 +131,7 @@ defmodule Heaters.Media.VirtualClip.Operations do
   @spec move_cut_point(integer(), integer(), integer(), integer()) ::
           {:ok, {Clip.t(), Clip.t()}} | {:error, any()}
   def move_cut_point(source_video_id, old_frame, new_frame, user_id) do
-    @repo_port.transaction(fn ->
+    Repo.transaction(fn ->
       # 1. Find two adjacent clips at the old cut point
       case find_adjacent_clips_at_frame(source_video_id, old_frame) do
         {:ok, {first_clip, second_clip}} ->
@@ -156,11 +156,11 @@ defmodule Heaters.Media.VirtualClip.Operations do
               )
 
             {:error, reason} ->
-              @repo_port.rollback(reason)
+              Repo.rollback(reason)
           end
 
         {:error, reason} ->
-          @repo_port.rollback(reason)
+          Repo.rollback(reason)
       end
     end)
   end
@@ -246,7 +246,7 @@ defmodule Heaters.Media.VirtualClip.Operations do
       processing_metadata:
         Map.put(original_clip.processing_metadata || %{}, "archived_reason", "split_operation")
     })
-    |> @repo_port.update!()
+    |> Repo.update!()
 
     # Create first new clip
     {:ok, first_clip} =
@@ -343,7 +343,7 @@ defmodule Heaters.Media.VirtualClip.Operations do
         processing_metadata:
           Map.put(clip.processing_metadata || %{}, "archived_reason", "merge_operation")
       })
-      |> @repo_port.update!()
+      |> Repo.update!()
     end)
 
     # Create merged clip
@@ -446,7 +446,7 @@ defmodule Heaters.Media.VirtualClip.Operations do
         processing_metadata:
           Map.put(first_clip.processing_metadata || %{}, "last_modified_by_user_id", user_id)
       })
-      |> @repo_port.update([])
+      |> Repo.update([])
 
     # Update second clip
     {:ok, updated_second} =
@@ -460,7 +460,7 @@ defmodule Heaters.Media.VirtualClip.Operations do
         processing_metadata:
           Map.put(second_clip.processing_metadata || %{}, "last_modified_by_user_id", user_id)
       })
-      |> @repo_port.update([])
+      |> Repo.update([])
 
     # Log audit trail
     old_frame = first_clip.cut_points["end_frame"]
@@ -533,7 +533,7 @@ defmodule Heaters.Media.VirtualClip.Operations do
         order_by: c.start_time_seconds
       )
 
-    @repo_port.all(query)
+    Repo.all(query)
   end
 
   @spec create_clips_from_validated_cut_points(integer(), list(), map()) ::
@@ -596,7 +596,7 @@ defmodule Heaters.Media.VirtualClip.Operations do
 
     %Clip{}
     |> Clip.changeset(clip_attrs)
-    |> @repo_port.insert()
+    |> Repo.insert()
   end
 
   @spec get_next_source_video_order(integer()) :: integer()
@@ -607,7 +607,7 @@ defmodule Heaters.Media.VirtualClip.Operations do
           c.ingest_state != "archived",
       select: max(c.source_video_order)
     )
-    |> @repo_port.one()
+    |> Repo.one()
     |> case do
       nil -> 1
       max_order -> max_order + 1
@@ -644,7 +644,7 @@ defmodule Heaters.Media.VirtualClip.Operations do
 
     %Operation{}
     |> Operation.changeset(attrs)
-    |> @repo_port.insert()
+    |> Repo.insert()
     |> case do
       {:ok, _operation} ->
         Logger.debug("Logged cut point operation: #{operation_type} at frame #{frame_number}")

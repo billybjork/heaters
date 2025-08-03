@@ -6,7 +6,7 @@ defmodule Heaters.Media.Commands.Video do
   should go through `Heaters.Media.Queries.Video` to maintain proper CQRS separation.
   """
 
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.Video
   require Logger
 
@@ -16,7 +16,7 @@ defmodule Heaters.Media.Commands.Video do
 
     video
     |> cast(%{cache_finalized_at: DateTime.utc_now()}, [:cache_finalized_at])
-    |> @repo_port.update([])
+    |> Repo.update([])
   end
 
   # ---------------------------------------------------------------------------
@@ -48,7 +48,7 @@ defmodule Heaters.Media.Commands.Video do
   def update_source_video(%Video{} = source_video, attrs) do
     source_video
     |> Video.changeset(attrs)
-    |> @repo_port.update([])
+    |> Repo.update([])
   end
 
   # ---------------------------------------------------------------------------
@@ -79,7 +79,7 @@ defmodule Heaters.Media.Commands.Video do
 
     %Video{}
     |> Video.changeset(attrs)
-    |> @repo_port.insert()
+    |> Repo.insert()
     |> case do
       {:ok, source_video} ->
         Logger.info(

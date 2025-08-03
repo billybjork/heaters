@@ -38,7 +38,7 @@ defmodule Heaters.Processing.DetectScenes.Worker do
     queue: :media_processing,
     unique: [period: 900, fields: [:args]]
 
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.{Video, Queries}
   alias Heaters.Processing.DetectScenes.StateManager
   alias Heaters.Media.VirtualClip
@@ -119,7 +119,7 @@ defmodule Heaters.Processing.DetectScenes.Worker do
         select: count("*")
       )
 
-    @repo_port.one(query) > 0
+    Repo.one(query) > 0
   end
 
   defp run_scene_detection_task(source_video) do

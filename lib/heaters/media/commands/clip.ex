@@ -4,11 +4,11 @@ defmodule Heaters.Media.Commands.Clip do
 
   This module contains ONLY write operations (INSERT, UPDATE, DELETE). All database reads
   should go through `Heaters.Media.Queries.Clip` to maintain proper CQRS separation.
-  All DB interaction goes through `Heaters.Database.RepoPort`, keeping
-  “I/O at the edges”.
+  All DB interaction goes through `Heaters.Repo`, keeping
+  "I/O at the edges".
   """
 
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.{Clip, Queries}
 
   # ---------------------------------------------------------------------------
@@ -21,7 +21,7 @@ defmodule Heaters.Media.Commands.Clip do
 
     clip
     |> cast(%{ingest_state: new_state}, [:ingest_state])
-    |> @repo_port.update([])
+    |> Repo.update([])
   end
 
   @spec mark_failed(Clip.t(), String.t(), String.t()) :: {:ok, Clip.t()} | {:error, any()}
@@ -36,7 +36,7 @@ defmodule Heaters.Media.Commands.Clip do
 
     clip
     |> cast(attrs, [:ingest_state, :last_error, :retry_count])
-    |> @repo_port.update([])
+    |> Repo.update([])
   end
 
   # ---------------------------------------------------------------------------
@@ -44,11 +44,11 @@ defmodule Heaters.Media.Commands.Clip do
   # ---------------------------------------------------------------------------
 
   def create_clips(rows) when is_list(rows) do
-    @repo_port.insert_all(Clip, rows, returning: true)
+    Repo.insert_all(Clip, rows, returning: true)
   end
 
   def batch_update(queryable, updates) do
-    @repo_port.update_all(queryable, set: Enum.to_list(updates))
+    Repo.update_all(queryable, set: Enum.to_list(updates))
   end
 
   @doc """
@@ -58,7 +58,7 @@ defmodule Heaters.Media.Commands.Clip do
   def create_clip(clip_attrs) when is_map(clip_attrs) do
     %Clip{}
     |> Clip.changeset(clip_attrs)
-    |> @repo_port.insert()
+    |> Repo.insert()
   end
 
   @doc """
@@ -75,7 +75,7 @@ defmodule Heaters.Media.Commands.Clip do
         try do
           # Use ON CONFLICT DO NOTHING to handle duplicate clip_filepath gracefully
           {_count, clips} =
-            @repo_port.insert_all(
+            Repo.insert_all(
               Clip,
               clips_attrs,
               returning: true,
@@ -103,7 +103,7 @@ defmodule Heaters.Media.Commands.Clip do
     try do
       count =
         from(c in Clip, where: c.clip_identifier in ^identifiers)
-        |> @repo_port.aggregate(:count, :id)
+        |> Repo.aggregate(:count, :id)
 
       {:ok, count}
     rescue
@@ -121,7 +121,7 @@ defmodule Heaters.Media.Commands.Clip do
     try do
       clips =
         from(c in Clip, where: c.clip_identifier in ^identifiers)
-        |> @repo_port.all()
+        |> Repo.all()
 
       {:ok, clips}
     rescue
@@ -140,7 +140,7 @@ defmodule Heaters.Media.Commands.Clip do
     try do
       clips =
         from(c in Clip, where: c.clip_identifier in ^identifiers)
-        |> @repo_port.all()
+        |> Repo.all()
 
       {:ok, clips}
     rescue
@@ -165,7 +165,7 @@ defmodule Heaters.Media.Commands.Clip do
   def update_clip(%Clip{} = clip, attrs) do
     clip
     |> Clip.changeset(attrs)
-    |> @repo_port.update([])
+    |> Repo.update([])
   end
 
   # ---------------------------------------------------------------------------

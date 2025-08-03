@@ -28,7 +28,7 @@ defmodule Heaters.Media.Support.ErrorHandling do
       Support.ErrorHandling.mark_failed(clip_id, "export_failed", {:s3_error, "Upload timeout"})
   """
 
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.Clip
   alias Heaters.Media.Queries.Clip, as: ClipQueries
   require Logger
@@ -142,6 +142,6 @@ defmodule Heaters.Media.Support.ErrorHandling do
   defp update_clip(%Clip{} = clip, attrs) do
     clip
     |> Clip.changeset(attrs)
-    |> @repo_port.update([])
+    |> Repo.update([])
   end
 end

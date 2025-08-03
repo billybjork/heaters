@@ -7,7 +7,7 @@ defmodule Heaters.Processing.Embeddings.Workflow do
   """
 
   import Ecto.Query, warn: false
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.Clip
   alias Heaters.Processing.Embeddings.Embedding
   alias Heaters.Processing.Embeddings.Types.EmbedResult
@@ -35,7 +35,7 @@ defmodule Heaters.Processing.Embeddings.Workflow do
   def complete_embedding(clip_id, embedding_data) do
     start_time = System.monotonic_time()
 
-    case @repo_port.transaction(fn ->
+    case Repo.transaction(fn ->
            with {:ok, clip} <- ClipQueries.get_clip(clip_id),
                 {:ok, updated_clip} <-
                   update_clip(clip, %{
@@ -46,7 +46,7 @@ defmodule Heaters.Processing.Embeddings.Workflow do
                 {:ok, embedding} <- create_embedding(clip_id, embedding_data) do
              {updated_clip, embedding}
            else
-             {:error, reason} -> @repo_port.rollback(reason)
+             {:error, reason} -> Repo.rollback(reason)
            end
          end) do
       {:ok, {_updated_clip, embedding}} ->
@@ -111,7 +111,7 @@ defmodule Heaters.Processing.Embeddings.Workflow do
   defp update_clip(%Clip{} = clip, attrs) do
     clip
     |> Clip.changeset(attrs)
-    |> @repo_port.update([])
+    |> Repo.update([])
   end
 
   defp validate_state_transition(current_state, target_state) do
@@ -151,7 +151,7 @@ defmodule Heaters.Processing.Embeddings.Workflow do
 
     %Embedding{}
     |> Embedding.changeset(attrs)
-    |> @repo_port.insert()
+    |> Repo.insert()
     |> case do
       {:ok, embedding} ->
         Logger.info("Successfully created embedding for clip_id: #{clip_id}")

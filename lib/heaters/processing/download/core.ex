@@ -6,7 +6,7 @@ defmodule Heaters.Processing.Download.Core do
   Splice operations are handled separately by the Videos.Operations.Splice module.
   """
 
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.Video, as: SourceVideo
   alias Heaters.Media.Queries.Video, as: VideoQueries
   require Logger
@@ -121,7 +121,7 @@ defmodule Heaters.Processing.Download.Core do
 
     %SourceVideo{}
     |> SourceVideo.changeset(attrs)
-    |> @repo_port.insert()
+    |> Repo.insert()
     |> case do
       {:ok, source_video} ->
         Logger.info(
@@ -189,6 +189,6 @@ defmodule Heaters.Processing.Download.Core do
   defp update_source_video(%SourceVideo{} = source_video, attrs) do
     source_video
     |> SourceVideo.changeset(attrs)
-    |> @repo_port.update([])
+    |> Repo.update([])
   end
 end

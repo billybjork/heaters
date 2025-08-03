@@ -7,7 +7,7 @@ defmodule Heaters.Storage.Archive.Worker do
   import Ecto.Query, warn: false
   alias Heaters.Media.Queries.Clip, as: ClipQueries
   alias Heaters.Media.Commands.Clip, as: ClipCommands
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Storage.S3
   alias Heaters.Media.Clip
   alias Heaters.Pipeline.WorkerBehavior
@@ -73,7 +73,7 @@ defmodule Heaters.Storage.Archive.Worker do
       from(c in Clip, where: c.id == ^clip.id),
       set: [ingest_state: "archived", action_committed_at: DateTime.utc_now()]
     )
-    |> @repo_port.transaction()
+    |> Repo.transaction()
     |> case do
       {:ok, %{update_clip: {1, _}}} ->
         Logger.info("ArchiveWorker: Successfully archived clip #{clip.id}")

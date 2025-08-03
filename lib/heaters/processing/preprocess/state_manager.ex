@@ -16,7 +16,7 @@ defmodule Heaters.Processing.Preprocess.StateManager do
   - State validation for preprocessing workflow
   """
 
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.Video
   alias Heaters.Media.Queries.Video, as: VideoQueries
   require Logger
@@ -143,7 +143,7 @@ defmodule Heaters.Processing.Preprocess.StateManager do
   defp update_source_video(%Video{} = source_video, attrs) do
     source_video
     |> Video.changeset(attrs)
-    |> @repo_port.update([])
+    |> Repo.update([])
   end
 
   defp format_error_message(error) when is_binary(error), do: error

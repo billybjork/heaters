@@ -111,7 +111,7 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 - **`Processing`**: All automated processing stages (download/, preprocess/, detect_scenes/, render/, keyframes/, embeddings/, py/)
 - **`Storage`**: All storage concerns with context separation (pipeline_cache/, playback_cache/, archive/, s3.ex)
 - **`Review`**: Human workflow (queue management, review actions)
-- **`Database`**: Persistence layer with ports & adapters pattern
+- **`Database`**: Direct Ecto repository operations
 - **`Pipeline`**: Declarative orchestration configuration
 
 ### Centralized Media Processing Configuration
@@ -148,7 +148,7 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 - **`Review`**: Human-driven review workflow (queues, LiveView helpers, actions)
 - **`Processing`**: Automated CPU work (download → preprocess → detect_scenes → render/export → keyframes → embeddings)
 - **`Storage`**: All storage concerns (temp cache, S3 adapters, archive, temp dirs, playback cache for tiny-file generation)
-- **`Database`**: Database operations and persistence layer (repo port, ecto adapter)
+- **`Database`**: Direct database operations via Ecto repository
 - **`Pipeline`**: Declarative orchestration metadata & helpers (stage map, dispatcher, worker behaviour)
 - **`Python Tasks`**: Focused execution of media processing, scene detection, S3 operations with configuration provided by Elixir
 

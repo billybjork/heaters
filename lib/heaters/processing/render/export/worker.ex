@@ -59,7 +59,7 @@ defmodule Heaters.Processing.Render.Export.Worker do
     # 30 minutes for large exports
     unique: [period: 1800, fields: [:args]]
 
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.Clip
   alias Heaters.Processing.Render.Export.StateManager
   alias Heaters.Pipeline.WorkerBehavior
@@ -104,7 +104,7 @@ defmodule Heaters.Processing.Render.Export.Worker do
         preload: [:source_video]
       )
 
-    @repo_port.all(query)
+    Repo.all(query)
   end
 
   defp process_virtual_clips_batch([first_clip | _rest] = clips) do

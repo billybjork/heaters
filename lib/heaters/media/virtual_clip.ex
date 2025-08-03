@@ -40,7 +40,7 @@ defmodule Heaters.Media.VirtualClip do
   """
 
   import Ecto.Query, warn: false
-  @repo_port Application.compile_env(:heaters, :repo_port, Heaters.Database.EctoAdapter)
+  alias Heaters.Repo
   alias Heaters.Media.Clip
   alias Heaters.Media.VirtualClip.{Operations, Validation}
 
@@ -100,6 +100,6 @@ defmodule Heaters.Media.VirtualClip do
         order_by: [asc: c.start_frame]
       )
 
-    @repo_port.all(query)
+    Repo.all(query)
   end
 end
