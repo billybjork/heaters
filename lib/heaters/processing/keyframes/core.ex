@@ -241,7 +241,7 @@ defmodule Heaters.Processing.Keyframes.Core do
   end
 
   defp update_clip_to_keyframed(clip_id, _keyframe_metadata) do
-    with {:ok, clip} <- Heaters.Media.get_clip(clip_id) do
+    with {:ok, clip} <- Clips.get_clip(clip_id) do
       Clips.update_state(clip, "keyframed")
     end
   end
@@ -264,7 +264,7 @@ defmodule Heaters.Processing.Keyframes.Core do
   defp handle_extraction_failure(clip, reason) do
     error_message = ErrorFormatting.format_error(reason)
 
-    with {:ok, clip} <- Heaters.Media.get_clip(clip.id) do
+    with {:ok, clip} <- Clips.get_clip(clip.id) do
       case Clips.mark_failed(clip, "keyframe_failed", error_message) do
         {:ok, _} ->
           Logger.error("Marked clip #{clip.id} as keyframe_failed: #{error_message}")

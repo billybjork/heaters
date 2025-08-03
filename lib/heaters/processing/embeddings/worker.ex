@@ -7,6 +7,7 @@ defmodule Heaters.Processing.Embeddings.Worker do
   alias Heaters.Processing.Embeddings.Workflow
   alias Heaters.Processing.Py.Runner, as: PyRunner
   alias Heaters.Pipeline.WorkerBehavior
+  alias Heaters.Media.Clips
   require Logger
 
   @complete_states ["embedded"]
@@ -16,7 +17,7 @@ defmodule Heaters.Processing.Embeddings.Worker do
 
   @impl WorkerBehavior
   def handle_work(%{"clip_id" => clip_id} = args) do
-    with {:ok, clip} <- Heaters.Media.get_clip(clip_id),
+    with {:ok, clip} <- Clips.get_clip(clip_id),
          :ok <- check_idempotency(clip) do
       handle_embedding_work(args)
     else
@@ -35,9 +36,9 @@ defmodule Heaters.Processing.Embeddings.Worker do
   defp handle_embedding_work(%{"clip_id" => clip_id} = args) do
     Logger.info("EmbeddingWorker: Starting embedding generation for clip_id: #{clip_id}")
 
-    with {:ok, clip} <- Heaters.Media.get_clip(clip_id),
+    with {:ok, clip} <- Clips.get_clip(clip_id),
          {:ok, _updated_clip} <- ensure_embedding_state(clip_id, clip),
-         {:ok, clip_with_artifacts} <- Heaters.Media.get_clip_with_artifacts(clip_id) do
+         {:ok, clip_with_artifacts} <- Clips.get_clip_with_artifacts(clip_id) do
       run_embedding_task(clip_with_artifacts, args)
     else
       {:error, reason} ->
