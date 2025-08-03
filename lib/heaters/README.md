@@ -107,7 +107,7 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 
 ### Context-Oriented Organization
 
-- **`Media`**: Domain entities (clips, videos, virtual clips, artifacts) with pragmatic operation modules
+- **`Media`**: Domain entities (clips, videos, virtual clips, artifacts) with pragmatic operation modules and cut point operations
 - **`Processing`**: All automated processing stages (download/, preprocess/, detect_scenes/, render/, keyframes/, embeddings/, py/)
 - **`Storage`**: All storage concerns with context separation (pipeline_cache/, playback_cache/, archive/, s3.ex)
 - **`Review`**: Human workflow (queue management, review actions)
@@ -144,7 +144,7 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 
 ## Context Responsibilities
 
-- **`Media`**: Domain entities (videos, clips, virtual clips, artifacts) and consolidated operation modules
+- **`Media`**: Domain entities (videos, clips, virtual clips, artifacts) and consolidated operation modules including cut point operations
 - **`Review`**: Human-driven review workflow (queues, LiveView helpers, actions)
 - **`Processing`**: Automated CPU work (download → preprocess → detect_scenes → render/export → keyframes → embeddings)
 - **`Storage`**: All storage concerns (temp cache, S3 adapters, archive, temp dirs, playback cache for tiny-file generation)

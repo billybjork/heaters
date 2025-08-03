@@ -1,4 +1,4 @@
-defmodule Heaters.Media.VirtualClip.Operation do
+defmodule Heaters.Media.VirtualClip.CutPointOperation do
   @moduledoc """
   Schema for cut point operations audit trail.
 

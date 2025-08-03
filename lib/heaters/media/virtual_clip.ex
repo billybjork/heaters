@@ -27,31 +27,31 @@ defmodule Heaters.Media.VirtualClip do
   ## Architecture
 
   - **Core Creation**: This module handles virtual clip creation from scene detection
-  - **Cut Point Operations**: Delegated to `VirtualClip.Operations`
+  - **Cut Point Operations**: Delegated to `VirtualClip.CutPointOperations`
   - **MECE Validation**: Delegated to `VirtualClip.Validation`
-  - **Audit Trail**: Handled by `VirtualClip.Operation` schema
+  - **Audit Trail**: Handled by `VirtualClip.CutPointOperation` schema
 
   ## Module Organization
 
   - **`VirtualClip`** (this module) - Core creation and basic management
-  - **`VirtualClip.Operations`** - Add/remove/move cut point operations
+  - **`VirtualClip.CutPointOperations`** - Add/remove/move cut point operations
   - **`VirtualClip.Validation`** - MECE validation and coverage checking
-  - **`VirtualClip.Operation`** - Audit trail schema
+  - **`VirtualClip.CutPointOperation`** - Audit trail schema
   """
 
   import Ecto.Query, warn: false
   alias Heaters.Repo
   alias Heaters.Media.Clip
-  alias Heaters.Media.VirtualClip.{Operations, Validation}
+  alias Heaters.Media.VirtualClip.{CutPointOperations, Validation}
 
   require Logger
 
   # Delegate cut point operations to specialized module
-  defdelegate add_cut_point(source_video_id, frame_number, user_id), to: Operations
-  defdelegate remove_cut_point(source_video_id, frame_number, user_id), to: Operations
+  defdelegate add_cut_point(source_video_id, frame_number, user_id), to: CutPointOperations
+  defdelegate remove_cut_point(source_video_id, frame_number, user_id), to: CutPointOperations
 
   defdelegate move_cut_point(source_video_id, old_frame, new_frame, user_id),
-    to: Operations
+    to: CutPointOperations
 
   # Delegate MECE validation to specialized module
   defdelegate validate_mece_for_source_video(source_video_id), to: Validation
@@ -84,7 +84,7 @@ defmodule Heaters.Media.VirtualClip do
   @spec create_virtual_clips_from_cut_points(integer(), list(), map()) ::
           {:ok, list(Clip.t())} | {:error, any()}
   def create_virtual_clips_from_cut_points(source_video_id, cut_points, metadata \\ %{}) do
-    Operations.create_virtual_clips_from_cut_points(source_video_id, cut_points, metadata)
+    CutPointOperations.create_virtual_clips_from_cut_points(source_video_id, cut_points, metadata)
   end
 
   @doc """

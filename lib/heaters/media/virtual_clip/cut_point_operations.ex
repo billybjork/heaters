@@ -1,4 +1,4 @@
-defmodule Heaters.Media.VirtualClip.Operations do
+defmodule Heaters.Media.VirtualClip.CutPointOperations do
   @moduledoc """
   Cut point manipulation operations for virtual clips.
 
@@ -14,7 +14,7 @@ defmodule Heaters.Media.VirtualClip.Operations do
   import Ecto.Query, warn: false
   alias Heaters.Repo
   alias Heaters.Media.Clip
-  alias Heaters.Media.VirtualClip.Operation
+  alias Heaters.Media.VirtualClip.CutPointOperation
   alias Heaters.Media.VirtualClip
   alias Heaters.Media.VirtualClip.Validation
   require Logger
@@ -642,8 +642,8 @@ defmodule Heaters.Media.VirtualClip.Operations do
       metadata: metadata
     }
 
-    %Operation{}
-    |> Operation.changeset(attrs)
+    %CutPointOperation{}
+    |> CutPointOperation.changeset(attrs)
     |> Repo.insert()
     |> case do
       {:ok, _operation} ->
