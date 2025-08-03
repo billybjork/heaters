@@ -9,7 +9,7 @@ defmodule Heaters.Application do
   @impl true
   def start(_type, _args) do
     # Clean up any orphaned temporary files from previous runs
-    cleanup_orphaned_temp_files()
+    Heaters.Storage.TempManager.cleanup_orphaned_temp_files()
 
     children = [
       HeatersWeb.Telemetry,
@@ -36,21 +36,5 @@ defmodule Heaters.Application do
   def config_change(changed, _new, removed) do
     HeatersWeb.Endpoint.config_change(changed, removed)
     :ok
-  end
-
-  # Private helper for startup cleanup
-  defp cleanup_orphaned_temp_files() do
-    case Heaters.Storage.TempManager.cleanup_orphaned_temp_files() do
-      {:ok, 0} ->
-        Logger.debug("Application startup: No orphaned temp files found")
-
-      {:ok, count} ->
-        Logger.info("Application startup: Cleaned up #{count} orphaned temp directories")
-
-      {:error, reason} ->
-        Logger.warning(
-          "Application startup: Failed to cleanup orphaned temp files: #{inspect(reason)}"
-        )
-    end
   end
 end
