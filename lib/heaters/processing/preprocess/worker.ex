@@ -46,7 +46,14 @@ defmodule Heaters.Processing.Preprocess.Worker do
   # JUSTIFICATION: PyRunner requires DEV_DATABASE_URL and S3_DEV_BUCKET_NAME environment
   # variables. When not set, PyRunner always fails, making success patterns and their 
   # dependent functions unreachable. In configured environments, these will succeed.
-  @dialyzer {:nowarn_function, [run_python_preprocessing: 2, process_temp_cache_results: 3, process_preprocessing_results: 2, maybe_put: 3, generate_s3_key: 3]}
+  @dialyzer {:nowarn_function,
+             [
+               run_python_preprocessing: 2,
+               process_temp_cache_results: 3,
+               process_preprocessing_results: 2,
+               maybe_put: 3,
+               generate_s3_key: 3
+             ]}
 
   @impl WorkerBehavior
   def handle_work(args) do

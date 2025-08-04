@@ -71,7 +71,15 @@ defmodule Heaters.Processing.Render.Export.Worker do
   # JUSTIFICATION: PyRunner requires DEV_DATABASE_URL and S3_DEV_BUCKET_NAME environment
   # variables. When not set, PyRunner always fails, making success patterns and their
   # dependent functions unreachable. In configured environments, these will succeed.
-  @dialyzer {:nowarn_function, [handle_export_work: 1, run_export_task: 3, process_export_results: 2, validate_export_results: 2, update_clips_to_physical: 3, update_single_clip_to_physical: 3]}
+  @dialyzer {:nowarn_function,
+             [
+               handle_export_work: 1,
+               run_export_task: 3,
+               process_export_results: 2,
+               validate_export_results: 2,
+               update_clips_to_physical: 3,
+               update_single_clip_to_physical: 3
+             ]}
 
   @impl WorkerBehavior
   def handle_work(args) do

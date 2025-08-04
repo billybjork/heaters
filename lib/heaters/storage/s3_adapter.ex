@@ -99,21 +99,13 @@ defmodule Heaters.Storage.S3Adapter do
           Path.join(System.tmp_dir!(), "s3_json_#{System.unique_integer([:positive])}.json")
 
         try do
-          case S3.download_file(s3_key, temp_file) do
-            {:ok, ^temp_file} ->
-              case File.read(temp_file) do
-                {:ok, json_content} ->
-                  case Jason.decode(json_content) do
-                    {:ok, data} ->
-                      {:ok, data}
-
-                    {:error, %Jason.DecodeError{} = error} ->
-                      {:error, "JSON decode error: #{Exception.message(error)}"}
-                  end
-
-                {:error, reason} ->
-                  {:error, "File read error: #{inspect(reason)}"}
-              end
+          with {:ok, ^temp_file} <- S3.download_file(s3_key, temp_file),
+               {:ok, json_content} <- File.read(temp_file),
+               {:ok, data} <- Jason.decode(json_content) do
+            {:ok, data}
+          else
+            {:error, %Jason.DecodeError{} = error} ->
+              {:error, "JSON decode error: #{Exception.message(error)}"}
 
             {:error, reason} ->
               {:error, reason}
@@ -138,21 +130,19 @@ defmodule Heaters.Storage.S3Adapter do
     temp_file = Path.join(System.tmp_dir!(), "s3_json_#{System.unique_integer([:positive])}.json")
 
     try do
-      case Jason.encode(data, pretty: true) do
-        {:ok, json_content} ->
-          case File.write(temp_file, json_content) do
-            :ok ->
-              case S3.upload_file_simple(temp_file, s3_key) do
-                :ok -> :ok
-                error -> error
-              end
-
-            {:error, reason} ->
-              {:error, "File write error: #{inspect(reason)}"}
-          end
-
+      with {:ok, json_content} <- Jason.encode(data, pretty: true),
+           :ok <- File.write(temp_file, json_content),
+           :ok <- S3.upload_file_simple(temp_file, s3_key) do
+        :ok
+      else
         {:error, %Jason.EncodeError{} = error} ->
           {:error, "JSON encode error: #{Exception.message(error)}"}
+
+        {:error, reason} ->
+          {:error, "File write error: #{inspect(reason)}"}
+
+        error ->
+          error
       end
     after
       # Clean up temporary file

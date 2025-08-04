@@ -35,7 +35,8 @@ defmodule HeatersWeb.VideoUrlHelper do
     build_virtual_clip_url(clip, source_video)
   end
 
-  def get_video_url(%{clip_filepath: filepath} = _clip, _source_video) when not is_nil(filepath) do
+  def get_video_url(%{clip_filepath: filepath} = _clip, _source_video)
+      when not is_nil(filepath) do
     # Physical clip - has an actual file
     url = build_cloudfront_url(filepath)
     {:ok, url, :direct_s3}
@@ -52,8 +53,9 @@ defmodule HeatersWeb.VideoUrlHelper do
   Returns true if the clip has the necessary file available (proxy for virtual, clip file for physical).
   """
   @spec streamable?(map(), map()) :: boolean()
-  def streamable?(%{clip_filepath: nil}, %{proxy_filepath: proxy_path}) when not is_nil(proxy_path),
-    do: true
+  def streamable?(%{clip_filepath: nil}, %{proxy_filepath: proxy_path})
+      when not is_nil(proxy_path),
+      do: true
 
   def streamable?(%{clip_filepath: clip_path}, _source_video)
       when not is_nil(clip_path),

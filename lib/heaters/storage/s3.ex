@@ -35,8 +35,6 @@ defmodule Heaters.Storage.S3 do
   # S3 limit for delete_objects operation
   @max_delete_batch_size 1000
 
-
-
   @doc """
   Deletes a list of S3 objects in batches.
   Returns {:ok, deleted_count} or {:error, reason}.
@@ -521,7 +519,9 @@ defmodule Heaters.Storage.S3 do
         storage_class: storage_class
       }
 
-      case Heaters.Processing.Py.Runner.run_python_task("upload_s3", upload_args, timeout: timeout) do
+      case Heaters.Processing.Py.Runner.run_python_task("upload_s3", upload_args,
+             timeout: timeout
+           ) do
         {:ok, result} ->
           Logger.info("#{operation_name}: Upload completed successfully")
           Logger.debug("#{operation_name}: Upload result: #{inspect(result)}")

@@ -81,18 +81,14 @@ defmodule Heaters.Processing.Keyframes.Validation do
   - `{:error, atom()}` if transition is invalid
   """
   @spec validate_keyframe_state_transition(String.t(), String.t()) :: :ok | {:error, atom()}
-  def validate_keyframe_state_transition(current_state, target_state) do
-    case {current_state, target_state} do
-      # Valid transitions for keyframing
-      {"review_approved", "keyframing"} -> :ok
-      {"keyframing_failed", "keyframing"} -> :ok
-      {"keyframe_failed", "keyframing"} -> :ok
-      {"keyframing", "keyframed"} -> :ok
-      {"keyframing", "keyframe_failed"} -> :ok
-      # Invalid transitions
-      _ -> {:error, :invalid_state_transition}
-    end
-  end
+  # Valid transitions for keyframing
+  def validate_keyframe_state_transition("review_approved", "keyframing"), do: :ok
+  def validate_keyframe_state_transition("keyframing_failed", "keyframing"), do: :ok
+  def validate_keyframe_state_transition("keyframe_failed", "keyframing"), do: :ok
+  def validate_keyframe_state_transition("keyframing", "keyframed"), do: :ok
+  def validate_keyframe_state_transition("keyframing", "keyframe_failed"), do: :ok
+  # Invalid transitions
+  def validate_keyframe_state_transition(_, _), do: {:error, :invalid_state_transition}
 
   ## Private helper functions
 

@@ -32,7 +32,7 @@ defmodule Heaters.Processing.Download.Worker do
   alias Heaters.Processing.Render.FFmpegConfig
 
   require Logger
-  
+
   # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
   #
   # JUSTIFICATION: PyRunner requires DEV_DATABASE_URL and S3_DEV_BUCKET_NAME environment
@@ -43,7 +43,13 @@ defmodule Heaters.Processing.Download.Worker do
   # handle_temp_cache_download_completion) genuinely unreachable in such environments.
   #
   # In properly configured environments, these functions WILL be called and succeed.
-  @dialyzer {:nowarn_function, [handle_ingest_work: 1, convert_keys_to_atoms: 1, handle_temp_cache_download_completion: 2]}
+  @dialyzer {:nowarn_function,
+             [
+               handle_ingest_work: 1,
+               convert_keys_to_atoms: 1,
+               safe_string_to_atom: 1,
+               handle_temp_cache_download_completion: 2
+             ]}
 
   # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, [handle_work: 1]}
@@ -178,7 +184,7 @@ defmodule Heaters.Processing.Download.Worker do
 
   defp convert_keys_to_atoms(map) when is_map(map) do
     for {key, value} <- map, into: %{} do
-      {String.to_atom(key), convert_keys_to_atoms(value)}
+      {safe_string_to_atom(key), convert_keys_to_atoms(value)}
     end
   end
 
@@ -187,6 +193,32 @@ defmodule Heaters.Processing.Download.Worker do
   end
 
   defp convert_keys_to_atoms(other), do: other
+
+  # Safe atom conversion with allowlist for expected metadata keys
+  defp safe_string_to_atom(key) when is_binary(key) do
+    case key do
+      # Known metadata keys from Python download task
+      "filepath" -> :filepath
+      "local_filepath" -> :local_filepath
+      "title" -> :title
+      "duration" -> :duration
+      "filesize" -> :filesize
+      "format_id" -> :format_id
+      "ext" -> :ext
+      "width" -> :width
+      "height" -> :height
+      "fps" -> :fps
+      "vcodec" -> :vcodec
+      "acodec" -> :acodec
+      "format" -> :format
+      "resolution" -> :resolution
+      "filesize_approx" -> :filesize_approx
+      # Keep unknown keys as strings to avoid atom table pollution
+      _ -> key
+    end
+  end
+
+  defp safe_string_to_atom(key), do: key
 
   # Handle download completion when using temp cache
   defp handle_temp_cache_download_completion(source_video_id, metadata) do

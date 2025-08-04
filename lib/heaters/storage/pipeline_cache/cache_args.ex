@@ -201,7 +201,17 @@ defmodule Heaters.Storage.PipelineCache.CacheArgs do
   defp get_local_path_key(key) do
     key_str = to_string(key)
     base = String.replace_suffix(key_str, "_path", "")
-    String.to_atom("#{base}_local_path")
+    local_path_key = "#{base}_local_path"
+
+    # Use safe atom conversion for known path keys
+    case local_path_key do
+      "source_video_local_path" -> :source_video_local_path
+      "proxy_video_local_path" -> :proxy_video_local_path
+      "master_video_local_path" -> :master_video_local_path
+      "keyframe_video_local_path" -> :keyframe_video_local_path
+      # Keep unknown keys as strings to avoid atom table pollution
+      _ -> local_path_key
+    end
   end
 
   defp extract_temp_file_path(results, key) do

@@ -179,7 +179,8 @@ defmodule Heaters.Review.Actions do
   # -------------------------------------------------------------------------
 
   # Clip split: instant database operation using new cuts-based approach
-  @spec handle_virtual_split(Clip.t(), integer()) :: {Clip.t() | nil, map()} | {:error, String.t()}
+  @spec handle_virtual_split(Clip.t(), integer()) ::
+          {Clip.t() | nil, map()} | {:error, String.t()}
   defp handle_virtual_split(%Clip{id: clip_id} = clip, frame_num) do
     # Use the new cuts-based operation - this will automatically handle:
     # 1. Creating the cut at frame_num
@@ -188,7 +189,8 @@ defmodule Heaters.Review.Actions do
     case Heaters.Media.Cuts.Operations.add_cut(
            clip.source_video_id,
            frame_num,
-           nil,  # user_id - nil for system operations
+           # user_id - nil for system operations
+           nil,
            metadata: %{"triggered_by" => "review_split", "original_clip_id" => clip_id}
          ) do
       {:ok, {first_clip, second_clip}} ->
@@ -208,9 +210,7 @@ defmodule Heaters.Review.Actions do
          }}
 
       {:error, reason} ->
-        Logger.error(
-          "Review: Failed to split clip #{clip_id} at frame #{frame_num}: #{reason}"
-        )
+        Logger.error("Review: Failed to split clip #{clip_id} at frame #{frame_num}: #{reason}")
 
         {:error, reason}
     end
@@ -277,5 +277,4 @@ defmodule Heaters.Review.Actions do
 
     if next_id, do: Heaters.Review.Queue.load_clip_with_assocs(next_id)
   end
-
 end

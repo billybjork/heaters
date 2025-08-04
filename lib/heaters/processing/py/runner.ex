@@ -172,18 +172,19 @@ defmodule Heaters.Processing.Py.Runner do
     args = [runner_script_path(), task_name, "--args-file", tmp_file]
 
     try do
-      port = Port.open(
-        {:spawn_executable, python_executable()},
-        [
-          :binary,
-          :exit_status,
-          :hide,
-          :line,
-          {:args, args},
-          {:env, env},
-          {:cd, working_dir()}
-        ]
-      )
+      port =
+        Port.open(
+          {:spawn_executable, python_executable()},
+          [
+            :binary,
+            :exit_status,
+            :hide,
+            :line,
+            {:args, args},
+            {:env, env},
+            {:cd, working_dir()}
+          ]
+        )
 
       Port.monitor(port)
       {:ok, port}
@@ -365,7 +366,6 @@ defmodule Heaters.Processing.Py.Runner do
 
       binary when is_binary(binary) ->
         binary
-        
     end
   end
 end

@@ -111,7 +111,6 @@ defmodule Heaters.Processing.Embeddings.Worker do
             s3_url: artifact.s3_url
           }
         end)
-
     end
   end
 

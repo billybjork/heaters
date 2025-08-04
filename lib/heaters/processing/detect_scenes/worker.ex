@@ -192,10 +192,12 @@ defmodule Heaters.Processing.DetectScenes.Worker do
       "DetectScenesWorker: Running Python scene detection with args: #{inspect(Map.delete(scene_detection_args, :proxy_video_path))}"
     )
 
-    case PyRunner.run_python_task("detect_scenes", scene_detection_args, timeout: :timer.minutes(15)) do
+    case PyRunner.run_python_task("detect_scenes", scene_detection_args,
+           timeout: :timer.minutes(15)
+         ) do
       {:ok, result} ->
         Logger.info("DetectScenesWorker: Python scene detection completed successfully")
-        
+
         # Extract cut points from Python scene detection
         cut_points = Map.get(result, "cut_points", [])
         metadata = Map.get(result, "metadata", %{})
@@ -222,7 +224,10 @@ defmodule Heaters.Processing.DetectScenes.Worker do
                 :ok
 
               {:error, reason} ->
-                Logger.error("DetectScenesWorker: Failed to update video state: #{inspect(reason)}")
+                Logger.error(
+                  "DetectScenesWorker: Failed to update video state: #{inspect(reason)}"
+                )
+
                 {:error, reason}
             end
 
@@ -236,7 +241,6 @@ defmodule Heaters.Processing.DetectScenes.Worker do
         mark_scene_detection_failed(source_video, reason)
     end
   end
-
 
   defp mark_scene_detection_failed(source_video, reason) do
     case StateManager.mark_scene_detection_failed(source_video.id, reason) do

@@ -76,13 +76,6 @@ Unified agent guidance for working with this codebase. See `lib/heaters/README.m
 
 ## Elixir/Phoenix Specific Guidelines
 
-### Module Organization
-- **Core modules**: `lib/heaters/` - Main business logic
-- **Web layer**: `lib/heaters_web/` - Controllers, LiveView, templates
-- **Infrastructure**: `lib/heaters/infrastructure/` - External adapters (S3, FFmpeg, Python)
-- **Workers**: Background job implementations in respective modules
-- **Shared utilities**: `lib/heaters/clips/shared/` - Common functionality
-
 ### Template Guidelines
 - **HEEX files**: Use `.html.heex` extension for LiveView templates
 - **Component naming**: Use snake_case for component names in templates
@@ -187,7 +180,6 @@ Unified agent guidance for working with this codebase. See `lib/heaters/README.m
 - **Keep logic in Elixir**: Business logic should remain in Elixir wherever possible
 - Python tasks are pure functions returning structured JSON
 - No direct database access from Python
-- Use `Infrastructure.PyRunner` for execution
 - Complex tasks split into focused modules
 
 ## Environment Setup

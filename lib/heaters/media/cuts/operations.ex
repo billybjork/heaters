@@ -313,19 +313,8 @@ defmodule Heaters.Media.Cuts.Operations do
           )
         end)
 
-      # Check for any errors
-      case Enum.split_with(cuts, fn
-             {:ok, _} -> true
-             {:error, _} -> false
-           end) do
-        {successes, []} ->
-          actual_cuts = Enum.map(successes, fn {:ok, cut} -> cut end)
-          {:ok, actual_cuts}
-
-        {_, errors} ->
-          first_error = errors |> List.first() |> elem(1)
-          {:error, first_error}
-      end
+      # Process results using pattern matching
+      process_cut_results(cuts)
     end
   end
 
@@ -342,19 +331,8 @@ defmodule Heaters.Media.Cuts.Operations do
         create_clip_from_segment(segment, index)
       end)
 
-    # Check for any errors
-    case Enum.split_with(clips, fn
-           {:ok, _} -> true
-           {:error, _} -> false
-         end) do
-      {successes, []} ->
-        actual_clips = Enum.map(successes, fn {:ok, clip} -> clip end)
-        {:ok, actual_clips}
-
-      {_, errors} ->
-        first_error = errors |> List.first() |> elem(1)
-        {:error, first_error}
-    end
+    # Process results using pattern matching
+    process_clip_results(clips)
   end
 
   @spec create_cut(integer(), integer(), Heaters.Media.Video.t(), integer(), keyword()) ::
@@ -753,5 +731,42 @@ defmodule Heaters.Media.Cuts.Operations do
       {:error, changeset} ->
         {:error, "Failed to create clip from segment: #{inspect(changeset.errors)}"}
     end
+  end
+
+  # Helper functions for processing operation results using pattern matching
+  @spec process_cut_results([{:ok, Cut.t()} | {:error, String.t()}]) ::
+          {:ok, [Cut.t()]} | {:error, String.t()}
+  defp process_cut_results(results) do
+    collect_cut_results(results, [], [])
+  end
+
+  @spec process_clip_results([{:ok, Clip.t()} | {:error, String.t()}]) ::
+          {:ok, [Clip.t()]} | {:error, String.t()}
+  defp process_clip_results(results) do
+    collect_clip_results(results, [], [])
+  end
+
+  # Pattern matching for cut results collection
+  defp collect_cut_results([], cuts, []), do: {:ok, Enum.reverse(cuts)}
+  defp collect_cut_results([], _cuts, [first_error | _]), do: {:error, first_error}
+
+  defp collect_cut_results([{:ok, cut} | rest], cuts, errors) do
+    collect_cut_results(rest, [cut | cuts], errors)
+  end
+
+  defp collect_cut_results([{:error, error} | rest], cuts, errors) do
+    collect_cut_results(rest, cuts, [error | errors])
+  end
+
+  # Pattern matching for clip results collection
+  defp collect_clip_results([], clips, []), do: {:ok, Enum.reverse(clips)}
+  defp collect_clip_results([], _clips, [first_error | _]), do: {:error, first_error}
+
+  defp collect_clip_results([{:ok, clip} | rest], clips, errors) do
+    collect_clip_results(rest, [clip | clips], errors)
+  end
+
+  defp collect_clip_results([{:error, error} | rest], clips, errors) do
+    collect_clip_results(rest, clips, [error | errors])
   end
 end
