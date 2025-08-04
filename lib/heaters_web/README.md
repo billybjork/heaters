@@ -102,7 +102,7 @@ end
 These frontend principles align with the backend's functional architecture:
 
 - **URL-First Design** complements the backend's declarative pipeline configuration
-- **Modern CSS** supports the tiny-file video player approach for instant playback
+- **Modern CSS** supports the clip player approach for instant playback
 - **Progressive Enhancement** works with the system's resumable processing capabilities
 - **Performance-First** aligns with the backend's 78% S3 operation reduction and FLAME environment optimizations
 

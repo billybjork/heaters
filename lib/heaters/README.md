@@ -12,7 +12,7 @@ Heaters processes videos through a **virtual clip pipeline**: download → proxy
 - **Database**: PostgreSQL with pgvector  
 - **Media Processing**: Python (yt-dlp, FFmpeg, OpenCV, PyTorch)
 - **Storage**: AWS S3 with intelligent caching
-- **Frontend**: Tiny-file video player with on-demand generation
+- **Frontend**: Clip player with on-demand generation
 
 ## Architecture
 
@@ -21,7 +21,7 @@ Heaters processes videos through a **virtual clip pipeline**: download → proxy
 - **Universal Download**: Handles web-scraped and user-uploaded videos with quality-first strategy (4K/8K when available)
 - **Dual-Purpose Proxy**: Single H.264 proxy serves both review and export (eliminates redundant operations)
 - **Virtual Clips**: Database records only—no physical files until export
-- **Tiny-File Player**: On-demand MP4 generation with perfect timeline and instant playback
+- **Clip Player**: On-demand MP4 generation with perfect timeline and instant playback
 - **Master Archival**: Lossless FFV1/MKV stored in S3 Glacier
 
 ### Core Principles
@@ -60,8 +60,8 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 - **Smart Proxy Reuse**: H.264 ≤1080p content reused directly when suitable
 - **Batch Upload**: All cached files uploaded to S3 only once at pipeline completion
 
-### Tiny-File Video Player
-- **Instant Playback**: Tiny video files vs. complex byte-range streaming
+### Clip Player
+- **Instant Playback**: Small video files vs. complex byte-range streaming
 - **Perfect Timeline**: Shows exact clip duration (e.g., 3.75s) not full video length
 - **Stream Copy**: Zero re-encoding ensures faster generation with zero quality loss
 - **Universal Compatibility**: Works offline, all browsers, mobile optimized
