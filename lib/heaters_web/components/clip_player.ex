@@ -1,31 +1,31 @@
-defmodule HeatersWeb.StreamingVideoPlayer do
+defmodule HeatersWeb.ClipPlayer do
   @moduledoc """
-  Phoenix LiveView component for tiny-file video streaming.
+  Phoenix LiveView component for virtual and physical clip playback.
 
-  Provides a simple HTML5 video element that plays small MP4 files generated
-  on-demand using FFmpeg stream copy for virtual clips.
+  Provides a simple HTML5 video element that plays clips, with virtual clips
+  generating small MP4 files on-demand using FFmpeg stream copy.
 
   Key features:
-  - Tiny files (2-5MB) generated on-demand using FFmpeg stream copy (no re-encoding)
+  - Virtual clips: Small files (2-5MB) generated on-demand using FFmpeg stream copy (no re-encoding)
   - Instant playback with correct timeline duration (clips show their actual length)
   - Native HTML5 video element (no complex streaming protocols)
   - CloudFront caching for global distribution
-  - Support for both virtual clips (tiny files) and physical clips (direct files)
+  - Support for both virtual clips (on-demand generated) and physical clips (direct files)
   - Superior user experience compared to byte-range streaming
 
   ## Usage
 
-      <.streaming_video_player clip={@current_clip} />
+      <.clip_player clip={@current_clip} />
 
   The component automatically determines the appropriate video URL and player type
-  based on the clip's properties and generates tiny files as needed.
+  based on the clip's properties and generates files as needed.
   """
 
   use Phoenix.Component
   alias HeatersWeb.VideoUrlHelper
 
   @doc """
-  Renders a streaming video player component.
+  Renders a clip player component.
 
   ## Attributes
 
@@ -41,7 +41,7 @@ defmodule HeatersWeb.StreamingVideoPlayer do
   attr(:controls, :boolean, default: true)
   attr(:preload, :string, default: "metadata")
 
-  def streaming_video_player(assigns) do
+  def clip_player(assigns) do
     # Get video URL and player type
     {video_url, player_type, clip_info} = get_video_data(assigns.clip)
 
@@ -68,30 +68,30 @@ defmodule HeatersWeb.StreamingVideoPlayer do
           preload="none"
           playsinline
           crossorigin="anonymous"
-          phx-hook="StreamingVideoPlayer"
+          phx-hook="ClipPlayer"
           phx-update="ignore"
           data-video-url={@video_url}
           data-player-type={@player_type}
           data-clip-info={Jason.encode!(@clip_info)}
         >
-          <p>Your browser doesn't support HTML5 video streaming.</p>
+          <p>Your browser doesn't support HTML5 video playback.</p>
         </video>
 
-        <div class="streaming-video-loading" style="display: none;">
+        <div class="clip-player-loading" style="display: none;">
           <div class="spinner"></div>
-          <div class="loading-text">Streaming clip...</div>
+          <div class="loading-text">Loading clip...</div>
         </div>
       <% else %>
         <div class="video-player-error">
-            <p>Video not available for streaming.</p>
+            <p>Video not available for playback.</p>
             <p class="error-details">
               <%= if @clip.is_virtual do %>
-                Virtual clip requires proxy file for FFmpeg streaming.
+                Virtual clip requires proxy file for clip generation.
               <% else %>
                 Physical clip file not found.
               <% end %>
             </p>
-          </div>
+        </div>
       <% end %>
     </div>
     """
@@ -128,7 +128,7 @@ defmodule HeatersWeb.StreamingVideoPlayer do
   end
 
   # Build clip information for the JavaScript player
-  # With server-side FFmpeg streaming, each clip is treated as a standalone file
+  # Each clip is treated as a standalone file
   defp build_clip_info(%{is_virtual: true} = clip, _player_type) do
     %{
       is_virtual: true,
@@ -145,14 +145,14 @@ defmodule HeatersWeb.StreamingVideoPlayer do
   end
 
   @doc """
-  Helper function to get streaming video URL for preloading.
+  Helper function to get clip video URL for preloading.
 
   Used in templates for preloading next clips or sequential playback.
   """
-  def streaming_video_url(clip) when is_map(clip) do
+  def clip_video_url(clip) when is_map(clip) do
     {url, _player_type, _clip_info} = get_video_data(clip)
     url
   end
 
-  def streaming_video_url(_), do: nil
+  def clip_video_url(_), do: nil
 end

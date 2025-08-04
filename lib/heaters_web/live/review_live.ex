@@ -3,7 +3,7 @@ defmodule HeatersWeb.ReviewLive do
   import Phoenix.LiveView, only: [put_flash: 3, clear_flash: 1, push_event: 3]
 
   # Components / helpers
-  import HeatersWeb.StreamingVideoPlayer, only: [streaming_video_player: 1]
+  import HeatersWeb.ClipPlayer, only: [clip_player: 1]
 
   alias Heaters.Review.Queue, as: ClipReview
   alias Heaters.Review.Actions, as: ClipActions
