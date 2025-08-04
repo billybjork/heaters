@@ -221,9 +221,6 @@ defmodule HeatersWeb.VideoUrlHelper do
   end
 
   defp get_bucket_name do
-    Application.get_env(:heaters, :s3_dev_bucket_name) ||
-      Application.get_env(:heaters, :s3)[:dev_bucket_name] ||
-      System.get_env("S3_DEV_BUCKET_NAME") ||
-      "default-bucket"
+    Application.get_env(:heaters, :s3_bucket) || "default-bucket"
   end
 end

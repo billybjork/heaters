@@ -48,7 +48,7 @@ defmodule Heaters.Processing.DetectScenes.Worker do
 
   # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
   #
-  # JUSTIFICATION: PyRunner requires DEV_DATABASE_URL and S3_DEV_BUCKET_NAME environment
+  # JUSTIFICATION: PyRunner requires DEV_DATABASE_URL and DEV_S3_BUCKET_NAME environment
   # variables. When not set, PyRunner always fails, making success patterns unreachable.
   # In configured environments, these functions will succeed normally.
   @dialyzer {:nowarn_function, [run_python_scene_detection: 2]}

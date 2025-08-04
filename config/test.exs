@@ -14,8 +14,13 @@ config :heaters, Oban, testing: :manual
 config :heaters, Heaters.Repo,
   username: System.get_env("TEST_DB_USER") || "dev_user",
   password: System.get_env("TEST_DB_PASSWORD") || "dev_password",
-  hostname: System.get_env("TEST_DB_HOST") || "localhost",
-  port: String.to_integer(System.get_env("TEST_DB_PORT") || "5433"),
+  hostname:
+    System.get_env("TEST_DB_HOST") ||
+      if(System.get_env("DOCKER_ENV"), do: "app-db-dev", else: "localhost"),
+  port:
+    String.to_integer(
+      System.get_env("TEST_DB_PORT") || if(System.get_env("DOCKER_ENV"), do: "5432", else: "5433")
+    ),
   database:
     (System.get_env("TEST_DB_NAME") || "heaters_test") <>
       "#{System.get_env("MIX_TEST_PARTITION")}",

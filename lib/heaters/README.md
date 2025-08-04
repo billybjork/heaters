@@ -81,7 +81,7 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 ⚠️ **CRITICAL**: All download configuration centralized with built-in validation to prevent quality-reducing mistakes (4K→360p). Review module documentation before modifying.
 
 ### Development Environment
-- **Python Integration**: Requires `DEV_DATABASE_URL` and `S3_DEV_BUCKET_NAME` environment variables
+- **Python Integration**: Requires `DEV_DATABASE_URL` and `DEV_S3_BUCKET_NAME` environment variables
 - **Dialyzer**: Zero warnings in configured environments; suppressions handle unconfigured PyRunner dependencies
 - **Type Safety**: Full Dialyzer coverage with documented suppressions for external system interfaces
 

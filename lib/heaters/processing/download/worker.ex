@@ -35,7 +35,7 @@ defmodule Heaters.Processing.Download.Worker do
 
   # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
   #
-  # JUSTIFICATION: PyRunner requires DEV_DATABASE_URL and S3_DEV_BUCKET_NAME environment
+  # JUSTIFICATION: PyRunner requires DEV_DATABASE_URL and DEV_S3_BUCKET_NAME environment
   # variables. When these are not set (e.g., in unconfigured development environments),
   # PyRunner will always fail with {:error, "Environment variable ... not set"}.
   #

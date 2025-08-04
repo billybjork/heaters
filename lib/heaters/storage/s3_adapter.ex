@@ -36,7 +36,7 @@ defmodule Heaters.Storage.S3Adapter do
   # Suppress dialyzer warnings for S3 operations when PyRunner environment is not configured.
   #
   # JUSTIFICATION: These functions call S3.upload_file_with_progress which uses PyRunner.
-  # PyRunner requires DEV_DATABASE_URL and S3_DEV_BUCKET_NAME. When not set, PyRunner 
+  # PyRunner requires DEV_DATABASE_URL and DEV_S3_BUCKET_NAME. When not set, PyRunner 
   # always fails, making success patterns and get_file_size calls unreachable.
   # In configured environments, these functions will succeed normally.
   @dialyzer {:nowarn_function, [upload_master: 3, upload_proxy: 3, get_file_size: 1]}

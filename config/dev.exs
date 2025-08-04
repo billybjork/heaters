@@ -174,9 +174,9 @@ config :heaters,
       else: System.get_env("FFMPEG_BIN") || "/opt/homebrew/bin/ffmpeg"
     ),
   # CloudFront distribution domain (fallback to S3 for development)
-  cloudfront_domain: System.get_env("CLOUDFRONT_DEV_DOMAIN"),
+  cloudfront_domain: System.get_env("DEV_CLOUDFRONT_DOMAIN"),
   # S3 bucket configuration
-  s3_dev_bucket_name: System.get_env("S3_DEV_BUCKET_NAME") || "heaters-dev",
+  s3_dev_bucket_name: System.get_env("DEV_S3_BUCKET_NAME") || "heaters-dev",
   aws_region: System.get_env("AWS_REGION") || "us-west-1",
   # FFmpeg streaming timeout (increased for CloudFront latency)
   ffmpeg_stream_timeout: 60_000

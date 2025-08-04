@@ -48,8 +48,8 @@ services:
       PHX_HOST: localhost
       DOCKER_ENV: "true"
       DEV_DATABASE_URL: ${DEV_DATABASE_URL}
-      S3_DEV_BUCKET_NAME: ${S3_DEV_BUCKET_NAME}
-      CLOUDFRONT_DEV_DOMAIN: ${CLOUDFRONT_DEV_DOMAIN}
+      DEV_S3_BUCKET_NAME: ${DEV_S3_BUCKET_NAME}
+      DEV_CLOUDFRONT_DOMAIN: ${DEV_CLOUDFRONT_DOMAIN}
     # Resource limits to prevent OOM kills during video processing
     # To monitor: docker stats heaters-app-dev
     # To check logs: docker logs heaters-app-dev -f

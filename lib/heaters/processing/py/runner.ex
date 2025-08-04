@@ -52,7 +52,7 @@ defmodule Heaters.Processing.Py.Runner do
   #
   # CRITICAL: PyRunner requires specific environment variables to be configured:
   # - DEV_DATABASE_URL (or PROD_DATABASE_URL in production)  
-  # - S3_DEV_BUCKET_NAME (or S3_PROD_BUCKET_NAME in production)
+  # - DEV_S3_BUCKET_NAME (or PROD_S3_BUCKET_NAME in production)
   #
   # When these environment variables are NOT set, PyRunner will ALWAYS fail in build_env/0
   # with {:error, "Environment variable ... not set"}, making success patterns unreachable.
@@ -341,8 +341,8 @@ defmodule Heaters.Processing.Py.Runner do
   defp db_url_var(_), do: "DEV_DATABASE_URL"
 
   @spec s3_bucket_var(String.t()) :: String.t()
-  defp s3_bucket_var("production"), do: "S3_PROD_BUCKET_NAME"
-  defp s3_bucket_var(_), do: "S3_DEV_BUCKET_NAME"
+  defp s3_bucket_var("production"), do: "PROD_S3_BUCKET_NAME"
+  defp s3_bucket_var(_), do: "DEV_S3_BUCKET_NAME"
 
   # Helper function to explicitly show Dialyzer that success is possible
   @spec can_return_success() :: {:ok, map()}

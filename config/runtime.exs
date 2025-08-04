@@ -37,14 +37,14 @@ if config_env() != :test and not is_database_operation do
   current_cloudfront_domain =
     case app_env_string do
       "development" ->
-        # In local dev (docker-compose with APP_ENV="development"), expect CLOUDFRONT_DEV_DOMAIN from .env.
-        System.get_env("CLOUDFRONT_DEV_DOMAIN") ||
-          raise "CLOUDFRONT_DEV_DOMAIN not set for APP_ENV=development. Please set it in your .env file."
+        # In local dev (docker-compose with APP_ENV="development"), expect DEV_CLOUDFRONT_DOMAIN from .env.
+        System.get_env("DEV_CLOUDFRONT_DOMAIN") ||
+          raise "DEV_CLOUDFRONT_DOMAIN not set for APP_ENV=development. Please set it in your .env file."
 
       "production" ->
-        # In production (Render with APP_ENV="production"), expect CLOUDFRONT_PROD_DOMAIN.
-        System.get_env("CLOUDFRONT_PROD_DOMAIN") ||
-          raise "CLOUDFRONT_PROD_DOMAIN not set for APP_ENV=production. Please set it in your Render environment variables."
+        # In production (Render with APP_ENV="production"), expect PROD_CLOUDFRONT_DOMAIN.
+        System.get_env("PROD_CLOUDFRONT_DOMAIN") ||
+          raise "PROD_CLOUDFRONT_DOMAIN not set for APP_ENV=production. Please set it in your Render environment variables."
 
       _ ->
         # APP_ENV not "development" or "production" (e.g., nil during compile time or local mix outside Docker).
@@ -59,12 +59,12 @@ if config_env() != :test and not is_database_operation do
 
         cond do
           effective_mix_env == :prod ->
-            System.get_env("CLOUDFRONT_PROD_DOMAIN") ||
-              raise "CLOUDFRONT_PROD_DOMAIN not set, and APP_ENV was not 'production' during a :prod mix_env context."
+            System.get_env("PROD_CLOUDFRONT_DOMAIN") ||
+              raise "PROD_CLOUDFRONT_DOMAIN not set, and APP_ENV was not 'production' during a :prod mix_env context."
 
           effective_mix_env == :dev ->
-            System.get_env("CLOUDFRONT_DEV_DOMAIN") ||
-              raise "CLOUDFRONT_DEV_DOMAIN not set, and APP_ENV was not 'development' during a :dev mix_env context."
+            System.get_env("DEV_CLOUDFRONT_DOMAIN") ||
+              raise "DEV_CLOUDFRONT_DOMAIN not set, and APP_ENV was not 'development' during a :dev mix_env context."
 
           # Default fallback if MIX_ENV is also something unexpected
           true ->
@@ -80,11 +80,11 @@ if config_env() != :test and not is_database_operation do
     case app_env_string do
       "development" ->
         # Fallback to generic if _DEV_ missing
-        System.get_env("S3_DEV_BUCKET_NAME") || System.get_env("S3_BUCKET_NAME")
+        System.get_env("DEV_S3_BUCKET_NAME") || System.get_env("S3_BUCKET_NAME")
 
       "production" ->
         # Fallback to generic if _PROD_ missing
-        System.get_env("S3_PROD_BUCKET_NAME") || System.get_env("S3_BUCKET_NAME")
+        System.get_env("PROD_S3_BUCKET_NAME") || System.get_env("S3_BUCKET_NAME")
 
       _ ->
         # Fallback if APP_ENV is not explicitly "development" or "production".
