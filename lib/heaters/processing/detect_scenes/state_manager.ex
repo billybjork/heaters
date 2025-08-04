@@ -124,7 +124,7 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
       update_source_video(source_video, %{
         ingest_state: "scene_detection_failed",
         last_error: error_message,
-        retry_count: (source_video.retry_count || 0) + 1
+        retry_count: source_video.retry_count + 1
       })
     end
   end

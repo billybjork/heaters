@@ -50,15 +50,26 @@ defmodule Heaters.Processing.Py.Runner do
 
   # Dialyzer suppressions required due to external system dependencies.
   #
-  # Even with our configuration-based approach, Dialyzer's static analysis
-  # cannot prove at compile time that:
-  # 1. The configured Python executable exists and is runnable
-  # 2. The working directory and script paths are valid
-  # 3. Port.open/2 will succeed with the runtime environment
-  # 4. External processes will behave predictably
+  # CRITICAL: PyRunner requires specific environment variables to be configured:
+  # - DEV_DATABASE_URL (or PROD_DATABASE_URL in production)  
+  # - S3_DEV_BUCKET_NAME (or S3_PROD_BUCKET_NAME in production)
   #
-  # These suppressions are a common pattern when interfacing with external
-  # systems where runtime conditions cannot be statically verified.
+  # When these environment variables are NOT set, PyRunner will ALWAYS fail in build_env/0
+  # with {:error, "Environment variable ... not set"}, making success patterns unreachable.
+  #
+  # This is intentional fail-fast behavior - PyRunner operations should not proceed
+  # with incomplete configuration as they would produce inconsistent results.
+  #
+  # In properly configured environments (development with .env or production), 
+  # these functions WILL succeed and return {:ok, result} patterns.
+  #
+  # Additional external system dependencies that Dialyzer cannot statically verify:
+  # 1. Python executable exists and is runnable
+  # 2. Working directory and script paths are valid  
+  # 3. Port.open/2 will succeed with the runtime environment
+  # 4. External Python processes will behave predictably
+  #
+  # These suppressions are a standard pattern for external system interfaces.
   @dialyzer {:nowarn_function,
              [
                open_port: 3,
@@ -67,7 +78,9 @@ defmodule Heaters.Processing.Py.Runner do
                handle_port_messages: 4,
                interpret_exit: 2,
                extract_final_json: 1,
-               join_lines: 1
+               join_lines: 1,
+               run_python_task: 3,
+               format_task_error: 2
              ]}
 
   @spec run(String.t(), list() | map(), keyword()) :: {:ok, map()} | {:error, error_reason()}
@@ -352,6 +365,7 @@ defmodule Heaters.Processing.Py.Runner do
 
       binary when is_binary(binary) ->
         binary
+        
     end
   end
 end

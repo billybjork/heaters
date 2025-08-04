@@ -11,7 +11,6 @@ defmodule Heaters.Review.Actions do
   alias Ecto.Query, as: Q
   alias Heaters.Repo
   alias Heaters.Media.Clip
-  alias Heaters.Media.VirtualClip
   require Logger
 
   # -------------------------------------------------------------------------
@@ -139,14 +138,14 @@ defmodule Heaters.Review.Actions do
   end
 
   @doc "Handle a **split** request on `clip` at `frame_num`."
-  def request_split_and_fetch_next(%Clip{is_virtual: true} = clip, frame_num)
+  def request_split_and_fetch_next(%Clip{clip_filepath: nil} = clip, frame_num)
       when is_integer(frame_num) do
-    # VIRTUAL CLIPS: Instant split via database cut point update
+    # UNEXPORTED CLIPS: Instant split via cut point operations
     handle_virtual_split(clip, frame_num)
   end
 
   def request_split_and_fetch_next(%Clip{} = _clip, _frame_num) do
-    # PHYSICAL CLIPS: Not supported in enhanced virtual clips architecture
+    # EXPORTED CLIPS: Not supported in cuts-based architecture
     {:error, "Split operation only supported for virtual clips"}
   end
 
@@ -179,61 +178,42 @@ defmodule Heaters.Review.Actions do
   # Private helpers for virtual clip operations
   # -------------------------------------------------------------------------
 
-  # Virtual clip split: instant database operation
+  # Clip split: instant database operation using new cuts-based approach
+  @spec handle_virtual_split(Clip.t(), integer()) :: {Clip.t() | nil, map()} | {:error, String.t()}
   defp handle_virtual_split(%Clip{id: clip_id} = clip, frame_num) do
-    now = DateTime.utc_now()
+    # Use the new cuts-based operation - this will automatically handle:
+    # 1. Creating the cut at frame_num
+    # 2. Archiving the original clip
+    # 3. Creating two new clips based on the new cut boundaries
+    case Heaters.Media.Cuts.Operations.add_cut(
+           clip.source_video_id,
+           frame_num,
+           nil,  # user_id - nil for system operations
+           metadata: %{"triggered_by" => "review_split", "original_clip_id" => clip_id}
+         ) do
+      {:ok, {first_clip, second_clip}} ->
+        Logger.info(
+          "Review: Instant cut-based split of clip #{clip_id} at frame #{frame_num} → #{first_clip.id}, #{second_clip.id}"
+        )
 
-    Repo.transaction(fn ->
-      # Split cut points to create two new virtual clips
-      case split_virtual_cut_points(clip.cut_points, frame_num) do
-        {:ok, {first_cut_points, second_cut_points}} ->
-          # Create two new virtual clips from split cut points
-          case VirtualClip.create_virtual_clips_from_cut_points(
-                 clip.source_video_id,
-                 [first_cut_points, second_cut_points],
-                 %{"split_from" => clip_id, "split_at_frame" => frame_num}
-               ) do
-            {:ok, [first_clip, second_clip]} ->
-              # Mark original clip as split/reviewed
-              Repo.update_all(
-                from(c in Clip, where: c.id == ^clip_id),
-                set: [
-                  reviewed_at: now,
-                  # New state for tracking
-                  ingest_state: "split_virtual",
-                  # Reference to first split clip
-                  grouped_with_clip_id: first_clip.id
-                ]
-              )
+        # Fetch next clip
+        next_clip = fetch_next_pending_clip()
 
-              Logger.info(
-                "Review: Instant virtual split of clip #{clip_id} at frame #{frame_num} → #{first_clip.id}, #{second_clip.id}"
-              )
+        {next_clip,
+         %{
+           clip_id: clip_id,
+           action: "cut_split",
+           frame: frame_num,
+           new_clip_ids: [first_clip.id, second_clip.id]
+         }}
 
-              # Fetch next clip
-              next_clip = fetch_next_pending_clip()
+      {:error, reason} ->
+        Logger.error(
+          "Review: Failed to split clip #{clip_id} at frame #{frame_num}: #{reason}"
+        )
 
-              {next_clip,
-               %{
-                 clip_id: clip_id,
-                 action: "virtual_split",
-                 frame: frame_num,
-                 new_clip_ids: [first_clip.id, second_clip.id]
-               }}
-
-            {:error, reason} ->
-              Logger.error("Review: Failed to create split virtual clips: #{inspect(reason)}")
-              Repo.rollback(reason)
-          end
-
-        {:error, reason} ->
-          Logger.error(
-            "Review: Invalid split frame #{frame_num} for virtual clip #{clip_id}: #{reason}"
-          )
-
-          Repo.rollback(reason)
-      end
-    end)
+        {:error, reason}
+    end
   end
 
   defp handle_virtual_clip_undo(
@@ -245,7 +225,7 @@ defmodule Heaters.Review.Actions do
       split_clips =
         from(c in Clip,
           where:
-            c.is_virtual == true and
+            is_nil(c.clip_filepath) and
               fragment("?->>'split_from' = ?", c.processing_metadata, ^to_string(clip.id))
         )
         |> Repo.all()
@@ -298,38 +278,4 @@ defmodule Heaters.Review.Actions do
     if next_id, do: Heaters.Review.Queue.load_clip_with_assocs(next_id)
   end
 
-  defp split_virtual_cut_points(cut_points, split_frame) do
-    # Split virtual clip cut points at the specified frame
-    start_frame = cut_points["start_frame"]
-    end_frame = cut_points["end_frame"]
-    start_time = cut_points["start_time_seconds"]
-    end_time = cut_points["end_time_seconds"]
-
-    # Validate split frame is within clip bounds
-    if split_frame <= start_frame or split_frame >= end_frame do
-      {:error, "Split frame #{split_frame} must be between #{start_frame} and #{end_frame}"}
-    else
-      # Calculate time at split frame (assuming constant framerate)
-      total_frames = end_frame - start_frame
-      total_duration = end_time - start_time
-      frames_to_split = split_frame - start_frame
-      time_to_split = start_time + frames_to_split / total_frames * total_duration
-
-      first_cut_points = %{
-        "start_frame" => start_frame,
-        "end_frame" => split_frame,
-        "start_time_seconds" => start_time,
-        "end_time_seconds" => time_to_split
-      }
-
-      second_cut_points = %{
-        "start_frame" => split_frame,
-        "end_frame" => end_frame,
-        "start_time_seconds" => time_to_split,
-        "end_time_seconds" => end_time
-      }
-
-      {:ok, {first_cut_points, second_cut_points}}
-    end
-  end
 end

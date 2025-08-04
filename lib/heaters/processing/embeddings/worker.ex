@@ -10,6 +10,13 @@ defmodule Heaters.Processing.Embeddings.Worker do
   alias Heaters.Media.Clips
   require Logger
 
+  # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
+  #
+  # JUSTIFICATION: PyRunner requires DEV_DATABASE_URL and S3_DEV_BUCKET_NAME environment
+  # variables. When not set, PyRunner always fails, making success patterns unreachable.
+  # In configured environments, these functions will succeed normally.
+  @dialyzer {:nowarn_function, [handle_embedding_work: 1, run_embedding_task: 2]}
+
   @complete_states ["embedded"]
 
   # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
@@ -71,7 +78,7 @@ defmodule Heaters.Processing.Embeddings.Worker do
       keyframe_artifacts: extract_keyframe_artifacts(clip)
     }
 
-    case PyRunner.run("embedding", py_args, timeout: :timer.minutes(5)) do
+    case PyRunner.run_python_task("embedding", py_args, timeout: :timer.minutes(5)) do
       {:ok, result} ->
         Logger.info(
           "EmbeddingWorker: Python embedding completed successfully for clip #{clip.id}"
@@ -90,7 +97,8 @@ defmodule Heaters.Processing.Embeddings.Worker do
 
   defp extract_keyframe_artifacts(clip) do
     case clip.clip_artifacts do
-      nil ->
+      %Ecto.Association.NotLoaded{} ->
+        Logger.warning("EmbeddingWorker: clip_artifacts not preloaded for clip #{clip.id}")
         []
 
       artifacts when is_list(artifacts) ->
@@ -104,8 +112,6 @@ defmodule Heaters.Processing.Embeddings.Worker do
           }
         end)
 
-      _ ->
-        []
     end
   end
 

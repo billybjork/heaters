@@ -2,9 +2,9 @@
 
 ## Overview
 
-Heaters processes videos through a **virtual clip pipeline**: download → proxy generation → virtual clips → human review → final export → embedding. The system emphasizes zero re-encoding during review, optimized export performance, and production reliability.
+Heaters processes videos through a **cuts-based pipeline**: download → proxy generation → scene detection → cuts → human review → clip export → embedding. The system emphasizes zero re-encoding during review, optimized export performance, and production reliability.
 
-**Core Innovation**: Virtual clips are database records with cut points—no physical files until final export. This enables instant review operations and 10x faster exports via stream copy.
+**Core Innovation**: Cut points define video segments as data—clips are derived entities with no physical files until export. This enables instant review operations and 10x faster exports via stream copy.
 
 ## Technology Stack
 
@@ -16,11 +16,11 @@ Heaters processes videos through a **virtual clip pipeline**: download → proxy
 
 ## Architecture
 
-### Virtual Clip System
+### Cuts-Based Architecture
 
 - **Universal Download**: Handles web-scraped and user-uploaded videos with quality-first strategy (4K/8K when available)
 - **Dual-Purpose Proxy**: Single H.264 proxy serves both review and export (eliminates redundant operations)
-- **Virtual Clips**: Database records only—no physical files until export
+- **Cut Points**: Scene detection creates cut boundaries; clips are segments between cuts
 - **Clip Player**: On-demand MP4 generation with perfect timeline and instant playback
 - **Master Archival**: Lossless FFV1/MKV stored in S3 Glacier
 
@@ -33,7 +33,7 @@ Heaters processes videos through a **virtual clip pipeline**: download → proxy
 
 ## Code Organization
 
-- **`Media`**: Domain entities (videos, clips, artifacts) and cut point operations
+- **`Media`**: Domain entities (videos, clips, cuts, artifacts) and cut operations
 - **`Processing`**: Automated pipeline stages (download, preprocess, scene detection, render, keyframes, embeddings)
 - **`Storage`**: All storage concerns (pipeline cache, playback cache, archive, S3 operations)
 - **`Review`**: Human workflow (queue management, actions)
@@ -42,11 +42,11 @@ Heaters processes videos through a **virtual clip pipeline**: download → proxy
 ## Pipeline & State Flow
 
 ```
-Source Video: new → downloading → downloaded → preprocess → preprocessed → detect_scenes → virtual clips
+Source Video: new → downloading → downloaded → preprocess → preprocessed → detect_scenes → cuts created
 
-Virtual Clips: pending_review → review_approved → exporting → exported → keyframing → keyframed → embedding → embedded
-                    ↓                ↓              ↓            ↓              ↓           ↓           ↓
-            review_skipped    review_archived   export_failed  (resumable)  keyframe_failed  (resumable) embedding_failed
+Clips: pending_review → review_approved → exporting → exported → keyframing → keyframed → embedding → embedded
+           ↓                ↓              ↓            ↓              ↓           ↓           ↓
+   review_skipped    review_archived   export_failed  (resumable)  keyframe_failed  (resumable) embedding_failed
 ```
 
 **Direct Job Chaining** (FLAME optimized):
@@ -80,14 +80,19 @@ Virtual Clips: pending_review → review_approved → exporting → exported →
 
 ⚠️ **CRITICAL**: All download configuration centralized with built-in validation to prevent quality-reducing mistakes (4K→360p). Review module documentation before modifying.
 
+### Development Environment
+- **Python Integration**: Requires `DEV_DATABASE_URL` and `S3_DEV_BUCKET_NAME` environment variables
+- **Dialyzer**: Zero warnings in configured environments; suppressions handle unconfigured PyRunner dependencies
+- **Type Safety**: Full Dialyzer coverage with documented suppressions for external system interfaces
+
 ### Review Actions
 - **Instant Execution**: `approve`, `skip`, `archive`, `group` execute immediately
-- **Cut Point Operations**: `add_cut_point`, `remove_cut_point`, `move_cut_point` with audit trail
+- **Cut Operations**: `add_cut`, `remove_cut`, `move_cut` with declarative validation
 - **Simple Undo**: UI-level undo (Ctrl+Z) for most recent action only
 
 ## Key Benefits
 
-1. **Zero Re-encoding During Review**: Virtual clips enable instant operations
+1. **Zero Re-encoding During Review**: Cut-based clips enable instant operations
 2. **Superior Export Quality**: Stream copy from high-quality proxy (CRF 20)
 3. **Optimized I/O**: 78% S3 reduction + direct access via presigned URLs
 4. **FLAME Ready**: Near-zero pipeline latency via direct job chaining
