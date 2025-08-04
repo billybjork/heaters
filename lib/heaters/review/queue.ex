@@ -66,7 +66,7 @@ defmodule Heaters.Review.Queue do
   @spec next_pending_review_clips(integer(), list(integer())) :: list(Clip.t())
   def next_pending_review_clips(limit, exclude_ids \\ []) when is_integer(limit) do
     from(c in Clip,
-      where: c.ingest_state == "pending_review" and c.id not in ^exclude_ids,
+      where: c.ingest_state == :pending_review and c.id not in ^exclude_ids,
       order_by: [asc: c.id]
     )
     |> limit(^limit)
@@ -83,7 +83,7 @@ defmodule Heaters.Review.Queue do
   @spec pending_review_count() :: integer()
   def pending_review_count do
     Clip
-    |> where([c], c.ingest_state == "pending_review" and is_nil(c.reviewed_at))
+    |> where([c], c.ingest_state == :pending_review and is_nil(c.reviewed_at))
     |> select([c], count("*"))
     |> Repo.one()
   end

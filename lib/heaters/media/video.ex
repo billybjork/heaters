@@ -10,7 +10,7 @@ defmodule Heaters.Media.Video do
           height: integer() | nil,
           published_date: Date.t() | nil,
           title: String.t() | nil,
-          ingest_state: String.t(),
+          ingest_state: atom(),
           last_error: String.t() | nil,
           retry_count: integer(),
           original_url: String.t() | nil,
@@ -20,6 +20,8 @@ defmodule Heaters.Media.Video do
           master_filepath: String.t() | nil,
           downloaded_at: DateTime.t() | nil,
           cache_finalized_at: DateTime.t() | nil,
+          clips: [Heaters.Media.Clip.t()] | Ecto.Association.NotLoaded.t(),
+          cuts: [Heaters.Media.Cut.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t(),
           updated_at: DateTime.t()
         }
@@ -32,7 +34,7 @@ defmodule Heaters.Media.Video do
     field(:height, :integer)
     field(:published_date, :date)
     field(:title, :string)
-    field(:ingest_state, :string, default: "new")
+    field(:ingest_state, Ecto.Enum, values: [:new, :downloading, :downloaded, :preprocessing, :preprocessed, :detect_scenes, :download_failed, :preprocessing_failed], default: :new)
     field(:last_error, :string)
     field(:retry_count, :integer, default: 0)
     field(:original_url, :string)
@@ -42,6 +44,10 @@ defmodule Heaters.Media.Video do
     field(:master_filepath, :string)
     field(:downloaded_at, :utc_datetime)
     field(:cache_finalized_at, :utc_datetime)
+
+    has_many(:clips, Heaters.Media.Clip, foreign_key: :source_video_id, on_delete: :delete_all)
+    has_many(:cuts, Heaters.Media.Cut, foreign_key: :source_video_id, on_delete: :delete_all)
+
     timestamps(type: :utc_datetime)
   end
 

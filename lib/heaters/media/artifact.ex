@@ -3,8 +3,8 @@ defmodule Heaters.Media.Artifact do
 
   @type t() :: %__MODULE__{
           id: integer(),
-          artifact_type: String.t() | nil,
-          strategy: String.t() | nil,
+          artifact_type: atom() | nil,
+          strategy: atom() | nil,
           tag: String.t() | nil,
           s3_key: String.t() | nil,
           metadata: map() | nil,
@@ -15,8 +15,8 @@ defmodule Heaters.Media.Artifact do
         }
 
   schema "clip_artifacts" do
-    field(:artifact_type, :string)
-    field(:strategy, :string)
+    field(:artifact_type, Ecto.Enum, values: [:keyframe])
+    field(:strategy, Ecto.Enum, values: [:multi, :midpoint, :single])
     field(:tag, :string)
     field(:s3_key, :string)
     field(:metadata, :map)

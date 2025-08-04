@@ -39,6 +39,13 @@ Heaters processes videos through a **cuts-based pipeline**: download → proxy g
 - **`Review`**: Human workflow (queue management, actions)
 - **`Pipeline`**: Declarative orchestration (config, dispatcher, queries)
 
+### Type Safety & Data Integrity
+
+- **Ecto Enums**: All state fields (`ingest_state`, `artifact_type`, `strategy`, `generation_strategy`) use native Ecto enums
+- **Database Constraints**: CHECK constraints prevent invalid enum values at the database level
+- **Compile-time Validation**: Invalid enum values caught during compilation
+- **Performance Indexes**: Strategic indexes on enum fields for optimized queries
+
 ## Pipeline & State Flow
 
 ```
@@ -84,6 +91,7 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 - **Python Integration**: Requires `DEV_DATABASE_URL` and `DEV_S3_BUCKET_NAME` environment variables
 - **Dialyzer**: Zero warnings in configured environments; suppressions handle unconfigured PyRunner dependencies
 - **Type Safety**: Full Dialyzer coverage with documented suppressions for external system interfaces
+- **Enum Safety**: All state fields use Ecto enums with database constraints for compile-time and runtime validation
 
 ### Review Actions
 - **Instant Execution**: `approve`, `skip`, `archive`, `group` execute immediately
@@ -99,3 +107,4 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 5. **Universal Workflow**: Handles all ingest types with smart optimization
 6. **Production Reliable**: Resumable, idempotent, robust with graceful fallbacks
 7. **Maintainable**: Declarative configuration, modular design, centralized logic
+8. **Type Safe**: Ecto enums with database constraints ensure data integrity and prevent invalid states

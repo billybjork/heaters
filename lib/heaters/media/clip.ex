@@ -9,7 +9,7 @@ defmodule Heaters.Media.Clip do
           end_frame: integer() | nil,
           start_time_seconds: float() | nil,
           end_time_seconds: float() | nil,
-          ingest_state: String.t() | nil,
+          ingest_state: atom() | nil,
           last_error: String.t() | nil,
           retry_count: integer() | nil,
           reviewed_at: NaiveDateTime.t() | nil,
@@ -31,7 +31,7 @@ defmodule Heaters.Media.Clip do
     field(:end_frame, :integer)
     field(:start_time_seconds, :float)
     field(:end_time_seconds, :float)
-    field(:ingest_state, :string, default: "pending_review")
+    field(:ingest_state, Ecto.Enum, values: [:pending_review, :review_approved, :review_skipped, :review_archived, :exporting, :exported, :export_failed, :keyframing, :keyframed, :keyframe_failed, :embedding, :embedded, :embedding_failed], default: :pending_review)
     field(:last_error, :string)
     field(:retry_count, :integer, default: 0)
 

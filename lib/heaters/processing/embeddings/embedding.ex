@@ -18,7 +18,7 @@ defmodule Heaters.Processing.Embeddings.Embedding do
           embedding: [float()] | nil,
           model_name: String.t(),
           model_version: String.t() | nil,
-          generation_strategy: String.t(),
+          generation_strategy: atom(),
           embedding_dim: integer() | nil,
           inserted_at: DateTime.t(),
           updated_at: DateTime.t(),
@@ -32,7 +32,7 @@ defmodule Heaters.Processing.Embeddings.Embedding do
 
     field(:model_name, :string)
     field(:model_version, :string)
-    field(:generation_strategy, :string)
+    field(:generation_strategy, Ecto.Enum, values: [:keyframe_multi_avg, :keyframe_multi, :keyframe_single])
     field(:embedding_dim, :integer)
 
     timestamps(type: :utc_datetime)
