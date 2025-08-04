@@ -3,7 +3,7 @@ defmodule Heaters.Media.Cuts.Operations do
   Core cut point operations: add, remove, and move cuts.
 
   This module orchestrates all cut operations using the declarative configuration
-  from `Cuts.Config` and validation from `Cuts.Validation`. Each operation:
+  from `Cuts` and validation from `Cuts.Validation`. Each operation:
 
   1. **Validates** all preconditions using declarative rules
   2. **Executes** effects atomically within database transactions
@@ -25,21 +25,21 @@ defmodule Heaters.Media.Cuts.Operations do
   ## Usage
 
       # Add a cut point
-      {:ok, {first_clip, second_clip}} = 
+      {:ok, {first_clip, second_clip}} =
         Operations.add_cut(source_video_id, frame_number, user_id)
 
       # Remove a cut point
-      {:ok, merged_clip} = 
+      {:ok, merged_clip} =
         Operations.remove_cut(source_video_id, frame_number, user_id)
 
       # Move a cut point
-      {:ok, {updated_first, updated_second}} = 
+      {:ok, {updated_first, updated_second}} =
         Operations.move_cut(source_video_id, old_frame, new_frame, user_id)
   """
 
   import Ecto.Query, warn: false
   alias Heaters.Repo
-  alias Heaters.Media.{Cut, Clip}
+  alias Heaters.Media.{Cut, Clip, Cuts}
   alias Heaters.Media.Cuts.Validation
   require Logger
 
@@ -209,7 +209,8 @@ defmodule Heaters.Media.Cuts.Operations do
     )
 
     case Repo.transaction(fn ->
-           with {:ok, cuts} <- create_cuts_from_scene_detection(source_video_id, cut_points, metadata),
+           with {:ok, cuts} <-
+                  create_cuts_from_scene_detection(source_video_id, cut_points, metadata),
                 {:ok, clips} <- create_clips_from_cuts(source_video_id, cuts) do
              Logger.info(
                "Successfully created #{length(cuts)} cuts and #{length(clips)} clips for source_video_id #{source_video_id}"
@@ -235,11 +236,11 @@ defmodule Heaters.Media.Cuts.Operations do
     case Repo.transaction(fn ->
            source_video = Repo.get!(Heaters.Media.Video, source_video_id)
 
-           with {:ok, cut} <- create_cut(source_video_id, frame_number, source_video, user_id, opts),
+           with {:ok, cut} <-
+                  create_cut(source_video_id, frame_number, source_video, user_id, opts),
                 {:ok, containing_clip} <- find_containing_clip(source_video_id, frame_number),
                 {:ok, {first_clip, second_clip}} <-
                   split_clip_at_cut(containing_clip, cut, user_id, opts) do
-
              {first_clip, second_clip}
            else
              {:error, reason} -> Repo.rollback(reason)
@@ -255,10 +256,10 @@ defmodule Heaters.Media.Cuts.Operations do
   defp execute_remove_cut(source_video_id, frame_number, user_id, opts) do
     case Repo.transaction(fn ->
            with {:ok, cut} <- find_cut_to_remove(source_video_id, frame_number),
-                {:ok, {left_clip, right_clip}} <- find_adjacent_clips(source_video_id, frame_number),
+                {:ok, {left_clip, right_clip}} <-
+                  find_adjacent_clips(source_video_id, frame_number),
                 {:ok, merged_clip} <- merge_clips(left_clip, right_clip, user_id, opts),
                 :ok <- delete_cut(cut) do
-
              merged_clip
            else
              {:error, reason} -> Repo.rollback(reason)
@@ -277,10 +278,10 @@ defmodule Heaters.Media.Cuts.Operations do
 
            with {:ok, cut} <- find_cut_to_move(source_video_id, old_frame),
                 {:ok, {left_clip, right_clip}} <- find_adjacent_clips(source_video_id, old_frame),
-                {:ok, updated_cut} <- update_cut_position(cut, new_frame, source_video, user_id, opts),
+                {:ok, updated_cut} <-
+                  update_cut_position(cut, new_frame, source_video, user_id, opts),
                 {:ok, {updated_left, updated_right}} <-
                   update_adjacent_clips(left_clip, right_clip, updated_cut, user_id, opts) do
-
              {updated_left, updated_right}
            else
              {:error, reason} -> Repo.rollback(reason)
@@ -303,7 +304,13 @@ defmodule Heaters.Media.Cuts.Operations do
         cut_points
         |> Enum.with_index()
         |> Enum.map(fn {cut_point, index} ->
-          create_cut_from_scene_detection(source_video_id, cut_point, source_video, index, metadata)
+          create_cut_from_scene_detection(
+            source_video_id,
+            cut_point,
+            source_video,
+            index,
+            metadata
+          )
         end)
 
       # Check for any errors
@@ -325,7 +332,7 @@ defmodule Heaters.Media.Cuts.Operations do
   @spec create_clips_from_cuts(integer(), [Cut.t()]) :: {:ok, [Clip.t()]} | {:error, String.t()}
   defp create_clips_from_cuts(source_video_id, _cuts) do
     source_video = Repo.get!(Heaters.Media.Video, source_video_id)
-    segments = Cut.derive_clips_from_cuts(source_video_id, source_video)
+    segments = Cuts.derive_clips_from_cuts(source_video_id, source_video)
 
     # Create clips from segments
     clips =
@@ -369,7 +376,8 @@ defmodule Heaters.Media.Cuts.Operations do
       frame_number: frame_number,
       time_seconds: time_seconds,
       created_by_user_id: user_id,
-      operation_metadata: Map.merge(metadata, %{operation: "add_cut", created_at: DateTime.utc_now()})
+      operation_metadata:
+        Map.merge(metadata, %{operation: "add_cut", created_at: DateTime.utc_now()})
     }
 
     case %Cut{}
@@ -474,14 +482,17 @@ defmodule Heaters.Media.Cuts.Operations do
     case %Clip{}
          |> Clip.changeset(attrs)
          |> Repo.insert() do
-      {:ok, clip} -> {:ok, clip}
-      {:error, changeset} -> {:error, "Failed to create #{position} clip: #{inspect(changeset.errors)}"}
+      {:ok, clip} ->
+        {:ok, clip}
+
+      {:error, changeset} ->
+        {:error, "Failed to create #{position} clip: #{inspect(changeset.errors)}"}
     end
   end
 
   @spec find_cut_to_remove(integer(), integer()) :: {:ok, Cut.t()} | {:error, String.t()}
   defp find_cut_to_remove(source_video_id, frame_number) do
-    Cut.find_cut_at_frame(source_video_id, frame_number)
+    Cuts.find_cut_at_frame(source_video_id, frame_number)
   end
 
   @spec find_adjacent_clips(integer(), integer()) ::
@@ -497,7 +508,7 @@ defmodule Heaters.Media.Cuts.Operations do
       )
       |> Repo.one()
 
-    # Find clip that starts at this frame  
+    # Find clip that starts at this frame
     right_clip =
       from(c in Clip,
         where:
@@ -519,7 +530,8 @@ defmodule Heaters.Media.Cuts.Operations do
     end
   end
 
-  @spec merge_clips(Clip.t(), Clip.t(), integer(), keyword()) :: {:ok, Clip.t()} | {:error, String.t()}
+  @spec merge_clips(Clip.t(), Clip.t(), integer(), keyword()) ::
+          {:ok, Clip.t()} | {:error, String.t()}
   defp merge_clips(left_clip, right_clip, user_id, opts) do
     metadata = Keyword.get(opts, :metadata, %{})
 
@@ -562,8 +574,11 @@ defmodule Heaters.Media.Cuts.Operations do
     case %Clip{}
          |> Clip.changeset(attrs)
          |> Repo.insert() do
-      {:ok, clip} -> {:ok, clip}
-      {:error, changeset} -> {:error, "Failed to create merged clip: #{inspect(changeset.errors)}"}
+      {:ok, clip} ->
+        {:ok, clip}
+
+      {:error, changeset} ->
+        {:error, "Failed to create merged clip: #{inspect(changeset.errors)}"}
     end
   end
 
@@ -577,7 +592,7 @@ defmodule Heaters.Media.Cuts.Operations do
 
   @spec find_cut_to_move(integer(), integer()) :: {:ok, Cut.t()} | {:error, String.t()}
   defp find_cut_to_move(source_video_id, frame_number) do
-    Cut.find_cut_at_frame(source_video_id, frame_number)
+    Cuts.find_cut_at_frame(source_video_id, frame_number)
   end
 
   @spec update_cut_position(Cut.t(), integer(), Heaters.Media.Video.t(), integer(), keyword()) ::
@@ -597,7 +612,8 @@ defmodule Heaters.Media.Cuts.Operations do
       frame_number: new_frame,
       time_seconds: new_time,
       operation_metadata:
-        Map.merge(cut.operation_metadata || %{}, 
+        Map.merge(
+          cut.operation_metadata || %{},
           Map.merge(metadata, %{
             last_moved_by_user_id: user_id,
             last_moved_at: DateTime.utc_now(),
@@ -624,7 +640,8 @@ defmodule Heaters.Media.Cuts.Operations do
       end_frame: updated_cut.frame_number,
       end_time_seconds: updated_cut.time_seconds,
       processing_metadata:
-        Map.merge(left_clip.processing_metadata || %{}, 
+        Map.merge(
+          left_clip.processing_metadata || %{},
           Map.merge(metadata, %{
             last_modified_by_user_id: user_id,
             last_modified_at: DateTime.utc_now(),
@@ -638,7 +655,8 @@ defmodule Heaters.Media.Cuts.Operations do
       start_frame: updated_cut.frame_number,
       start_time_seconds: updated_cut.time_seconds,
       processing_metadata:
-        Map.merge(right_clip.processing_metadata || %{}, 
+        Map.merge(
+          right_clip.processing_metadata || %{},
           Map.merge(metadata, %{
             last_modified_by_user_id: user_id,
             last_modified_at: DateTime.utc_now(),
@@ -651,7 +669,8 @@ defmodule Heaters.Media.Cuts.Operations do
          {:ok, updated_right} <- right_clip |> Clip.changeset(right_attrs) |> Repo.update() do
       {:ok, {updated_left, updated_right}}
     else
-      {:error, changeset} -> {:error, "Failed to update adjacent clips: #{inspect(changeset.errors)}"}
+      {:error, changeset} ->
+        {:error, "Failed to update adjacent clips: #{inspect(changeset.errors)}"}
     end
   end
 
@@ -671,32 +690,44 @@ defmodule Heaters.Media.Cuts.Operations do
 
   defp validate_scene_detection_format(_), do: {:error, "Cut points must be a list"}
 
-  @spec create_cut_from_scene_detection(integer(), map(), Heaters.Media.Video.t(), integer(), map()) ::
+  @spec create_cut_from_scene_detection(
+          integer(),
+          map(),
+          Heaters.Media.Video.t(),
+          integer(),
+          map()
+        ) ::
           {:ok, Cut.t()} | {:error, String.t()}
   defp create_cut_from_scene_detection(source_video_id, cut_point, _source_video, index, metadata) do
     attrs = %{
       source_video_id: source_video_id,
       frame_number: cut_point["frame_number"],
       time_seconds: cut_point["time_seconds"],
-      created_by_user_id: nil,  # System-generated
-      operation_metadata: Map.merge(metadata, %{
-        source: "scene_detection",
-        detection_index: index,
-        created_at: DateTime.utc_now()
-      })
+      # System-generated
+      created_by_user_id: nil,
+      operation_metadata:
+        Map.merge(metadata, %{
+          source: "scene_detection",
+          detection_index: index,
+          created_at: DateTime.utc_now()
+        })
     }
 
     case %Cut{}
          |> Cut.changeset(attrs)
          |> Repo.insert() do
-      {:ok, cut} -> {:ok, cut}
-      {:error, changeset} -> {:error, "Failed to create cut from scene detection: #{inspect(changeset.errors)}"}
+      {:ok, cut} ->
+        {:ok, cut}
+
+      {:error, changeset} ->
+        {:error, "Failed to create cut from scene detection: #{inspect(changeset.errors)}"}
     end
   end
 
   @spec create_clip_from_segment(map(), integer()) :: {:ok, Clip.t()} | {:error, String.t()}
   defp create_clip_from_segment(segment, index) do
-    clip_identifier = "#{segment.source_video_id}_segment_#{String.pad_leading(to_string(index + 1), 3, "0")}"
+    clip_identifier =
+      "#{segment.source_video_id}_segment_#{String.pad_leading(to_string(index + 1), 3, "0")}"
 
     attrs = %{
       source_video_id: segment.source_video_id,
@@ -716,9 +747,11 @@ defmodule Heaters.Media.Cuts.Operations do
     case %Clip{}
          |> Clip.changeset(attrs)
          |> Repo.insert() do
-      {:ok, clip} -> {:ok, clip}
-      {:error, changeset} -> {:error, "Failed to create clip from segment: #{inspect(changeset.errors)}"}
+      {:ok, clip} ->
+        {:ok, clip}
+
+      {:error, changeset} ->
+        {:error, "Failed to create clip from segment: #{inspect(changeset.errors)}"}
     end
   end
-
 end

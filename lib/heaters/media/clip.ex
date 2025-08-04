@@ -19,8 +19,7 @@ defmodule Heaters.Media.Clip do
           grouped_with_clip_id: integer() | nil,
           action_committed_at: NaiveDateTime.t() | nil,
           source_video: Heaters.Media.Video.t() | Ecto.Association.NotLoaded.t(),
-          clip_artifacts:
-            [Heaters.Media.Artifact.ClipArtifact.t()] | Ecto.Association.NotLoaded.t(),
+          clip_artifacts: [Heaters.Media.Artifact.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t(),
           updated_at: DateTime.t()
         }
@@ -44,7 +43,7 @@ defmodule Heaters.Media.Clip do
     field(:action_committed_at, :naive_datetime)
 
     belongs_to(:source_video, Heaters.Media.Video)
-    has_many(:clip_artifacts, Heaters.Media.Artifact.ClipArtifact)
+    has_many(:clip_artifacts, Heaters.Media.Artifact)
 
     timestamps(type: :utc_datetime)
   end

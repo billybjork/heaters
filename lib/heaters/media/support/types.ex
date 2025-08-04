@@ -89,5 +89,5 @@ defmodule Heaters.Media.Support.Types do
           {:ok, Heaters.Media.Clip.t()} | {:error, any()}
 
   @type artifacts_response ::
-          {:ok, [Heaters.Media.Artifact.ClipArtifact.t()]} | {:error, any()}
+          {:ok, [Heaters.Media.Artifact.t()]} | {:error, any()}
 end

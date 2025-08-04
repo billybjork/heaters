@@ -1,6 +1,6 @@
-defmodule Heaters.Media.Artifact.Operations do
+defmodule Heaters.Media.Artifacts do
   @moduledoc """
-  Shared artifact operations and utilities.
+  Core domain operations for `Heaters.Media.Artifact` objects.
 
   This module provides common operations used across all clip artifact types
   (keyframes, object masks, pose estimation masks, etc.). Unlike the domain-specific
@@ -25,12 +25,12 @@ defmodule Heaters.Media.Artifact.Operations do
   Used by artifact processors (keyframes, future mask/pose processors):
 
       # Database artifact creation (used by all processors)
-      Artifact.Operations.create_artifacts(clip_id, "keyframe", artifacts_data)
-      Artifact.Operations.create_artifacts(clip_id, "object_mask", mask_data)
-      Artifact.Operations.create_artifacts(clip_id, "pose_estimation", pose_data)
+      Artifacts.create_artifacts(clip_id, "keyframe", artifacts_data)
+      Artifacts.create_artifacts(clip_id, "object_mask", mask_data)
+      Artifacts.create_artifacts(clip_id, "pose_estimation", pose_data)
 
       # S3 path management (ensures consistent directory structure)
-      prefix = Artifact.Operations.build_artifact_prefix(clip, "keyframes")
+      prefix = Artifacts.build_artifact_prefix(clip, "keyframes")
       # Returns: "clip_artifacts/Berlin_Skies_Snow_VANS/keyframes"
 
   ## Architecture Note
@@ -43,7 +43,7 @@ defmodule Heaters.Media.Artifact.Operations do
   alias Heaters.Repo
   alias Heaters.Media.Clip
   alias Heaters.Media.Videos
-  alias Heaters.Media.Artifact.ClipArtifact
+  alias Heaters.Media.Artifact
   require Logger
 
   @doc """
@@ -54,7 +54,7 @@ defmodule Heaters.Media.Artifact.Operations do
   ## Examples
 
       # For keyframes
-      prefix = Artifacts.Operations.build_artifact_prefix(clip, "keyframes")
+      prefix = Artifacts.build_artifact_prefix(clip, "keyframes")
       # Returns: "clip_artifacts/Berlin_Skies_Snow_VANS/keyframes"
   """
   @spec build_artifact_prefix(Clip.t(), String.t()) :: String.t()
@@ -94,13 +94,13 @@ defmodule Heaters.Media.Artifact.Operations do
         %{s3_key: "path/to/keyframe2.jpg", metadata: %{frame_index: 200}}
       ]
 
-      {:ok, artifacts} = Artifacts.Operations.create_artifacts(clip_id, "keyframe", artifacts_data)
+      {:ok, artifacts} = Artifacts.create_artifacts(clip_id, "keyframe", artifacts_data)
   """
   @spec create_artifacts(integer(), String.t(), list(map())) ::
-          {:ok, list(ClipArtifact.t())} | {:error, any()}
+          {:ok, list(Artifact.t())} | {:error, any()}
   def create_artifacts(clip_id, artifact_type, artifacts_data) when is_list(artifacts_data) do
     Logger.info(
-      "Artifacts.Operations: Creating #{length(artifacts_data)} #{artifact_type} artifacts for clip_id: #{clip_id}"
+      "Artifacts: Creating #{length(artifacts_data)} #{artifact_type} artifacts for clip_id: #{clip_id}"
     )
 
     artifacts_attrs =
@@ -110,21 +110,21 @@ defmodule Heaters.Media.Artifact.Operations do
       end)
 
     # Validate all artifacts before bulk insert
-    validated_changesets = Enum.map(artifacts_attrs, &ClipArtifact.changeset(%ClipArtifact{}, &1))
+    validated_changesets = Enum.map(artifacts_attrs, &Artifact.changeset(%Artifact{}, &1))
 
     case validate_artifact_changesets(validated_changesets) do
       :ok ->
-        case Repo.insert_all(ClipArtifact, artifacts_attrs, returning: true) do
+        case Repo.insert_all(Artifact, artifacts_attrs, returning: true) do
           {count, artifacts} when count > 0 ->
             Logger.info(
-              "Artifacts.Operations: Successfully created #{count} #{artifact_type} artifacts for clip_id: #{clip_id}"
+              "Artifacts: Successfully created #{count} #{artifact_type} artifacts for clip_id: #{clip_id}"
             )
 
             {:ok, artifacts}
 
           {0, _} ->
             Logger.error(
-              "Artifacts.Operations: Failed to create #{artifact_type} artifacts for clip_id: #{clip_id}"
+              "Artifacts: Failed to create #{artifact_type} artifacts for clip_id: #{clip_id}"
             )
 
             {:error, "No artifacts were created"}
@@ -132,7 +132,7 @@ defmodule Heaters.Media.Artifact.Operations do
 
       {:error, errors} ->
         Logger.error(
-          "Artifacts.Operations: Validation failed for #{artifact_type} artifacts for clip_id: #{clip_id}. Errors: #{inspect(errors)}"
+          "Artifacts: Validation failed for #{artifact_type} artifacts for clip_id: #{clip_id}. Errors: #{inspect(errors)}"
         )
 
         {:error, "Validation failed: #{format_artifact_validation_errors(errors)}"}
@@ -140,7 +140,7 @@ defmodule Heaters.Media.Artifact.Operations do
   rescue
     e ->
       Logger.error(
-        "Artifacts.Operations: Error creating #{artifact_type} artifacts for clip_id #{clip_id}: #{Exception.message(e)}"
+        "Artifacts: Error creating #{artifact_type} artifacts for clip_id #{clip_id}: #{Exception.message(e)}"
       )
 
       {:error, Exception.message(e)}

@@ -11,7 +11,7 @@ defmodule Heaters.Processing.Keyframes.Core do
 
   require Logger
 
-  alias Heaters.Media.Artifact.Operations, as: ArtifactOperations
+  alias Heaters.Media.Artifacts
   alias Heaters.Media.Support.{Types, ErrorFormatting}
 
   # Domain modules (pure business logic)
@@ -237,7 +237,7 @@ defmodule Heaters.Processing.Keyframes.Core do
         }
       end)
 
-    ArtifactOperations.create_artifacts(clip_id, "keyframe", artifacts)
+    Artifacts.create_artifacts(clip_id, "keyframe", artifacts)
   end
 
   defp update_clip_to_keyframed(clip_id, _keyframe_metadata) do

@@ -2,14 +2,14 @@ defmodule Heaters.Media.Cuts.Validation do
   @moduledoc """
   Validation logic for cut point operations.
 
-  Implements all precondition checks defined in `Cuts.Config` as pure functions.
+  Implements all precondition checks defined in `Cuts` as pure functions.
   Each validation function takes operation parameters and returns `:ok` or `{:error, reason}`.
 
   ## Validation Strategy
 
   - **Pure Functions**: All validations are side-effect free
   - **Composable**: Individual checks can be combined for complex validations
-  - **Declarative**: Rules are data-driven from `Cuts.Config`
+  - **Declarative**: Rules are data-driven from `Cuts`
   - **Comprehensive**: Covers all edge cases and business rules
 
   ## Usage
@@ -30,7 +30,7 @@ defmodule Heaters.Media.Cuts.Validation do
   import Ecto.Query, warn: false
   alias Heaters.Repo
   alias Heaters.Media.Cut
-  alias Heaters.Media.Cuts.Config
+  alias Heaters.Media.Cuts
 
   @doc """
   Validate a complete cut operation against all preconditions.
@@ -49,7 +49,7 @@ defmodule Heaters.Media.Cuts.Validation do
   """
   @spec validate_operation(atom(), integer(), map()) :: :ok | {:error, String.t()}
   def validate_operation(operation_type, source_video_id, params) do
-    preconditions = Config.get_preconditions(operation_type)
+    preconditions = Cuts.get_preconditions(operation_type)
 
     case run_precondition_checks(preconditions, source_video_id, params) do
       [] -> :ok
@@ -114,7 +114,7 @@ defmodule Heaters.Media.Cuts.Validation do
   @spec validate_minimum_segment_size(integer(), integer()) :: :ok | {:error, String.t()}
   def validate_minimum_segment_size(source_video_id, frame_number) do
     segments = get_current_segments(source_video_id)
-    min_frames = Config.minimum_segment_frames()
+    min_frames = Cuts.minimum_segment_frames()
 
     # Find the segment that would be split
     case Enum.find(segments, fn segment ->
@@ -149,7 +149,7 @@ defmodule Heaters.Media.Cuts.Validation do
   """
   @spec validate_not_duplicate_cut(integer(), integer()) :: :ok | {:error, String.t()}
   def validate_not_duplicate_cut(source_video_id, frame_number) do
-    case Cut.find_cut_at_frame(source_video_id, frame_number) do
+    case Cuts.find_cut_at_frame(source_video_id, frame_number) do
       {:ok, _cut} ->
         {:error, "Cut already exists at frame #{frame_number}"}
 
@@ -165,7 +165,7 @@ defmodule Heaters.Media.Cuts.Validation do
   """
   @spec validate_cut_exists(integer(), integer()) :: :ok | {:error, String.t()}
   def validate_cut_exists(source_video_id, frame_number) do
-    case Cut.find_cut_at_frame(source_video_id, frame_number) do
+    case Cuts.find_cut_at_frame(source_video_id, frame_number) do
       {:ok, _cut} ->
         :ok
 
@@ -229,7 +229,8 @@ defmodule Heaters.Media.Cuts.Validation do
 
   Used for move_cut operations to ensure the new position is valid.
   """
-  @spec validate_within_outer_bounds(integer(), integer(), integer()) :: :ok | {:error, String.t()}
+  @spec validate_within_outer_bounds(integer(), integer(), integer()) ::
+          :ok | {:error, String.t()}
   def validate_within_outer_bounds(source_video_id, old_frame, new_frame) do
     segments = get_current_segments(source_video_id)
 
@@ -242,8 +243,7 @@ defmodule Heaters.Media.Cuts.Validation do
         if new_frame > left_start and new_frame < right_end do
           :ok
         else
-          {:error,
-           "New frame #{new_frame} is outside bounds [#{left_start}, #{right_end}]"}
+          {:error, "New frame #{new_frame} is outside bounds [#{left_start}, #{right_end}]"}
         end
 
       _ ->
@@ -258,8 +258,8 @@ defmodule Heaters.Media.Cuts.Validation do
   """
   @spec validate_minimum_distances(integer(), integer(), integer()) :: :ok | {:error, String.t()}
   def validate_minimum_distances(source_video_id, old_frame, new_frame) do
-    cuts = Cut.get_cuts_for_source(source_video_id)
-    min_distance = Config.minimum_cut_distance()
+    cuts = Cuts.get_cuts_for_source(source_video_id)
+    min_distance = Cuts.minimum_cut_distance()
 
     # Filter out the cut we're moving
     other_cuts = Enum.reject(cuts, fn cut -> cut.frame_number == old_frame end)
@@ -409,7 +409,7 @@ defmodule Heaters.Media.Cuts.Validation do
   @spec get_current_segments(integer()) :: [map()]
   defp get_current_segments(source_video_id) do
     source_video = Repo.get!(Heaters.Media.Video, source_video_id)
-    Cut.derive_clips_from_cuts(source_video_id, source_video)
+    Cuts.derive_clips_from_cuts(source_video_id, source_video)
   end
 
   @spec find_nearest_cuts([Cut.t()], integer()) :: {Cut.t() | nil, Cut.t() | nil}
