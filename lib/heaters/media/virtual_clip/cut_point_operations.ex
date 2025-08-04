@@ -539,29 +539,9 @@ defmodule Heaters.Media.VirtualClip.CutPointOperations do
   @spec create_clips_from_validated_cut_points(integer(), list(), map()) ::
           {:ok, list(Clip.t())} | {:error, any()}
   defp create_clips_from_validated_cut_points(source_video_id, cut_points, metadata) do
-    clips_data =
-      Enum.map(cut_points, fn cut_point ->
-        %{
-          source_video_id: source_video_id,
-          start_frame: cut_point["start_frame"],
-          end_frame: cut_point["end_frame"],
-          start_time_seconds: cut_point["start_time_seconds"],
-          end_time_seconds: cut_point["end_time_seconds"],
-          cut_points: [cut_point],
-          is_virtual: true,
-          ingest_state: "created",
-          metadata: metadata
-        }
-      end)
-
-    case Heaters.Media.Clips.create_clips(clips_data) do
-      {_count, clips} ->
-        Logger.info(
-          "VirtualClip.Operations: Successfully created #{length(clips)} virtual clips for source_video_id: #{source_video_id}"
-        )
-
-        {:ok, clips}
-    end
+    # Delegate to the proper VirtualClip module that handles this correctly
+    alias Heaters.Media.VirtualClip
+    VirtualClip.create_virtual_clips_from_cut_points(source_video_id, cut_points, metadata)
   end
 
   @spec create_virtual_clip_from_cut_points(integer(), map(), integer(), String.t()) ::
@@ -570,9 +550,6 @@ defmodule Heaters.Media.VirtualClip.CutPointOperations do
     # Generate unique identifier for this clip
     timestamp = System.system_time(:millisecond)
     clip_identifier = "#{source_video_id}_virtual_#{operation_type}_#{timestamp}"
-
-    # Get next order number for this source video
-    next_order = get_next_source_video_order(source_video_id)
 
     clip_attrs = %{
       source_video_id: source_video_id,
@@ -584,9 +561,6 @@ defmodule Heaters.Media.VirtualClip.CutPointOperations do
       start_time_seconds: cut_points["start_time_seconds"],
       end_time_seconds: cut_points["end_time_seconds"],
       ingest_state: "pending_review",
-      source_video_order: next_order,
-      cut_point_version: 1,
-      created_by_user_id: user_id,
       processing_metadata: %{
         "created_by_user_id" => user_id,
         "operation_type" => operation_type,
@@ -599,20 +573,20 @@ defmodule Heaters.Media.VirtualClip.CutPointOperations do
     |> Repo.insert()
   end
 
-  @spec get_next_source_video_order(integer()) :: integer()
-  defp get_next_source_video_order(source_video_id) do
-    from(c in Clip,
-      where:
-        c.source_video_id == ^source_video_id and c.is_virtual == true and
-          c.ingest_state != "archived",
-      select: max(c.source_video_order)
-    )
-    |> Repo.one()
-    |> case do
-      nil -> 1
-      max_order -> max_order + 1
-    end
-  end
+  # @spec get_next_source_video_order(integer()) :: integer()
+  # defp get_next_source_video_order(source_video_id) do
+  #   from(c in Clip,
+  #     where:
+  #       c.source_video_id == ^source_video_id and c.is_virtual == true and
+  #         c.ingest_state != "archived",
+  #     select: max(c.source_video_order)
+  #   )
+  #   |> Repo.one()
+  #   |> case do
+  #     nil -> 1
+  #     max_order -> max_order + 1
+  #   end
+  # end
 
   @spec log_cut_point_operation(
           String.t(),
