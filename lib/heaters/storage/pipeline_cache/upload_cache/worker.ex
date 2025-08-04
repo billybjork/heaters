@@ -97,7 +97,7 @@ defmodule Heaters.Storage.PipelineCache.UploadCache.Worker do
 
     query =
       from(c in Heaters.Media.Clip,
-        where: c.source_video_id == ^source_video_id and c.is_virtual == true,
+        where: c.source_video_id == ^source_video_id and is_nil(c.clip_filepath),
         select: count("*")
       )
 

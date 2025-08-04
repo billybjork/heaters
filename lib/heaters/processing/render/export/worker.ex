@@ -106,7 +106,7 @@ defmodule Heaters.Processing.Render.Export.Worker do
       from(c in Clip,
         where:
           c.source_video_id == ^source_video_id and
-            c.is_virtual == true and
+            is_nil(c.clip_filepath) and
             c.ingest_state == "review_approved",
         preload: [:source_video]
       )
@@ -248,7 +248,6 @@ defmodule Heaters.Processing.Render.Export.Worker do
     duration = Map.get(export_data, "duration")
 
     update_attrs = %{
-      is_virtual: false,
       clip_filepath: clip_filepath,
       ingest_state: "exported",
       processing_metadata:

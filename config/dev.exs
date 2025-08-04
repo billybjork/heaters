@@ -71,8 +71,7 @@ config :heaters, HeatersWeb.Endpoint,
   debug_errors: true,
   secret_key_base: "1yyvat8bVNahXZFsX5tOvQ2sc75yXYCOC8dTG6pzDpBR4w32TTFftWpI+suyC1jc",
   watchers: [
-    esbuild: {Esbuild, :install_and_run, [:default, ~w(--sourcemap=inline --watch)]},
-    css: {HeatersWeb.CSSWatcher, :install_and_run, []}
+    esbuild: {Esbuild, :install_and_run, [:default, ~w(--sourcemap=inline --watch)]}
   ]
 
 # Watch static assets for browser reloading.

@@ -98,6 +98,7 @@ config :esbuild,
   default: [
     args: ~w(
         js/app.js
+        css/app.css
         --bundle
         --target=es2017
         --outdir=../priv/static/assets

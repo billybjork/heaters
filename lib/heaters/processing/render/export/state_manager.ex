@@ -68,12 +68,11 @@ defmodule Heaters.Processing.Render.Export.StateManager do
   ## Examples
 
       attrs = %{
-        is_virtual: false,
         clip_filepath: "final_clips/video_123_clip_001.mp4",
         ingest_state: "exported"
       }
       {:ok, clip} = StateManager.complete_export(456, attrs)
-      clip.is_virtual     # false
+      clip.clip_filepath  # "final_clips/video_123_clip_001.mp4"
       clip.clip_filepath  # "final_clips/video_123_clip_001.mp4"
   """
   @spec complete_export(integer(), map()) :: {:ok, Clip.t()} | {:error, any()}
@@ -132,7 +131,7 @@ defmodule Heaters.Processing.Render.Export.StateManager do
 
   defp validate_single_clip_for_export(clip) do
     cond do
-      not clip.is_virtual ->
+      not is_nil(clip.clip_filepath) ->
         {:error, "Clip #{clip.id} is not virtual - already exported"}
 
       clip.ingest_state != "review_approved" ->

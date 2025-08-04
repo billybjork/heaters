@@ -12,36 +12,38 @@ defmodule HeatersWeb.VideoUrlHelper do
   @doc """
   Generate video URL for clips using the tiny-file approach.
 
-  For virtual clips, this triggers temp file generation in development or checks for
-  exported clips in production. For physical clips, returns direct S3 URLs.
+  For virtual clips (clip_filepath is nil), this triggers temp file generation in development 
+  or checks for exported clips in production. For physical clips (clip_filepath is not nil), 
+  returns direct S3 URLs.
 
   ## Parameters
-  - `clip`: Clip struct with timing information
+  - `clip`: Clip struct with timing information and optional clip_filepath
   - `source_video`: Source video struct with file paths
 
   ## Examples
 
-      # Virtual clip - uses tiny-file approach
-      {:ok, url, :direct_s3} = get_video_url(virtual_clip, source_video)
+      # Virtual clip (generated from cuts) - uses tiny-file approach
+      {:ok, url, :direct_s3} = get_video_url(%{clip_filepath: nil, ...}, source_video)
 
       # Physical clip - uses direct file URL
-      {:ok, url, :direct_s3} = get_video_url(physical_clip, source_video)
+      {:ok, url, :direct_s3} = get_video_url(%{clip_filepath: "path/to/file.mp4", ...}, source_video)
   """
   @spec get_video_url(map(), map()) ::
           {:ok, String.t(), atom()} | {:loading, nil} | {:error, String.t()}
-  def get_video_url(%{is_virtual: true} = clip, source_video) do
+  def get_video_url(%{clip_filepath: nil} = clip, source_video) do
+    # Virtual clip - no physical file, generated from cuts/segments
     build_virtual_clip_url(clip, source_video)
   end
 
-  def get_video_url(%{is_virtual: false} = clip, _source_video) do
-    case clip.clip_filepath do
-      nil ->
-        {:error, "No clip file available for physical clip"}
+  def get_video_url(%{clip_filepath: filepath} = _clip, _source_video) when not is_nil(filepath) do
+    # Physical clip - has an actual file
+    url = build_cloudfront_url(filepath)
+    {:ok, url, :direct_s3}
+  end
 
-      filepath ->
-        url = build_cloudfront_url(filepath)
-        {:ok, url, :direct_s3}
-    end
+  def get_video_url(clip, _source_video) do
+    # Fallback for clips without clip_filepath field or other edge cases
+    {:error, "Invalid clip structure: #{inspect(Map.keys(clip))}"}
   end
 
   @doc """
@@ -50,10 +52,10 @@ defmodule HeatersWeb.VideoUrlHelper do
   Returns true if the clip has the necessary file available (proxy for virtual, clip file for physical).
   """
   @spec streamable?(map(), map()) :: boolean()
-  def streamable?(%{is_virtual: true}, %{proxy_filepath: proxy_path}) when not is_nil(proxy_path),
+  def streamable?(%{clip_filepath: nil}, %{proxy_filepath: proxy_path}) when not is_nil(proxy_path),
     do: true
 
-  def streamable?(%{is_virtual: false, clip_filepath: clip_path}, _source_video)
+  def streamable?(%{clip_filepath: clip_path}, _source_video)
       when not is_nil(clip_path),
       do: true
 

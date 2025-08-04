@@ -85,7 +85,7 @@ defmodule HeatersWeb.ClipPlayer do
         <div class="video-player-error">
             <p>Video not available for playback.</p>
             <p class="error-details">
-              <%= if @clip.is_virtual do %>
+              <%= if is_nil(@clip.clip_filepath) do %>
                 Virtual clip requires proxy file for clip generation.
               <% else %>
                 Physical clip file not found.
@@ -129,7 +129,7 @@ defmodule HeatersWeb.ClipPlayer do
 
   # Build clip information for the JavaScript player
   # Each clip is treated as a standalone file
-  defp build_clip_info(%{is_virtual: true} = clip, _player_type) do
+  defp build_clip_info(%{clip_filepath: nil} = clip, _player_type) do
     %{
       is_virtual: true,
       start_time_seconds: clip.start_time_seconds,
@@ -138,7 +138,7 @@ defmodule HeatersWeb.ClipPlayer do
     }
   end
 
-  defp build_clip_info(%{is_virtual: false}, _player_type) do
+  defp build_clip_info(%{clip_filepath: _filepath}, _player_type) do
     %{
       is_virtual: false
     }
