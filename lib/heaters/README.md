@@ -77,6 +77,7 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 ### Production Reliability
 - **Resumable Processing**: All stages support automatic resume after interruptions
 - **Idempotent Workers**: Prevent duplicate work and handle retries gracefully
+- **Race Condition Prevention**: Strategic state updates prevent Dispatcher timing conflicts
 - **Centralized Error Handling**: Consistent recovery and audit trails
 
 ## Configuration

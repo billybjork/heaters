@@ -10,11 +10,11 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
   ## Workflow
 
   1. Check if source video needs cache persistence
-  2. Identify all cached files that should be persisted to S3
-  3. Persist cached files to their final S3 destinations using proper title-based naming
-  4. Update database with actual S3 file paths (proxy_filepath, master_filepath)
-  5. Clean up temporary cache entries
-  6. Mark persistence as complete
+  2. **Mark persistence as started immediately** (prevents Dispatcher race conditions)
+  3. Identify all cached files that should be persisted to S3
+  4. Persist cached files to their final S3 destinations using proper title-based naming
+  5. Update database with actual S3 file paths (proxy_filepath, master_filepath)
+  6. Clean up temporary cache entries
 
   ## S3 Path Generation
 
@@ -34,6 +34,19 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
   - **Output**: Source videos with all files properly stored in S3 and database updated
   - **Error Handling**: Graceful fallback - files may already be in S3 from traditional flow
   - **Idempotency**: Skip if already persisted or no cached files found
+
+  ## Race Condition Prevention
+
+  **CRITICAL**: `cache_persisted_at` is set IMMEDIATELY at the start of processing to prevent
+  race conditions with the Dispatcher. This closes the timing window where:
+
+  1. DetectScenes chains to PersistCache (immediate execution)
+  2. PersistCache starts S3 uploads (takes 30+ seconds)
+  3. Dispatcher runs every 30 seconds and sees `cache_persisted_at = NULL`
+  4. Dispatcher creates duplicate PersistCache job → concurrent S3 uploads → file conflicts
+
+  By marking persistence as started upfront, the Dispatcher will always see the video
+  as "already being processed" and skip duplicate job creation.
 
   ## Architecture
 
@@ -121,34 +134,50 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
   end
 
   defp run_persist_task(source_video) do
-    # Collect temp cache keys that might have cached files
-    # The PreprocessWorker caches files with keys like "temp_#{id}_proxy" and "temp_#{id}_master"
-    # The DownloadWorker caches files with S3 keys directly
-    temp_cache_keys = collect_temp_cache_keys(source_video)
-    s3_keys = collect_s3_keys(source_video)
+    # Mark persistence as started immediately to prevent race conditions with Dispatcher
+    # This closes the timing window where Dispatcher creates duplicate jobs while uploads are in progress
+    case mark_persist_complete(source_video) do
+      :ok ->
+        Logger.info(
+          "PersistCacheWorker: Marked persistence as started for video #{source_video.id}"
+        )
 
-    # Deduplicate keys by S3 destination to prevent racing uploads of the same file
-    # Both temp cache keys and S3 keys might resolve to the same S3 destination
-    all_keys = deduplicate_by_s3_destination(temp_cache_keys ++ s3_keys)
+        # Collect temp cache keys that might have cached files
+        # The PreprocessWorker caches files with keys like "temp_#{id}_proxy" and "temp_#{id}_master"
+        # The DownloadWorker caches files with S3 keys directly
+        temp_cache_keys = collect_temp_cache_keys(source_video)
+        s3_keys = collect_s3_keys(source_video)
 
-    if length(all_keys) > 0 do
-      Logger.info(
-        "PersistCacheWorker: Persisting #{length(all_keys)} potential cached files for video #{source_video.id}"
-      )
+        # Deduplicate keys by S3 destination to prevent racing uploads of the same file
+        # Both temp cache keys and S3 keys might resolve to the same S3 destination
+        all_keys = deduplicate_by_s3_destination(temp_cache_keys ++ s3_keys)
 
-      # Persist cached files and track successful uploads
-      successful_uploads = persist_cached_files_with_tracking(all_keys)
+        if length(all_keys) > 0 do
+          Logger.info(
+            "PersistCacheWorker: Persisting #{length(all_keys)} potential cached files for video #{source_video.id}"
+          )
 
-      # Update database with successful S3 paths
-      update_database_with_s3_paths(source_video, successful_uploads)
+          # Persist cached files and track successful uploads
+          successful_uploads = persist_cached_files_with_tracking(all_keys)
 
-      # Mark persistence as complete
-      mark_persist_complete(source_video)
-    else
-      Logger.info("PersistCacheWorker: No files to persist for video #{source_video.id}")
+          # Update database with successful S3 paths
+          update_database_with_s3_paths(source_video, successful_uploads)
 
-      # Still mark as complete to avoid repeated processing
-      mark_persist_complete(source_video)
+          Logger.info(
+            "PersistCacheWorker: Successfully completed cache persistence for video #{source_video.id}"
+          )
+        else
+          Logger.info("PersistCacheWorker: No files to persist for video #{source_video.id}")
+        end
+
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "PersistCacheWorker: Failed to mark persistence as started for video #{source_video.id}: #{inspect(reason)}"
+        )
+
+        {:error, reason}
     end
   end
 
