@@ -11,14 +11,27 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
 
   1. Check if source video needs cache persistence
   2. Identify all cached files that should be persisted to S3
-  3. Persist cached files to their final S3 destinations
-  4. Clean up temporary cache entries
-  5. Mark persistence as complete
+  3. Persist cached files to their final S3 destinations using proper title-based naming
+  4. Update database with actual S3 file paths (proxy_filepath, master_filepath)
+  5. Clean up temporary cache entries
+  6. Mark persistence as complete
+
+  ## S3 Path Generation
+
+  **CRITICAL**: S3 paths must be consistent between Python preprocessing and Elixir persistence.
+  
+  The title flow through the pipeline:
+  1. **Download stage**: Updates source_video.title from extracted metadata
+  2. **Preprocess stage**: Python uses title to generate S3 paths: 
+     `f"proxies/{sanitized_title}_{video_id}_proxy.mp4"`
+  3. **Persist stage**: Elixir must use identical logic to resolve cache keys to S3 paths
+  
+  Both Python and Elixir use the same sanitization rules to ensure path consistency.
 
   ## State Management
 
   - **Input**: Source videos with scene detection complete but cache not persisted
-  - **Output**: Source videos with all files properly stored in S3
+  - **Output**: Source videos with all files properly stored in S3 and database updated
   - **Error Handling**: Graceful fallback - files may already be in S3 from traditional flow
   - **Idempotency**: Skip if already persisted or no cached files found
 
@@ -27,6 +40,7 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
   - **Cache Management**: Uses TempCache and CacheArgs infrastructure
   - **State Management**: Elixir state transitions and database operations
   - **Storage**: Persists temporary files to permanent S3 storage
+  - **Database Updates**: Updates source_video record with actual S3 paths
   """
 
   use Heaters.Pipeline.WorkerBehavior,
@@ -37,7 +51,7 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
   alias Heaters.Media.Video, as: SourceVideo
   alias Heaters.Media.Videos
   alias Heaters.Pipeline.WorkerBehavior
-  alias Heaters.Storage.PipelineCache.CacheArgs
+  alias Heaters.Storage.PipelineCache.TempCache
   require Logger
 
   @impl WorkerBehavior
@@ -120,8 +134,11 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
         "PersistCacheWorker: Persisting #{length(all_keys)} potential cached files for video #{source_video.id}"
       )
 
-      # Use CacheArgs to persist all cached files
-      CacheArgs.persist_cached_files(all_keys)
+      # Persist cached files and track successful uploads
+      successful_uploads = persist_cached_files_with_tracking(all_keys)
+
+      # Update database with successful S3 paths
+      update_database_with_s3_paths(source_video, successful_uploads)
 
       # Mark persistence as complete
       mark_persist_complete(source_video)
@@ -152,6 +169,72 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
     |> Enum.reject(&(&1 == ""))
   end
 
+  defp persist_cached_files_with_tracking(cache_keys) do
+    # Track successful uploads with their S3 destinations
+    cache_keys
+    |> Enum.map(fn cache_key ->
+      s3_destination = resolve_s3_destination(cache_key)
+      
+      case TempCache.persist_to_s3(cache_key, s3_destination, "STANDARD") do
+        :ok ->
+          Logger.info("CacheArgs: Uploaded #{cache_key} to #{s3_destination}")
+          {:ok, cache_key, s3_destination}
+
+        {:error, :not_found} ->
+          Logger.debug("CacheArgs: Cache key #{cache_key} not found, skipping")
+          {:not_found, cache_key, s3_destination}
+
+        {:error, reason} ->
+          Logger.error("CacheArgs: Failed to persist #{cache_key}: #{inspect(reason)}")
+          {:error, cache_key, s3_destination, reason}
+      end
+    end)
+    |> Enum.filter(fn
+      {:ok, _cache_key, _s3_destination} -> true
+      _ -> false
+    end)
+    |> Enum.map(fn {:ok, cache_key, s3_destination} -> {cache_key, s3_destination} end)
+  end
+
+  defp update_database_with_s3_paths(source_video, successful_uploads) do
+    # Build update attributes from successful uploads
+    attrs = 
+      successful_uploads
+      |> Enum.reduce(%{}, fn {cache_key, s3_destination}, acc ->
+        case cache_key do
+          "temp_" <> rest ->
+            case String.split(rest, "_") do
+              [_id, "proxy"] -> Map.put(acc, :proxy_filepath, s3_destination)
+              [_id, "master"] -> Map.put(acc, :master_filepath, s3_destination)
+              _ -> acc
+            end
+          _ ->
+            # For direct S3 keys, determine type from path
+            cond do
+              String.contains?(s3_destination, "/proxy") -> Map.put(acc, :proxy_filepath, s3_destination)
+              String.contains?(s3_destination, "/master") -> Map.put(acc, :master_filepath, s3_destination)
+              String.contains?(s3_destination, "source_videos") -> Map.put(acc, :filepath, s3_destination)
+              true -> acc
+            end
+        end
+      end)
+
+    if map_size(attrs) > 0 do
+      case Videos.update_source_video(source_video, attrs) do
+        {:ok, updated_video} ->
+          Logger.info("PersistCacheWorker: Updated source_video #{source_video.id} with S3 paths: #{inspect(Map.keys(attrs))}")
+          {:ok, updated_video}
+
+        {:error, reason} ->
+          Logger.error("PersistCacheWorker: Failed to update source_video #{source_video.id} with S3 paths: #{inspect(reason)}")
+          {:error, reason}
+      end
+    else
+      Logger.debug("PersistCacheWorker: No S3 paths to update for source_video #{source_video.id}")
+      {:ok, source_video}
+    end
+  end
+
   defp mark_persist_complete(source_video) do
     case Videos.update_cache_persisted_at(source_video) do
       {:ok, _updated_video} ->
@@ -167,6 +250,80 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
         )
 
         {:error, reason}
+    end
+  end
+
+  # Helper function to resolve S3 destination (extracted from CacheArgs)
+  defp resolve_s3_destination(cache_key) do
+    if String.starts_with?(cache_key, "temp_") do
+      case parse_temp_cache_key(cache_key) do
+        {:ok, source_video_id, file_type} ->
+          get_s3_path_from_database(source_video_id, file_type)
+        {:error, _} ->
+          cache_key
+      end
+    else
+      cache_key
+    end
+  end
+
+  defp parse_temp_cache_key("temp_" <> rest) do
+    case String.split(rest, "_", parts: 2) do
+      [id_str, file_type] ->
+        case Integer.parse(id_str) do
+          {source_video_id, ""} -> {:ok, source_video_id, file_type}
+          _ -> {:error, :invalid_id}
+        end
+      _ ->
+        {:error, :invalid_format}
+    end
+  end
+
+  defp parse_temp_cache_key(_), do: {:error, :not_temp_key}
+
+  defp get_s3_path_from_database(source_video_id, file_type) do
+    case Videos.get_source_video(source_video_id) do
+      {:ok, source_video} ->
+        case file_type do
+          "proxy" -> 
+            source_video.proxy_filepath || generate_expected_s3_path(source_video, "proxy")
+          "master" -> 
+            source_video.master_filepath || generate_expected_s3_path(source_video, "master")
+          "source" -> 
+            source_video.filepath
+          _ -> 
+            nil
+        end
+      {:error, _} ->
+        # Cannot generate proper path without video record - this should not happen
+        # in normal flow since we're processing an existing video
+        Logger.warning("PersistCacheWorker: Could not load source_video #{source_video_id} for S3 path generation")
+        nil
+    end
+  end
+
+  # Generate expected S3 path using the same pattern as Python preprocessing
+  # 
+  # CRITICAL: This must match the path generation logic in py/tasks/preprocess.py:
+  # ```python
+  # sanitized_title = sanitize_filename(video_title)
+  # proxy_s3_key = f"proxies/{sanitized_title}_{source_video_id}_proxy.mp4"
+  # master_s3_key = f"masters/{sanitized_title}_{source_video_id}_master.mkv"
+  # ```
+  #
+  # The sanitization logic must be identical between Python and Elixir to ensure
+  # the S3 paths generated during preprocessing match the paths used during persistence.
+  defp generate_expected_s3_path(source_video, file_type) do
+    # Use the same sanitization logic as Python to ensure path consistency
+    # Python uses: sanitize_filename(video_title) from utils/filename_utils.py
+    # Elixir uses: Heaters.Utils.sanitize_filename/1
+    # Both implementations must produce identical results for the same input
+    sanitized_title = Heaters.Utils.sanitize_filename(source_video.title || "unknown")
+    
+    case file_type do
+      "proxy" -> "proxies/#{sanitized_title}_#{source_video.id}_proxy.mp4"
+      "master" -> "masters/#{sanitized_title}_#{source_video.id}_master.mkv"
+      _ -> nil
     end
   end
 end

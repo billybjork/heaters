@@ -84,6 +84,9 @@ def run_preprocess(source_video_path: str, source_video_id: int, video_title: st
             logger.info(f"Source video metadata: {metadata}")
             
             # Generate output paths
+            # CRITICAL: This path generation logic must match the Elixir implementation
+            # in lib/heaters/storage/pipeline_cache/persist_cache/worker.ex:generate_expected_s3_path/2
+            # to ensure S3 paths are consistent between preprocessing and persistence stages
             sanitized_title = sanitize_filename(video_title)
             master_s3_key = f"masters/{sanitized_title}_{source_video_id}_master.mkv"
             proxy_s3_key = f"proxies/{sanitized_title}_{source_video_id}_proxy.mp4"

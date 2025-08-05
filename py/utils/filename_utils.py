@@ -8,8 +8,16 @@ def sanitize_filename(name):
     """
     Sanitizes a string to be a valid filename and S3 key.
     
-    Removes potentially problematic characters for filenames and S3 keys,
-    replaces them with underscores, and limits the length to 150 characters.
+    CRITICAL: This implementation must exactly match the Elixir implementation
+    in lib/heaters/utils.ex:sanitize_filename/1 to ensure consistent S3 paths
+    between Python preprocessing and Elixir persistence stages.
+    
+    Rules (matching Elixir):
+    - Only allows ASCII alphanumeric characters, hyphens, and underscores
+    - Replaces all other characters (including Unicode) with underscores
+    - Collapses multiple consecutive underscores into single underscore
+    - Trims leading and trailing underscores
+    - Returns "default" if result is empty
     
     Args:
         name: The string to sanitize
@@ -18,12 +26,15 @@ def sanitize_filename(name):
         str: A sanitized filename string
     """
     if not name:
-        return "default_filename"
+        return "default"
     
     name = str(name)
-    # Replace non-alphanumeric characters (except dots and hyphens) with underscores
-    name = re.sub(r'[^\w\.\-]+', '_', name)
-    # Replace multiple consecutive underscores with single underscore
-    name = re.sub(r'_+', '_', name).strip('_')
-    # Limit length to 150 characters and ensure we don't return empty string
-    return name[:150] if name else "default_filename" 
+    # Only allow ASCII alphanumeric, hyphens, and underscores (matches Elixir [^a-zA-Z0-9\-_])
+    name = re.sub(r'[^a-zA-Z0-9\-_]', '_', name)
+    # Collapse multiple consecutive underscores (matches Elixir _{2,})
+    name = re.sub(r'_{2,}', '_', name)
+    # Trim leading and trailing underscores (matches Elixir String.trim("_"))
+    name = name.strip('_')
+    
+    # Ensure we don't return an empty string (matches Elixir fallback)
+    return name if name else "default" 

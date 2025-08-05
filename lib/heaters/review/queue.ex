@@ -53,8 +53,7 @@ defmodule Heaters.Review.Queue do
 
   ## Requirements for Review Eligibility
   - Clip must be in `pending_review` state
-  - Source video must have a non-nil `proxy_filepath` (needed for temp clip generation)
-  - Source video cache must be persisted (`cache_persisted_at` is not nil)
+  - Associated source video should have completed cache persistence for optimal experience
 
   ## Parameters
   - `limit`: Maximum number of clips to return
@@ -71,12 +70,7 @@ defmodule Heaters.Review.Queue do
   @spec next_pending_review_clips(integer(), list(integer())) :: list(Clip.t())
   def next_pending_review_clips(limit, exclude_ids \\ []) when is_integer(limit) do
     from(c in Clip,
-      join: sv in assoc(c, :source_video),
       where: c.ingest_state == :pending_review and c.id not in ^exclude_ids,
-      # Only include clips where proxy is available for temp clip generation
-      where: not is_nil(sv.proxy_filepath),
-      # Ensure proxy upload is complete (cache persisted)
-      where: not is_nil(sv.cache_persisted_at),
       order_by: [asc: c.id]
     )
     |> limit(^limit)
@@ -85,27 +79,16 @@ defmodule Heaters.Review.Queue do
   end
 
   @doc """
-  Fast count of clips available for review.
-
-  Only counts clips that meet all review eligibility requirements:
-  - In `pending_review` state and not yet reviewed
-  - Source video has proxy file available (`proxy_filepath` is not nil)
-  - Source video cache is persisted (`cache_persisted_at` is not nil)
+  Fast count of clips still in `pending_review`.
 
   This provides an efficient count for queue status displays and
-  review workflow management, matching what `next_pending_review_clips/2` returns.
+  review workflow management.
   """
   @spec pending_review_count() :: integer()
   def pending_review_count do
-    from(c in Clip,
-      join: sv in assoc(c, :source_video),
-      where: c.ingest_state == :pending_review and is_nil(c.reviewed_at),
-      # Only count clips where proxy is available for temp clip generation
-      where: not is_nil(sv.proxy_filepath),
-      # Ensure proxy upload is complete (cache persisted)
-      where: not is_nil(sv.cache_persisted_at),
-      select: count("*")
-    )
+    Clip
+    |> where([c], c.ingest_state == :pending_review and is_nil(c.reviewed_at))
+    |> select([c], count("*"))
     |> Repo.one()
   end
 end
