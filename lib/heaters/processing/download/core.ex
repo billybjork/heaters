@@ -62,7 +62,7 @@ defmodule Heaters.Processing.Download.Core do
       |> maybe_put(:fps, metadata[:fps])
       |> maybe_put(:width, metadata[:width])
       |> maybe_put(:height, metadata[:height])
-      # Extract title from nested metadata
+      # Extract title from nested metadata - Python returns it as metadata.title
       |> maybe_put(:title, get_in(metadata, [:metadata, :title]))
 
     with {:ok, source_video} <- Videos.get_source_video(source_video_id) do

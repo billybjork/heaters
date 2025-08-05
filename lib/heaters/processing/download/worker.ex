@@ -213,6 +213,11 @@ defmodule Heaters.Processing.Download.Worker do
       "format" -> :format
       "resolution" -> :resolution
       "filesize_approx" -> :filesize_approx
+      # Nested metadata structure
+      "metadata" -> :metadata
+      "duration_seconds" -> :duration_seconds
+      "file_size_bytes" -> :file_size_bytes
+      "status" -> :status
       # Keep unknown keys as strings to avoid atom table pollution
       _ -> key
     end
