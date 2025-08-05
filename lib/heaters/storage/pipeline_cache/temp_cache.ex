@@ -119,9 +119,16 @@ defmodule Heaters.Storage.PipelineCache.TempCache do
 
     case get(cache_key) do
       {:ok, cached_path} ->
-        result = upload_to_s3(cached_path, s3_key, storage_class)
-        cleanup_cache_entry(cached_path)
-        result
+        case upload_to_s3(cached_path, s3_key, storage_class) do
+          :ok ->
+            # Only cleanup after successful upload
+            cleanup_cache_entry(cached_path)
+            :ok
+          {:error, reason} ->
+            # Keep file on upload failure for retry
+            Logger.warning("TempCache: Keeping cached file #{cached_path} after upload failure: #{inspect(reason)}")
+            {:error, reason}
+        end
 
       {:error, :not_found} ->
         Logger.debug(

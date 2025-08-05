@@ -522,10 +522,19 @@ defmodule Heaters.Storage.S3 do
       case Heaters.Processing.Py.Runner.run_python_task("upload_s3", upload_args,
              timeout: timeout
            ) do
-        {:ok, result} ->
+        {:ok, %{"status" => "success"} = result} ->
           Logger.info("#{operation_name}: Upload completed successfully")
           Logger.debug("#{operation_name}: Upload result: #{inspect(result)}")
           {:ok, clean_s3_key}
+
+        {:ok, %{"status" => "error", "error" => error_msg} = result} ->
+          Logger.error("#{operation_name}: Upload failed: #{error_msg}")
+          Logger.debug("#{operation_name}: Upload error result: #{inspect(result)}")
+          {:error, "Upload failed: #{error_msg}"}
+
+        {:ok, result} ->
+          Logger.error("#{operation_name}: Upload returned unexpected result: #{inspect(result)}")
+          {:error, "Upload returned unexpected result"}
 
         {:error, reason} ->
           Logger.error("#{operation_name}: PyRunner failed: #{reason}")
