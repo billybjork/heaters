@@ -176,10 +176,10 @@ defmodule Heaters.Processing.Download.Worker do
 
   # Idempotency Check: Ensures we don't re-process completed work.
   # Now supports resumable processing of interrupted jobs.
-  defp check_idempotency(%{ingest_state: "new"}), do: :ok
+  defp check_idempotency(%{ingest_state: :new}), do: :ok
   # Allow resuming interrupted jobs
-  defp check_idempotency(%{ingest_state: "downloading"}), do: :ok
-  defp check_idempotency(%{ingest_state: "download_failed"}), do: :ok
+  defp check_idempotency(%{ingest_state: :downloading}), do: :ok
+  defp check_idempotency(%{ingest_state: :download_failed}), do: :ok
   defp check_idempotency(_), do: {:error, :already_processed}
 
   defp convert_keys_to_atoms(map) when is_map(map) do

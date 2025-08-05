@@ -84,22 +84,22 @@ defmodule Heaters.Pipeline.Queries do
   end
 
   @doc """
-  Get all source videos that need cache upload.
+  Get all source videos that need cache persistence.
 
-  Videos need cache upload if:
+  Videos need cache persistence if:
   - Scene detection is complete (needs_splicing = false)
-  - Cache has not been uploaded yet (cache_finalized_at is null)
+  - Cache has not been persisted yet (cache_persisted_at is null)
   - Has files that might be cached (has filepath, proxy_filepath, or master_filepath)
 
   ## Pipeline Usage
-  Used by `Pipeline.Config` stage discovery for cache upload processing.
+  Used by `Pipeline.Config` stage discovery for cache persistence processing.
   """
-  @spec get_videos_needing_cache_upload() :: [Video.t()]
-  def get_videos_needing_cache_upload() do
+  @spec get_videos_needing_cache_persistence() :: [Video.t()]
+  def get_videos_needing_cache_persistence() do
     from(s in Video,
       where:
         s.needs_splicing == false and
-          is_nil(s.cache_finalized_at) and
+          is_nil(s.cache_persisted_at) and
           (not is_nil(s.filepath) or not is_nil(s.proxy_filepath) or not is_nil(s.master_filepath))
     )
     |> Repo.all()

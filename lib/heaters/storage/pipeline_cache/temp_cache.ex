@@ -108,12 +108,12 @@ defmodule Heaters.Storage.PipelineCache.TempCache do
   end
 
   @doc """
-  Upload cached file to S3 and remove from cache.
+  Persist cached file to S3 and remove from cache.
 
   This should be called at the end of pipeline processing to finalize storage.
   """
-  @spec finalize_to_s3(String.t(), String.t() | nil, String.t()) :: :ok | {:error, any()}
-  def finalize_to_s3(cache_key, s3_destination \\ nil, storage_class \\ "STANDARD") do
+  @spec persist_to_s3(String.t(), String.t() | nil, String.t()) :: :ok | {:error, any()}
+  def persist_to_s3(cache_key, s3_destination \\ nil, storage_class \\ "STANDARD") do
     # Default s3_destination to cache_key for backward compatibility
     s3_key = s3_destination || cache_key
 
@@ -125,7 +125,7 @@ defmodule Heaters.Storage.PipelineCache.TempCache do
 
       {:error, :not_found} ->
         Logger.debug(
-          "TempCache: Cannot finalize #{cache_key} - not found in cache (normal cache expiration)"
+          "TempCache: Cannot persist #{cache_key} - not found in cache (normal cache expiration)"
         )
 
         {:error, :not_found}
@@ -346,13 +346,13 @@ defmodule Heaters.Storage.PipelineCache.TempCache do
 
         S3.upload_file_with_progress(local_path, s3_key,
           storage_class: storage_class,
-          operation_name: "CacheFinalize",
+          operation_name: "CachePersist",
           timeout: :timer.minutes(45)
         )
       else
         S3.upload_file(local_path, s3_key,
           storage_class: storage_class,
-          operation_name: "CacheFinalize"
+          operation_name: "CachePersist"
         )
       end
 
@@ -362,7 +362,7 @@ defmodule Heaters.Storage.PipelineCache.TempCache do
         :ok
 
       {:error, reason} ->
-        Logger.error("TempCache: Failed to finalize #{s3_key} to S3: #{inspect(reason)}")
+        Logger.error("TempCache: Failed to persist #{s3_key} to S3: #{inspect(reason)}")
         {:error, reason}
     end
   end

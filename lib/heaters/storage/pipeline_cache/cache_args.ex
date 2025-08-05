@@ -115,19 +115,19 @@ defmodule Heaters.Storage.PipelineCache.CacheArgs do
   def cache_task_outputs(results), do: results
 
   @doc """
-  Finalize cached files to S3 storage.
+  Persist cached files to S3 storage.
 
-  Should be called at the end of pipeline processing to upload cached files
+  Should be called at the end of pipeline processing to persist cached files
   to their final S3 destinations.
   """
-  @spec finalize_cached_files([String.t()]) :: :ok
-  def finalize_cached_files(cache_keys) when is_list(cache_keys) do
+  @spec persist_cached_files([String.t()]) :: :ok
+  def persist_cached_files(cache_keys) when is_list(cache_keys) do
     cache_keys
     |> Enum.each(fn cache_key ->
       # For temp cache keys, we need to get the S3 destination from the cached file
       s3_destination = resolve_s3_destination(cache_key)
 
-      case TempCache.finalize_to_s3(cache_key, s3_destination, "STANDARD") do
+      case TempCache.persist_to_s3(cache_key, s3_destination, "STANDARD") do
         :ok ->
           Logger.info("CacheArgs: Uploaded #{cache_key} to #{s3_destination}")
 
@@ -136,7 +136,7 @@ defmodule Heaters.Storage.PipelineCache.CacheArgs do
           Logger.debug("CacheArgs: Cache key #{cache_key} not found, skipping")
 
         {:error, reason} ->
-          Logger.error("CacheArgs: Failed to finalize #{cache_key}: #{inspect(reason)}")
+          Logger.error("CacheArgs: Failed to persist #{cache_key}: #{inspect(reason)}")
       end
     end)
 

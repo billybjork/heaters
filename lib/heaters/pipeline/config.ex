@@ -15,7 +15,7 @@ defmodule Heaters.Pipeline.Config do
   The `label` field provides human-readable descriptions for logging.
 
   Enhanced Virtual Clips Pipeline Flow:
-  download → preprocess → detect_scenes → upload_cache → rolling_export → keyframes → embeddings → archive
+  download → preprocess → detect_scenes → persist_cache → rolling_export → keyframes → embeddings → archive
 
   ## Resumable Processing
 
@@ -23,7 +23,7 @@ defmodule Heaters.Pipeline.Config do
   - **Download Stage**: Processes videos in "new", "downloading", or "download_failed" states
   - **Preprocess Stage**: Processes videos in "downloaded", "preprocessing", or "preprocess_failed" states
   - **Scene Detection Stage**: Processes videos with proxy files needing virtual clip creation
-  - **Cache Upload Stage**: Processes videos needing S3 upload and cache cleanup
+  - **Cache Persistence Stage**: Processes videos needing S3 persistence and cache cleanup
   - **Export Stage**: Processes approved virtual clips for rolling export to physical clips
   - **Keyframe Stage**: Processes exported clips in "exported", "keyframing", or "keyframe_failed" states
   - **Embedding Stage**: Processes clips in "keyframed", "embedding", or "embedding_failed" states
@@ -61,7 +61,7 @@ defmodule Heaters.Pipeline.Config do
   alias Heaters.Processing.Download.Worker, as: DownloadWorker
   alias Heaters.Processing.Preprocess.Worker, as: PreprocessWorker
   alias Heaters.Processing.DetectScenes.Worker, as: DetectScenesWorker
-  alias Heaters.Storage.PipelineCache.UploadCache.Worker, as: UploadCacheWorker
+  alias Heaters.Storage.PipelineCache.PersistCache.Worker, as: PersistCacheWorker
   alias Heaters.Storage.Archive.Worker, as: ArchiveWorker
   alias Heaters.Processing.Keyframes.Worker, as: KeyframeWorker
   alias Heaters.Processing.Embeddings.Worker, as: EmbeddingWorker
@@ -112,16 +112,16 @@ defmodule Heaters.Pipeline.Config do
         }
       },
 
-      # Stage 3: Scene detection (chains to cache upload)
+      # Stage 3: Scene detection (chains to cache persistence)
       %{
         label: "videos needing scene detection → virtual clips",
         query: fn -> PipelineQueries.get_videos_needing_scene_detection() end,
         build: fn video -> DetectScenesWorker.new(%{source_video_id: video.id}) end,
         next_stage: %{
-          worker: UploadCacheWorker,
+          worker: PersistCacheWorker,
           condition: fn source_video ->
             source_video.needs_splicing == false and
-              is_nil(source_video.cache_finalized_at) and
+              is_nil(source_video.cache_persisted_at) and
               (not is_nil(source_video.filepath) or
                  not is_nil(source_video.proxy_filepath) or
                  not is_nil(source_video.master_filepath))
@@ -130,11 +130,11 @@ defmodule Heaters.Pipeline.Config do
         }
       },
 
-      # Stage 4: Cache upload (no chaining - end of video processing)
+      # Stage 4: Cache persistence (no chaining - end of video processing)
       %{
-        label: "videos needing cache upload → S3 upload",
-        query: fn -> PipelineQueries.get_videos_needing_cache_upload() end,
-        build: fn video -> UploadCacheWorker.new(%{source_video_id: video.id}) end
+        label: "videos needing cache persistence → S3 persistence",
+        query: fn -> PipelineQueries.get_videos_needing_cache_persistence() end,
+        build: fn video -> PersistCacheWorker.new(%{source_video_id: video.id}) end
         # No next_stage - this is the end of the video processing pipeline
       },
 
@@ -210,7 +210,7 @@ defmodule Heaters.Pipeline.Config do
       Heaters.Processing.Download.Worker => "videos needing download",
       Heaters.Processing.Preprocess.Worker => "videos needing preprocessing → proxy generation",
       Heaters.Processing.DetectScenes.Worker => "videos needing scene detection → virtual clips",
-      Heaters.Storage.PipelineCache.UploadCache.Worker =>
+      Heaters.Storage.PipelineCache.PersistCache.Worker =>
         "videos needing cache upload → S3 upload",
       Heaters.Processing.Render.Export.Worker => "approved virtual clips → rolling export",
       Heaters.Processing.Keyframes.Worker => "exported clips needing keyframes",

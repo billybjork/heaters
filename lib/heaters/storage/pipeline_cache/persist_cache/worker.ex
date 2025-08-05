@@ -1,32 +1,32 @@
-defmodule Heaters.Storage.PipelineCache.UploadCache.Worker do
+defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
   @moduledoc """
-  Worker for uploading cached temporary files to S3 storage.
+  Worker for persisting cached temporary files to S3 storage.
 
-  This worker handles the critical "scene detection complete → cached files uploaded"
+  This worker handles the critical "scene detection complete → cached files persisted"
   stage of the video processing pipeline. It ensures that all temporary cached files
-  created during the download and preprocessing stages are uploaded to their final
+  created during the download and preprocessing stages are persisted to their final
   S3 destinations.
 
   ## Workflow
 
-  1. Check if source video needs cache upload
-  2. Identify all cached files that should be uploaded to S3
-  3. Upload cached files to their final S3 destinations
+  1. Check if source video needs cache persistence
+  2. Identify all cached files that should be persisted to S3
+  3. Persist cached files to their final S3 destinations
   4. Clean up temporary cache entries
-  5. Mark upload as complete
+  5. Mark persistence as complete
 
   ## State Management
 
-  - **Input**: Source videos with scene detection complete but cache not uploaded
+  - **Input**: Source videos with scene detection complete but cache not persisted
   - **Output**: Source videos with all files properly stored in S3
   - **Error Handling**: Graceful fallback - files may already be in S3 from traditional flow
-  - **Idempotency**: Skip if already uploaded or no cached files found
+  - **Idempotency**: Skip if already persisted or no cached files found
 
   ## Architecture
 
   - **Cache Management**: Uses TempCache and CacheArgs infrastructure
   - **State Management**: Elixir state transitions and database operations
-  - **Storage**: Uploads temporary files to permanent S3 storage
+  - **Storage**: Persists temporary files to permanent S3 storage
   """
 
   use Heaters.Pipeline.WorkerBehavior,
@@ -42,54 +42,56 @@ defmodule Heaters.Storage.PipelineCache.UploadCache.Worker do
 
   @impl WorkerBehavior
   def handle_work(args) do
-    handle_upload_work(args)
+    handle_persist_work(args)
   end
 
-  defp handle_upload_work(%{"source_video_id" => source_video_id}) do
+  defp handle_persist_work(%{"source_video_id" => source_video_id}) do
     Logger.info(
-      "UploadCacheWorker: Starting cache upload for source_video_id: #{source_video_id}"
+      "PersistCacheWorker: Starting cache persistence for source_video_id: #{source_video_id}"
     )
 
     with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
-      handle_upload(source_video)
+      handle_persist(source_video)
     else
       {:error, :not_found} ->
         WorkerBehavior.handle_not_found("Source video", source_video_id)
     end
   end
 
-  defp handle_upload(%SourceVideo{} = source_video) do
-    # Check if upload is needed
-    case needs_upload?(source_video) do
+  defp handle_persist(%SourceVideo{} = source_video) do
+    # Check if persistence is needed
+    case needs_persist?(source_video) do
       true ->
-        Logger.info("UploadCacheWorker: Starting upload for video #{source_video.id}")
-        run_upload_task(source_video)
+        Logger.info("PersistCacheWorker: Starting persistence for video #{source_video.id}")
+        run_persist_task(source_video)
 
       false ->
-        Logger.info("UploadCacheWorker: Video #{source_video.id} doesn't need upload, skipping")
+        Logger.info(
+          "PersistCacheWorker: Video #{source_video.id} doesn't need persistence, skipping"
+        )
 
         :ok
     end
   end
 
-  defp needs_upload?(source_video) do
-    # Video needs upload if:
+  defp needs_persist?(source_video) do
+    # Video needs persistence if:
     # 1. Scene detection is complete (has virtual clips or needs_splicing = false)
-    # 2. Not already marked as uploaded
+    # 2. Not already marked as persisted
     # 3. Has potential cached files
 
     scene_detection_complete =
       source_video.needs_splicing == false or virtual_clips_exist?(source_video.id)
 
-    not_already_uploaded =
-      is_nil(source_video.cache_finalized_at)
+    not_already_persisted =
+      is_nil(source_video.cache_persisted_at)
 
     has_potential_cached_files =
       not is_nil(source_video.filepath) or
         not is_nil(source_video.proxy_filepath) or
         not is_nil(source_video.master_filepath)
 
-    scene_detection_complete and not_already_uploaded and has_potential_cached_files
+    scene_detection_complete and not_already_persisted and has_potential_cached_files
   end
 
   defp virtual_clips_exist?(source_video_id) do
@@ -104,7 +106,7 @@ defmodule Heaters.Storage.PipelineCache.UploadCache.Worker do
     Repo.one(query) > 0
   end
 
-  defp run_upload_task(source_video) do
+  defp run_persist_task(source_video) do
     # Collect temp cache keys that might have cached files
     # The PreprocessWorker caches files with keys like "temp_#{id}_proxy" and "temp_#{id}_master"
     # The DownloadWorker caches files with S3 keys directly
@@ -115,19 +117,19 @@ defmodule Heaters.Storage.PipelineCache.UploadCache.Worker do
 
     if length(all_keys) > 0 do
       Logger.info(
-        "UploadCacheWorker: Uploading #{length(all_keys)} potential cached files for video #{source_video.id}"
+        "PersistCacheWorker: Persisting #{length(all_keys)} potential cached files for video #{source_video.id}"
       )
 
-      # Use CacheArgs to upload all cached files
-      CacheArgs.finalize_cached_files(all_keys)
+      # Use CacheArgs to persist all cached files
+      CacheArgs.persist_cached_files(all_keys)
 
-      # Mark upload as complete
-      mark_upload_complete(source_video)
+      # Mark persistence as complete
+      mark_persist_complete(source_video)
     else
-      Logger.info("UploadCacheWorker: No files to upload for video #{source_video.id}")
+      Logger.info("PersistCacheWorker: No files to persist for video #{source_video.id}")
 
       # Still mark as complete to avoid repeated processing
-      mark_upload_complete(source_video)
+      mark_persist_complete(source_video)
     end
   end
 
@@ -150,18 +152,18 @@ defmodule Heaters.Storage.PipelineCache.UploadCache.Worker do
     |> Enum.reject(&(&1 == ""))
   end
 
-  defp mark_upload_complete(source_video) do
-    case Videos.update_cache_finalized_at(source_video) do
+  defp mark_persist_complete(source_video) do
+    case Videos.update_cache_persisted_at(source_video) do
       {:ok, _updated_video} ->
         Logger.info(
-          "UploadCacheWorker: Successfully completed cache upload for video #{source_video.id}"
+          "PersistCacheWorker: Successfully completed cache persistence for video #{source_video.id}"
         )
 
         :ok
 
       {:error, reason} ->
         Logger.error(
-          "UploadCacheWorker: Failed to mark upload complete for video #{source_video.id}: #{inspect(reason)}"
+          "PersistCacheWorker: Failed to mark persistence complete for video #{source_video.id}: #{inspect(reason)}"
         )
 
         {:error, reason}

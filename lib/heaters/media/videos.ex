@@ -64,15 +64,15 @@ defmodule Heaters.Media.Videos do
   # ---------------------------------------------------------------------------
 
   @doc """
-  Update the cache_finalized_at timestamp for a video.
-  Used to mark when cache upload process is complete.
+  Update the cache_persisted_at timestamp for a video.
+  Used to mark when cache persistence process is complete.
   """
-  @spec update_cache_finalized_at(Video.t()) :: {:ok, Video.t()} | {:error, any()}
-  def update_cache_finalized_at(%Video{} = video) do
+  @spec update_cache_persisted_at(Video.t()) :: {:ok, Video.t()} | {:error, any()}
+  def update_cache_persisted_at(%Video{} = video) do
     import Ecto.Changeset
 
     video
-    |> cast(%{cache_finalized_at: DateTime.utc_now()}, [:cache_finalized_at])
+    |> cast(%{cache_persisted_at: DateTime.utc_now()}, [:cache_persisted_at])
     |> Repo.update([])
   end
 
