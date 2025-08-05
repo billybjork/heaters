@@ -136,7 +136,7 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
 
   # Get proxy URL - use actual proxy file in dev when available, fallback to test file
   defp get_proxy_url(proxy_filepath) do
-    if Application.get_env(:heaters, :env, :prod) == :dev do
+    if Application.get_env(:heaters, :app_env) == "development" do
       cond do
         # If we have a real proxy_filepath, try to use it (may be CloudFront URL)
         proxy_filepath != nil ->

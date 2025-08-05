@@ -122,7 +122,7 @@ defmodule HeatersWeb.VideoUrlHelper do
 
   # Private function for virtual clip URL generation
   defp build_virtual_clip_url(clip, source_video) do
-    if Application.get_env(:heaters, :env, :prod) == :dev do
+    if Application.get_env(:heaters, :app_env) == "development" do
       # Development: Generate temp file immediately
       case Heaters.Storage.PlaybackCache.TempClip.build(
              Map.put(clip, :source_video, source_video)
