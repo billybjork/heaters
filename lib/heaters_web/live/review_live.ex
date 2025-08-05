@@ -13,6 +13,8 @@ defmodule HeatersWeb.ReviewLive do
   @prefetch 6
   @refill_threshold 3
   @history_limit 5
+  # Sequential pre-warming: generate cache for next N clips per source video
+  @sequential_prefetch_count 4
 
   # -------------------------------------------------------------------------
   # Mount – build initial queue
@@ -176,6 +178,9 @@ defmodule HeatersWeb.ReviewLive do
       # Only clips that haven't been exported yet (nil clip_filepath)
       |> Enum.filter(fn clip -> is_nil(clip.clip_filepath) end)
       |> Enum.each(&maybe_trigger_background_generation/1)
+      
+      # Pre-warm additional clips from the same source videos for sequential review
+      trigger_sequential_prewarming(clips)
     end
   end
 
@@ -199,6 +204,46 @@ defmodule HeatersWeb.ReviewLive do
     end
   rescue
     # Gracefully handle any errors in prefetch - don't break the main flow
+    _error -> :ok
+  end
+
+  # Pre-warm additional clips from the same source videos for sequential review
+  defp trigger_sequential_prewarming(clips) when is_list(clips) do
+    # Get unique source video IDs from current clips
+    source_video_ids = 
+      clips
+      |> Enum.map(& &1.source_video_id)
+      |> Enum.uniq()
+    
+    # For each source video, pre-warm the next N clips in review queue order
+    Enum.each(source_video_ids, &prefetch_next_clips_for_video(&1, @sequential_prefetch_count))
+  end
+  
+  defp prefetch_next_clips_for_video(source_video_id, prefetch_count) do
+    # Get the next clips for this source video in review order
+    # Use a direct query to avoid loading full associations for prefetch
+    import Ecto.Query
+    alias Heaters.Repo
+    
+    next_clips = 
+      from(c in Heaters.Media.Clip,
+        join: sv in assoc(c, :source_video),
+        where: c.source_video_id == ^source_video_id,
+        where: c.ingest_state == :pending_review,
+        where: is_nil(c.clip_filepath),
+        # Only include clips where proxy is available (same filters as review queue)
+        where: not is_nil(sv.proxy_filepath),
+        where: not is_nil(sv.cache_persisted_at),
+        order_by: [asc: c.id],
+        limit: ^prefetch_count,
+        preload: [:source_video]
+      )
+      |> Repo.all()
+    
+    # Queue background generation for these clips
+    Enum.each(next_clips, &maybe_trigger_background_generation/1)
+  rescue
+    # Gracefully handle any database errors in prefetch
     _error -> :ok
   end
 
