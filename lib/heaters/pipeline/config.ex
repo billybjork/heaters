@@ -90,7 +90,7 @@ defmodule Heaters.Pipeline.Config do
         next_stage: %{
           worker: PreprocessWorker,
           condition: fn source_video ->
-            source_video.ingest_state == "downloaded" and is_nil(source_video.proxy_filepath)
+            source_video.ingest_state == :downloaded and is_nil(source_video.proxy_filepath)
           end,
           args: fn source_video -> %{source_video_id: source_video.id} end
         }
@@ -104,7 +104,7 @@ defmodule Heaters.Pipeline.Config do
         next_stage: %{
           worker: DetectScenesWorker,
           condition: fn source_video ->
-            source_video.ingest_state == "preprocessed" and
+            source_video.ingest_state == :preprocessed and
               not is_nil(source_video.proxy_filepath) and
               source_video.needs_splicing == true
           end,

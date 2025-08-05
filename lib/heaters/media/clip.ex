@@ -31,7 +31,7 @@ defmodule Heaters.Media.Clip do
     field(:end_frame, :integer)
     field(:start_time_seconds, :float)
     field(:end_time_seconds, :float)
-    field(:ingest_state, Ecto.Enum, values: [:pending_review, :review_approved, :review_skipped, :review_archived, :exporting, :exported, :export_failed, :keyframing, :keyframed, :keyframe_failed, :embedding, :embedded, :embedding_failed], default: :pending_review)
+    field(:ingest_state, Ecto.Enum, values: [:pending_review, :review_approved, :review_skipped, :review_archived, :archived, :exporting, :exported, :export_failed, :keyframing, :keyframed, :keyframe_failed, :embedding, :embedded, :embedding_failed], default: :pending_review)
     field(:last_error, :string)
     field(:retry_count, :integer, default: 0)
 

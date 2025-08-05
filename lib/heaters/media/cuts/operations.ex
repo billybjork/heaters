@@ -372,7 +372,7 @@ defmodule Heaters.Media.Cuts.Operations do
     case from(c in Clip,
            where:
              c.source_video_id == ^source_video_id and
-               c.ingest_state != "archived" and
+               c.ingest_state != :archived and
                c.start_frame < ^frame_number and
                c.end_frame > ^frame_number
          )
@@ -390,7 +390,7 @@ defmodule Heaters.Media.Cuts.Operations do
     # Archive original clip
     case original_clip
          |> Clip.changeset(%{
-           ingest_state: "archived",
+           ingest_state: :archived,
            processing_metadata:
              Map.merge(original_clip.processing_metadata || %{}, %{
                archived_reason: "split_operation",
@@ -481,7 +481,7 @@ defmodule Heaters.Media.Cuts.Operations do
       from(c in Clip,
         where:
           c.source_video_id == ^source_video_id and
-            c.ingest_state != "archived" and
+            c.ingest_state != :archived and
             c.end_frame == ^frame_number
       )
       |> Repo.one()
@@ -491,7 +491,7 @@ defmodule Heaters.Media.Cuts.Operations do
       from(c in Clip,
         where:
           c.source_video_id == ^source_video_id and
-            c.ingest_state != "archived" and
+            c.ingest_state != :archived and
             c.start_frame == ^frame_number
       )
       |> Repo.one()
@@ -517,7 +517,7 @@ defmodule Heaters.Media.Cuts.Operations do
     Enum.each([left_clip, right_clip], fn clip ->
       clip
       |> Clip.changeset(%{
-        ingest_state: "archived",
+        ingest_state: :archived,
         processing_metadata:
           Map.merge(clip.processing_metadata || %{}, %{
             archived_reason: "merge_operation",

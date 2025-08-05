@@ -124,7 +124,7 @@ defmodule Heaters.Review.Actions do
       # Fetch next clip
       next_id =
         Q.from(c in Clip,
-          where: c.ingest_state == "pending_review" and is_nil(c.reviewed_at),
+          where: c.ingest_state == :pending_review and is_nil(c.reviewed_at),
           order_by: c.id,
           limit: 1,
           lock: "FOR UPDATE SKIP LOCKED",
@@ -267,7 +267,7 @@ defmodule Heaters.Review.Actions do
   defp fetch_next_pending_clip() do
     next_id =
       Q.from(c in Clip,
-        where: c.ingest_state == "pending_review" and is_nil(c.reviewed_at),
+        where: c.ingest_state == :pending_review and is_nil(c.reviewed_at),
         order_by: c.id,
         limit: 1,
         lock: "FOR UPDATE SKIP LOCKED",

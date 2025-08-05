@@ -115,7 +115,7 @@ defmodule Heaters.Processing.Render.Export.Worker do
         where:
           c.source_video_id == ^source_video_id and
             is_nil(c.clip_filepath) and
-            c.ingest_state == "review_approved",
+            c.ingest_state == :review_approved,
         preload: [:source_video]
       )
 

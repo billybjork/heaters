@@ -31,7 +31,7 @@ defmodule Heaters.Processing.Embeddings.Search do
 
     source_videos =
       from(c in Clip,
-        where: c.ingest_state == "embedded",
+        where: c.ingest_state == :embedded,
         join: sv in assoc(c, :source_video),
         distinct: sv.id,
         order_by: sv.title,
@@ -50,7 +50,7 @@ defmodule Heaters.Processing.Embeddings.Search do
         :inner,
         [e],
         c in Clip,
-        on: c.id == e.clip_id and c.ingest_state == "embedded"
+        on: c.id == e.clip_id and c.ingest_state == :embedded
       )
 
     base =
@@ -106,7 +106,7 @@ defmodule Heaters.Processing.Embeddings.Search do
     Embedding
     |> where([e], e.clip_id != ^main_clip_id)
     |> maybe_filter(m, g)
-    |> join(:inner, [e], c in Clip, on: c.id == e.clip_id and c.ingest_state == "embedded")
+    |> join(:inner, [e], c in Clip, on: c.id == e.clip_id and c.ingest_state == :embedded)
     # only keep clips from the chosen source video, if any
     |> (fn q -> if sv_id, do: where(q, [_, c], c.source_video_id == ^sv_id), else: q end).()
     |> order_by_similarity(main_vec, asc?)

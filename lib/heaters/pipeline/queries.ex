@@ -61,7 +61,7 @@ defmodule Heaters.Pipeline.Queries do
   @spec get_videos_needing_preprocessing() :: [Video.t()]
   def get_videos_needing_preprocessing() do
     from(s in Video,
-      where: s.ingest_state == "downloaded" and is_nil(s.proxy_filepath)
+      where: s.ingest_state == :downloaded and is_nil(s.proxy_filepath)
     )
     |> Repo.all()
   end
@@ -121,7 +121,7 @@ defmodule Heaters.Pipeline.Queries do
   @spec get_virtual_clips_ready_for_export() :: [Clip.t()]
   def get_virtual_clips_ready_for_export() do
     from(c in Clip,
-      where: is_nil(c.clip_filepath) and c.ingest_state == "review_approved"
+      where: is_nil(c.clip_filepath) and c.ingest_state == :review_approved
     )
     |> Repo.all()
   end
@@ -138,7 +138,7 @@ defmodule Heaters.Pipeline.Queries do
   @spec get_source_videos_with_clips_ready_for_export() :: [integer()]
   def get_source_videos_with_clips_ready_for_export() do
     from(c in Clip,
-      where: is_nil(c.clip_filepath) and c.ingest_state == "review_approved",
+      where: is_nil(c.clip_filepath) and c.ingest_state == :review_approved,
       select: c.source_video_id,
       distinct: true
     )

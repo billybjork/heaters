@@ -58,7 +58,7 @@ defmodule Heaters.Storage.Archive.Worker do
   end
 
   defp check_idempotency(clip) do
-    if clip.ingest_state == "archived" do
+    if clip.ingest_state == :archived do
       {:error, :already_processed}
     else
       :ok
@@ -70,7 +70,7 @@ defmodule Heaters.Storage.Archive.Worker do
     |> Multi.update_all(
       :update_clip,
       from(c in Clip, where: c.id == ^clip.id),
-      set: [ingest_state: "archived", action_committed_at: DateTime.utc_now()]
+      set: [ingest_state: :archived, action_committed_at: DateTime.utc_now()]
     )
     |> Repo.transaction()
     |> case do
