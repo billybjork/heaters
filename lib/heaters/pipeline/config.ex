@@ -254,18 +254,45 @@ defmodule Heaters.Pipeline.Config do
         if condition_result do
           args = args_fn.(item)
 
-          # Direct chaining - call the worker immediately instead of enqueueing
-          Task.start(fn ->
-            Logger.info(
-              "PipelineConfig: Chained #{inspect(current_worker)} → #{inspect(next_worker)} for item #{item.id}"
-            )
+          # Create Oban job for unique constraint protection, then execute immediately
+          case next_worker.new(args) |> Oban.insert() do
+            {:ok, job} ->
+              Logger.info(
+                "PipelineConfig: Chained #{inspect(current_worker)} → #{inspect(next_worker)} for item #{item.id} (job #{job.id})"
+              )
 
-            # Convert atom keys to string keys (Oban format)
-            string_args = for {key, value} <- args, into: %{}, do: {to_string(key), value}
-            next_worker.handle_work(string_args)
-          end)
+              # Execute immediately while the job is in the queue (prevents Dispatcher duplicates)
+              Task.start(fn ->
+                # Convert atom keys to string keys (Oban format)
+                string_args = for {key, value} <- args, into: %{}, do: {to_string(key), value}
+                next_worker.handle_work(string_args)
+              end)
 
-          :ok
+              :ok
+
+            {:error, %Ecto.Changeset{} = changeset} ->
+              # Check if this is a unique constraint violation (expected for race conditions)
+              if changeset.errors[:unique] do
+                Logger.info(
+                  "PipelineConfig: Job already exists for #{inspect(next_worker)} item #{item.id} (unique constraint)"
+                )
+
+                :ok
+              else
+                Logger.error(
+                  "PipelineConfig: Failed to chain #{inspect(current_worker)} → #{inspect(next_worker)} for item #{item.id}: #{inspect(changeset.errors)}"
+                )
+
+                {:error, changeset.errors}
+              end
+
+            {:error, reason} ->
+              Logger.error(
+                "PipelineConfig: Failed to chain #{inspect(current_worker)} → #{inspect(next_worker)} for item #{item.id}: #{inspect(reason)}"
+              )
+
+              {:error, reason}
+          end
         else
           :ok
         end

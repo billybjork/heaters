@@ -58,40 +58,48 @@ defmodule HeatersWeb.ClipPlayer do
 
     ~H"""
     <div class="video-player-container" id={"video-container-#{@clip.id}"}>
-      <%= if @video_url do %>
-        <video
-          id={@video_id}
-          class={["video-player", @class]}
-          controls={@controls}
-          autoplay
-          muted
-          preload="none"
-          playsinline
-          crossorigin="anonymous"
-          phx-hook="ClipPlayer"
-          phx-update="ignore"
-          data-video-url={@video_url}
-          data-player-type={@player_type}
-          data-clip-info={Jason.encode!(@clip_info)}
-        >
-          <p>Your browser doesn't support HTML5 video playback.</p>
-        </video>
+      <%= cond do %>
+        <% @video_url -> %>
+          <video
+            id={@video_id}
+            class={["video-player", @class]}
+            controls={@controls}
+            autoplay
+            muted
+            preload="none"
+            playsinline
+            crossorigin="anonymous"
+            phx-hook="ClipPlayer"
+            phx-update="ignore"
+            data-video-url={@video_url}
+            data-player-type={@player_type}
+            data-clip-info={Jason.encode!(@clip_info)}
+          >
+            <p>Your browser doesn't support HTML5 video playback.</p>
+          </video>
 
-        <div class="clip-player-loading" style="display: none;">
-          <div class="spinner"></div>
-          <div class="loading-text">Loading clip...</div>
-        </div>
-      <% else %>
-        <div class="video-player-error">
-            <p>Video not available for playback.</p>
-            <p class="error-details">
-              <%= if is_nil(@clip.clip_filepath) do %>
-                Clip requires proxy file for temp playback generation.
-              <% else %>
-                Exported clip file not found.
-              <% end %>
-            </p>
-        </div>
+          <div class="clip-player-loading" style="display: none;">
+            <div class="spinner"></div>
+            <div class="loading-text">Loading clip...</div>
+          </div>
+
+        <% @player_type == "loading" -> %>
+          <div class="video-player-loading">
+            <div class="spinner"></div>
+            <div class="loading-text">Generating temp clip...</div>
+          </div>
+
+        <% true -> %>
+          <div class="video-player-error">
+              <p>Video not available for playback.</p>
+              <p class="error-details">
+                <%= if is_nil(@clip.clip_filepath) do %>
+                  Clip requires proxy file for temp playback generation.
+                <% else %>
+                  Exported clip file not found.
+                <% end %>
+              </p>
+          </div>
       <% end %>
     </div>
     """
