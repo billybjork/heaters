@@ -1,16 +1,16 @@
 defmodule HeatersWeb.ClipPlayer do
   @moduledoc """
-  Phoenix LiveView component for virtual and physical clip playback.
+  Phoenix LiveView component for clip playback in different lifecycle stages.
 
-  Provides a simple HTML5 video element that plays clips, with virtual clips
+  Provides a simple HTML5 video element that plays clips, with temp clips
   generating small MP4 files on-demand using FFmpeg stream copy.
 
   Key features:
-  - Virtual clips: Small files (2-5MB) generated on-demand using FFmpeg stream copy (no re-encoding)
+  - Temp clips: Small files (2-5MB) generated on-demand using FFmpeg stream copy (no re-encoding)
   - Instant playback with correct timeline duration (clips show their actual length)
   - Native HTML5 video element (no complex streaming protocols)
   - CloudFront caching for global distribution
-  - Support for both virtual clips (on-demand generated) and physical clips (direct files)
+  - Support for both temp clips (on-demand generated) and exported clips (direct files)
   - Superior user experience compared to byte-range streaming
 
   ## Usage
@@ -86,9 +86,9 @@ defmodule HeatersWeb.ClipPlayer do
             <p>Video not available for playback.</p>
             <p class="error-details">
               <%= if is_nil(@clip.clip_filepath) do %>
-                Virtual clip requires proxy file for clip generation.
+                Clip requires proxy file for temp playback generation.
               <% else %>
-                Physical clip file not found.
+                Exported clip file not found.
               <% end %>
             </p>
         </div>
@@ -120,7 +120,9 @@ defmodule HeatersWeb.ClipPlayer do
         {url, to_string(player_type), clip_info}
 
       {:loading, nil} ->
-        {nil, "loading", %{}}
+        # Return a placeholder data structure for loading state
+        clip_info = build_clip_info(clip, :loading)
+        {nil, "loading", clip_info}
 
       {:error, _reason} ->
         {nil, "error", %{}}
@@ -129,18 +131,33 @@ defmodule HeatersWeb.ClipPlayer do
 
   # Build clip information for the JavaScript player
   # Each clip is treated as a standalone file
-  defp build_clip_info(%{clip_filepath: nil} = clip, _player_type) do
+  defp build_clip_info(%{clip_filepath: nil} = clip, :loading) do
     %{
-      is_virtual: true,
+      has_exported_file: false,
+      is_loading: true,
+      clip_id: clip.id,
       start_time_seconds: clip.start_time_seconds,
       end_time_seconds: clip.end_time_seconds,
       duration_seconds: clip.end_time_seconds - clip.start_time_seconds
     }
   end
 
-  defp build_clip_info(%{clip_filepath: _filepath}, _player_type) do
+  defp build_clip_info(%{clip_filepath: nil} = clip, _player_type) do
     %{
-      is_virtual: false
+      has_exported_file: false,
+      is_loading: false,
+      clip_id: clip.id,
+      start_time_seconds: clip.start_time_seconds,
+      end_time_seconds: clip.end_time_seconds,
+      duration_seconds: clip.end_time_seconds - clip.start_time_seconds
+    }
+  end
+
+  defp build_clip_info(%{clip_filepath: _filepath} = clip, _player_type) do
+    %{
+      has_exported_file: true,
+      is_loading: false,
+      clip_id: clip.id
     }
   end
 

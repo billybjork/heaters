@@ -20,14 +20,14 @@ export const ThumbHoverPlayer = {
     },
 
     initVirtualThumb(cfg) {
-        /* virtual clip thumbnail - show static preview */
+        /* temp clip thumbnail - show static preview */
         const THUMB_W = 160;
-        this.type = "virtual";
+        this.type = "temp";
         this.w = THUMB_W;
         this.h = Math.round(THUMB_W * 9 / 16); // 16:9 aspect ratio
         this.timer = null;
 
-        /* style element with virtual clip preview */
+        /* style element with temp clip preview */
         Object.assign(this.el.style, {
             width: `${this.w}px`,
             height: `${this.h}px`,
@@ -43,24 +43,24 @@ export const ThumbHoverPlayer = {
             fontWeight: "500"
         });
 
-        /* show virtual clip indicator */
+        /* show temp clip indicator */
         this.el.innerHTML = `
       <div style="text-align: center; line-height: 1.2;">
         <div style="font-size: 20px;">⚡</div>
-        <div style="font-size: 10px; opacity: 0.8;">Virtual</div>
+        <div style="font-size: 10px; opacity: 0.8;">Temp</div>
       </div>
     `;
     },
 
     play() {
-        /* virtual clips: show subtle animation on hover */
+        /* temp clips: show subtle animation on hover */
         this.el.style.backgroundColor = "#003366";
         this.el.style.transform = "scale(1.05)";
         this.el.style.transition = "all 0.2s ease";
     },
 
     stop() {
-        /* virtual clips: reset hover state */
+        /* temp clips: reset hover state */
         this.el.style.backgroundColor = "#1a1a1a";
         this.el.style.transform = "scale(1)";
     },

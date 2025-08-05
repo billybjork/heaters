@@ -2,8 +2,8 @@ defmodule HeatersWeb.VideoUrlHelper do
   @moduledoc """
   Helper functions for generating video URLs for the tiny-file approach.
 
-  Provides URL generation for virtual clips using the tiny-file approach (small MP4 files
-  generated on-demand) and direct URLs for physical clips.
+  Provides URL generation for clips using the tiny-file approach (small MP4 files
+  generated on-demand) and direct URLs for exported clips.
 
   The tiny-file approach replaces Media Fragments with actual small files that play
   instantly with correct timeline duration.
@@ -12,8 +12,8 @@ defmodule HeatersWeb.VideoUrlHelper do
   @doc """
   Generate video URL for clips using the tiny-file approach.
 
-  For virtual clips (clip_filepath is nil), this triggers temp file generation in development 
-  or checks for exported clips in production. For physical clips (clip_filepath is not nil), 
+  For clips without exported files (clip_filepath is nil), this triggers temp file generation in development 
+  or checks for exported clips in production. For clips with exported files (clip_filepath is not nil), 
   returns direct S3 URLs.
 
   ## Parameters
@@ -22,22 +22,22 @@ defmodule HeatersWeb.VideoUrlHelper do
 
   ## Examples
 
-      # Virtual clip (generated from cuts) - uses tiny-file approach
+      # Clip without exported file (generated from cuts) - uses tiny-file approach
       {:ok, url, :direct_s3} = get_video_url(%{clip_filepath: nil, ...}, source_video)
 
-      # Physical clip - uses direct file URL
+      # Clip with exported file - uses direct file URL
       {:ok, url, :direct_s3} = get_video_url(%{clip_filepath: "path/to/file.mp4", ...}, source_video)
   """
   @spec get_video_url(map(), map()) ::
           {:ok, String.t(), atom()} | {:loading, nil} | {:error, String.t()}
   def get_video_url(%{clip_filepath: nil} = clip, source_video) do
-    # Virtual clip - no physical file, generated from cuts/segments
-    build_virtual_clip_url(clip, source_video)
+    # Clip without exported file - generated from cuts/segments
+    build_temp_clip_url(clip, source_video)
   end
 
   def get_video_url(%{clip_filepath: filepath} = _clip, _source_video)
       when not is_nil(filepath) do
-    # Physical clip - has an actual file
+    # Clip with exported file - has an actual file
     url = build_cloudfront_url(filepath)
     {:ok, url, :direct_s3}
   end
@@ -50,7 +50,7 @@ defmodule HeatersWeb.VideoUrlHelper do
   @doc """
   Check if a clip supports video streaming.
 
-  Returns true if the clip has the necessary file available (proxy for virtual, clip file for physical).
+  Returns true if the clip has the necessary file available (proxy for temp clips, clip file for exported clips).
   """
   @spec streamable?(map(), map()) :: boolean()
   def streamable?(%{clip_filepath: nil}, %{proxy_filepath: proxy_path})
@@ -120,22 +120,50 @@ defmodule HeatersWeb.VideoUrlHelper do
 
   # Private functions
 
-  # Private function for virtual clip URL generation
-  defp build_virtual_clip_url(clip, source_video) do
+  # Private function for temp clip URL generation
+  defp build_temp_clip_url(clip, source_video) do
     if Application.get_env(:heaters, :app_env) == "development" do
-      # Development: Generate temp file immediately
-      case Heaters.Storage.PlaybackCache.TempClip.build(
-             Map.put(clip, :source_video, source_video)
-           ) do
+      # Development: Check if temp file already exists, avoid blocking FFmpeg generation
+      case check_existing_temp_file(clip) do
         {:ok, file_url} ->
           {:ok, file_url, :direct_s3}
 
-        {:error, reason} ->
-          {:error, reason}
+        :not_found ->
+          # Return loading state - background generation will handle creation
+          {:loading, nil}
       end
     else
       # Production: Check for exported clip or queue export
       build_production_clip_url(clip, source_video)
+    end
+  end
+
+  # Check if a temp file already exists for this clip
+  defp check_existing_temp_file(clip) do
+    tmp_dir = System.tmp_dir!()
+
+    # Look for existing files matching this clip's pattern
+    case File.ls(tmp_dir) do
+      {:ok, files} ->
+        matching_files =
+          files
+          |> Enum.filter(&String.match?(&1, ~r/^clip_#{clip.id}_\d+\.mp4$/))
+          |> Enum.map(&Path.join(tmp_dir, &1))
+          |> Enum.filter(&File.regular?/1)
+
+        case matching_files do
+          [file_path | _] ->
+            # Found existing file, return URL
+            filename = Path.basename(file_path)
+            timestamp = System.system_time(:second)
+            {:ok, "/temp/#{filename}?t=#{timestamp}"}
+
+          [] ->
+            :not_found
+        end
+
+      {:error, _} ->
+        :not_found
     end
   end
 

@@ -44,6 +44,9 @@ defmodule HeatersWeb.ReviewLive do
           Phoenix.PubSub.subscribe(Heaters.PubSub, "clips:#{clip.id}")
         end)
 
+        # Trigger background prefetch for next clips
+        trigger_background_prefetch([cur | Enum.take(fut, 2)])
+
         {:ok,
          socket
          |> assign(
@@ -134,6 +137,9 @@ defmodule HeatersWeb.ReviewLive do
         Phoenix.PubSub.subscribe(Heaters.PubSub, "clips:#{clip.id}")
       end)
 
+      # Trigger background prefetch for newly loaded clips
+      trigger_background_prefetch(new_clips)
+
       update(socket, :future, &(&1 ++ new_clips))
     else
       socket
@@ -151,8 +157,49 @@ defmodule HeatersWeb.ReviewLive do
   end
 
   defp advance_queue(%{assigns: %{future: [next | rest]}} = socket) do
+    # Trigger background prefetch for the next few clips when advancing
+    upcoming_clips = Enum.take([next | rest], 2)
+    trigger_background_prefetch(upcoming_clips)
+
     socket
     |> assign(current: next, future: rest, page_state: :reviewing)
+  end
+
+  # -------------------------------------------------------------------------
+  # Background prefetch helpers
+  # -------------------------------------------------------------------------
+
+  defp trigger_background_prefetch(clips) when is_list(clips) do
+    # Only prefetch clips without exported files in development (where sync generation causes delays)
+    if Application.get_env(:heaters, :app_env) == "development" do
+      clips
+      # Only clips that haven't been exported yet (nil clip_filepath)
+      |> Enum.filter(fn clip -> is_nil(clip.clip_filepath) end)
+      |> Enum.each(&maybe_trigger_background_generation/1)
+    end
+  end
+
+  defp maybe_trigger_background_generation(clip) do
+    # Check if this clip already has a temp file or generation in progress
+    # by trying to generate the URL - if it fails, queue background generation
+    case HeatersWeb.VideoUrlHelper.get_video_url(clip, clip.source_video || %{}) do
+      {:error, _reason} ->
+        # Queue background generation via Oban worker
+        %{clip_id: clip.id}
+        |> Heaters.Storage.PlaybackCache.Worker.new()
+        |> Oban.insert()
+
+      {:ok, _url, _type} ->
+        # Already available, no need to prefetch
+        :ok
+
+      {:loading, nil} ->
+        # Production case - might want to trigger export job here
+        :ok
+    end
+  rescue
+    # Gracefully handle any errors in prefetch - don't break the main flow
+    _error -> :ok
   end
 
   # -------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 """
 Export Clips Task for Video Pipeline
 
-Handles final export of virtual clips to physical clips using the proxy.
+Handles final export of temp clips to exported clips using the proxy.
 Creates MP4 files optimized for streaming/delivery using stream copy for maximum quality and speed.
 
 ## Storage Strategy & Architecture Decision
@@ -26,7 +26,7 @@ Uses FFmpeg stream copy (`-c copy`) with S3 presigned URLs for optimal I/O effic
 - Leverages :moov atom positioning (faststart) for instant seeking
 - Preserves exact quality while achieving 10x performance improvement
 
-This is the final stage of the virtual clip pipeline - optimized for I/O, quality and performance.
+This is the final stage of the clip pipeline - optimized for I/O, quality and performance.
 """
 
 import json

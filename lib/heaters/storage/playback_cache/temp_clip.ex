@@ -16,7 +16,7 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
   @ffmpeg_bin Application.compile_env(:heaters, :ffmpeg_bin, "/usr/bin/ffmpeg")
 
   @doc """
-  Build a temporary clip file from a virtual clip.
+  Build a temporary clip file from a clip without exported file.
 
   Uses FFmpeg with `-c copy` for ultra-fast stream copying without re-encoding.
   The resulting file is tiny (2-5MB) and starts playing immediately.
@@ -38,7 +38,7 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
     # Calculate duration
     duration_seconds = end_seconds - start_seconds
 
-    # Get input URL (proxy file for virtual clips)
+    # Get input URL (proxy file for temp clips)
     {:ok, proxy_url} = get_proxy_url(source_video.proxy_filepath)
 
     # Generate temp file path with timestamp to ensure uniqueness (use milliseconds for better precision)

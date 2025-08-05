@@ -1,4 +1,4 @@
-// Phoenix LiveView hook for keyboard review actions (virtual clips only)
+// Phoenix LiveView hook for keyboard review actions
 //
 //   ┌─────────────┬────────┐
 //   │ Letter-key  │ Action │

@@ -1,14 +1,14 @@
 /**
  * Clip Player
  * 
- * HTML5 video player for virtual and physical clips.
+ * HTML5 video player for clips in different lifecycle stages.
  * 
  * This player handles two types of video sources:
- * 1. Virtual clips: Small MP4 files (2-5MB) generated on-demand using FFmpeg stream copy
- * 2. Physical clips: Direct file URLs for exported clips
+ * 1. Temp clips: Small MP4 files (2-5MB) generated on-demand using FFmpeg stream copy
+ * 2. Exported clips: Direct file URLs for finalized clips
  * 
  * Key benefits:
- * - Virtual clips use tiny files with instant playback and correct timeline duration
+ * - Temp clips use tiny files with instant playback and correct timeline duration
  * - Each clip feels like a standalone file with proper timeline (no byte-range confusion)
  * - No complex streaming protocols - just simple file serving
  * - Simple, maintainable codebase with native HTML5 video

@@ -38,7 +38,7 @@ def run_detect_scenes(
     **kwargs
 ) -> Dict[str, Any]:
     """
-    Detect scene cuts in a proxy video file and return cut points for virtual clips.
+    Detect scene cuts in a proxy video file and return cut points for clip creation.
     
     Args:
         proxy_video_path: Local path or S3 path to proxy video file
@@ -49,7 +49,7 @@ def run_detect_scenes(
         keyframe_offsets: Pre-computed keyframe offsets (optional, for optimization)
         
     Returns:
-        dict: Cut points for virtual clip creation and metadata
+        dict: Cut points for clip creation and metadata
     """
     try:
         logger.info(f"Starting scene detection for source_video_id: {source_video_id}")
@@ -86,7 +86,7 @@ def run_detect_scenes(
             # Detect scene cuts
             cut_frames = detect_scene_cuts(cap, threshold, method, total_frames)
             
-            # Build cut points for virtual clips (not scenes)
+            # Build cut points for clips (not scenes)
             cut_points = build_cut_points_from_cuts(cut_frames, fps, min_duration_seconds)
             
             cap.release()
@@ -187,7 +187,7 @@ def is_scene_cut(score: float, threshold: float, method: str) -> bool:
         return score > threshold
 
 def build_cut_points_from_cuts(cut_frames: List[int], fps: float, min_duration: float) -> List[Dict[str, Any]]:
-    """Build cut points for virtual clips from cut frames."""
+    """Build cut points for clips from cut frames."""
     cut_points = []
     
     for i in range(len(cut_frames) - 1):
@@ -199,7 +199,7 @@ def build_cut_points_from_cuts(cut_frames: List[int], fps: float, min_duration: 
         duration = end_time - start_time
         
         if duration >= min_duration:
-            # Format matches what VirtualClips.create_virtual_clips_from_cut_points expects
+            # Format matches what Clips.create_clips_from_cut_points expects
             cut_points.append({
                 "start_frame": start_frame,
                 "end_frame": end_frame,
