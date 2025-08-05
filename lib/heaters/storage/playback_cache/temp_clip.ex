@@ -4,6 +4,9 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
 
   This generates small MP4 files (2-5MB typically) that play instantly with correct
   timeline duration, replacing the Media Fragments approach for development.
+
+  Cleanup is handled by the scheduled CleanupWorker rather than per-file timers
+  for more efficient batch processing.
   """
 
   require Logger
@@ -109,8 +112,6 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
               )
             end
 
-            # Auto-cleanup after 15 minutes
-            :timer.apply_after(:timer.minutes(15), File, :rm, [tmp_file])
             Logger.debug("TempClip: Generated #{tmp_file} successfully")
 
             # Return HTTP URL for browser access via static serving with cache busting

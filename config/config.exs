@@ -24,7 +24,9 @@ config :heaters, Oban,
     # For temporary clip generation (dev)
     temp_clips: 5,
     # For clip exports (tiny-file approach)
-    exports: 5
+    exports: 5,
+    # For maintenance tasks (cleanup, monitoring)
+    maintenance: 1
   ]
 
 # General application configuration
@@ -34,6 +36,15 @@ config :heaters,
 
 # Clip delivery method configuration
 config :heaters, :clip_delivery, :tiny_file
+
+# Playback cache configuration
+config :heaters, :playback_cache,
+  # Maximum total cache size (1GB)
+  max_cache_size_bytes: 1_000_000_000,
+  # Minimum free disk space required (500MB)
+  min_free_disk_bytes: 500_000_000,
+  # Maximum age for temp files (15 minutes)
+  max_age_minutes: 15
 
 # Tell Ecto/Postgres about our custom types (for the `vector` column)
 config :heaters, Heaters.Repo, types: Heaters.PostgresTypes

@@ -301,7 +301,11 @@ if config_env() == :prod do
     if "default" in String.split(queues_str, ",", trim: true) do
       [
         Oban.Plugins.Pruner,
-        {Oban.Plugins.Cron, crontab: [{"* * * * *", Heaters.Pipeline.Dispatcher}]}
+        {Oban.Plugins.Cron,
+         crontab: [
+           {"* * * * *", Heaters.Pipeline.Dispatcher},
+           {"0 */4 * * *", Heaters.Storage.PlaybackCache.CleanupWorker}
+         ]}
       ]
     else
       [Oban.Plugins.Pruner]

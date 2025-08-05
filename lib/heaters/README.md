@@ -35,7 +35,7 @@ Heaters processes videos through a **cuts-based pipeline**: download → proxy g
 
 - **`Media`**: Domain entities (videos, clips, cuts, artifacts) and cut operations
 - **`Processing`**: Automated pipeline stages (download, preprocess, scene detection, render, keyframes, embeddings)
-- **`Storage`**: All storage concerns (pipeline cache, playback cache, archive, S3 operations)
+- **`Storage`**: All storage concerns (pipeline cache, playback cache with scheduled cleanup, archive, S3 operations)
 - **`Review`**: Human workflow (queue management, actions)
 - **`Pipeline`**: Declarative orchestration (config, dispatcher, queries)
 
@@ -72,6 +72,7 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 - **Perfect Timeline**: Shows exact clip duration (e.g., 3.75s) not full video length
 - **Stream Copy**: Zero re-encoding ensures faster generation with zero quality loss
 - **Universal Compatibility**: Works offline, all browsers, mobile optimized
+- **Smart Cleanup**: Scheduled maintenance with LRU eviction and disk space monitoring
 
 ### Production Reliability
 - **Resumable Processing**: All stages support automatic resume after interruptions
@@ -98,6 +99,13 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 - **Cut Operations**: `add_cut`, `remove_cut`, `move_cut` with declarative validation
 - **Simple Undo**: UI-level undo (Ctrl+Z) for most recent action only
 
+### Maintenance & Monitoring
+- **Scheduled Cleanup**: Playback cache maintenance every 4 hours via Oban cron
+- **Cache Size Limits**: Configurable limits (default: 1GB) with LRU eviction strategy
+- **Disk Space Monitoring**: Alerts when free space drops below threshold (default: 500MB)
+- **Startup Cleanup**: Automatic removal of orphaned temp files on application start
+- **Comprehensive Logging**: Cache statistics, utilization metrics, and cleanup operations
+
 ## Key Benefits
 
 1. **Zero Re-encoding During Review**: Cut-based clips enable instant operations
@@ -108,3 +116,4 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 6. **Production Reliable**: Resumable, idempotent, robust with graceful fallbacks
 7. **Maintainable**: Declarative configuration, modular design, centralized logic
 8. **Type Safe**: Ecto enums with database constraints ensure data integrity and prevent invalid states
+9. **Self-Managing**: Automated cache maintenance with size limits, LRU eviction, and disk space monitoring
