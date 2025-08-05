@@ -53,6 +53,11 @@ defmodule Heaters.Processing.DetectScenes.Worker do
   # In configured environments, these functions will succeed normally.
   @dialyzer {:nowarn_function, [run_python_scene_detection: 2]}
 
+  # Suppress false positive for convert_segments_to_cut_points/1 being unused.
+  # This function is called from run_python_scene_detection/2, but the suppression above
+  # prevents dialyzer from seeing the call path.
+  @dialyzer {:nowarn_function, [convert_segments_to_cut_points: 1]}
+
   @impl WorkerBehavior
   def handle_work(args) do
     handle_scene_detection_work(args)
@@ -201,7 +206,7 @@ defmodule Heaters.Processing.DetectScenes.Worker do
         # Extract segments from Python scene detection and convert to cut points
         segments = Map.get(result, "cut_points", [])
         metadata = Map.get(result, "metadata", %{})
-        
+
         # Convert segments to actual cut points (boundaries between segments)
         cut_points = convert_segments_to_cut_points(segments)
 
@@ -236,28 +241,39 @@ defmodule Heaters.Processing.DetectScenes.Worker do
 
           {:error, reason} ->
             Logger.error("DetectScenesWorker: Failed to create virtual clips: #{inspect(reason)}")
-            mark_scene_detection_failed(source_video, reason)
+
+            case StateManager.mark_scene_detection_failed(source_video.id, reason) do
+              {:ok, _} ->
+                {:error, reason}
+
+              {:error, db_error} ->
+                Logger.error(
+                  "DetectScenesWorker: Failed to mark video as failed: #{inspect(db_error)}"
+                )
+
+                {:error, reason}
+            end
         end
 
       {:error, reason} ->
         Logger.error("DetectScenesWorker: PyRunner failed: #{reason}")
-        mark_scene_detection_failed(source_video, reason)
-    end
-  end
 
-  defp mark_scene_detection_failed(source_video, reason) do
-    case StateManager.mark_scene_detection_failed(source_video.id, reason) do
-      {:ok, _} ->
-        {:error, reason}
+        case StateManager.mark_scene_detection_failed(source_video.id, reason) do
+          {:ok, _} ->
+            {:error, reason}
 
-      {:error, db_error} ->
-        Logger.error("DetectScenesWorker: Failed to mark video as failed: #{inspect(db_error)}")
-        {:error, reason}
+          {:error, db_error} ->
+            Logger.error(
+              "DetectScenesWorker: Failed to mark video as failed: #{inspect(db_error)}"
+            )
+
+            {:error, reason}
+        end
     end
   end
 
   # Convert scene detection segments to cut points.
-  # 
+  #
   # Python scene detection returns segments with start/end frames, but the Elixir
   # cut system expects cut points (boundaries between segments).
   defp convert_segments_to_cut_points(segments) when is_list(segments) do
@@ -265,23 +281,26 @@ defmodule Heaters.Processing.DetectScenes.Worker do
     |> Enum.sort_by(& &1["start_frame"])
     |> Enum.flat_map(fn segment ->
       cut_points = []
-      
+
       # Add cut point at the start of this segment (if not starting at frame 0)
-      cut_points = if segment["start_frame"] > 0 do
-        start_cut = %{
-          "frame_number" => segment["start_frame"],
-          "time_seconds" => segment["start_time_seconds"]
-        }
-        [start_cut | cut_points]
-      else
-        cut_points
-      end
-      
+      cut_points =
+        if segment["start_frame"] > 0 do
+          start_cut = %{
+            "frame_number" => segment["start_frame"],
+            "time_seconds" => segment["start_time_seconds"]
+          }
+
+          [start_cut | cut_points]
+        else
+          cut_points
+        end
+
       # Add cut point at the end of this segment
       end_cut = %{
         "frame_number" => segment["end_frame"],
         "time_seconds" => segment["end_time_seconds"]
       }
+
       [end_cut | cut_points]
     end)
     |> Enum.uniq_by(& &1["frame_number"])

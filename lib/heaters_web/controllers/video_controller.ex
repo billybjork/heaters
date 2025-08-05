@@ -19,7 +19,8 @@ defmodule HeatersWeb.VideoController do
 
   def serve_temp_file(conn, %{"filename" => filename}) do
     # Only serve in development mode and only .mp4 files for security
-    if Application.get_env(:heaters, :env, :prod) == :dev and String.ends_with?(filename, ".mp4") do
+    if Application.get_env(:heaters, :app_env, "production") == "development" and
+         String.ends_with?(filename, ".mp4") do
       temp_path = Path.join(System.tmp_dir!(), filename)
 
       if File.exists?(temp_path) do

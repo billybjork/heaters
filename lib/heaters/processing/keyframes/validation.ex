@@ -39,7 +39,7 @@ defmodule Heaters.Processing.Keyframes.Validation do
   - `:ok` if all requirements are met
   - `{:error, String.t()}` if requirements are not met
   """
-  @spec validate_keyframe_requirements(map(), String.t()) :: :ok | {:error, String.t()}
+  @spec validate_keyframe_requirements(map(), atom()) :: :ok | {:error, String.t()}
   def validate_keyframe_requirements(clip, strategy) do
     with :ok <- validate_keyframe_readiness(clip),
          :ok <- validate_clip_has_video_file(clip),
@@ -80,10 +80,10 @@ defmodule Heaters.Processing.Keyframes.Validation do
   - `:ok` if transition is valid
   - `{:error, atom()}` if transition is invalid
   """
-  @spec validate_keyframe_state_transition(String.t(), String.t()) :: :ok | {:error, atom()}
+  @spec validate_keyframe_state_transition(atom(), atom()) :: :ok | {:error, atom()}
   # Valid transitions for keyframing
   def validate_keyframe_state_transition(:review_approved, :keyframing), do: :ok
-  def validate_keyframe_state_transition("keyframing_failed", :keyframing), do: :ok
+  def validate_keyframe_state_transition(:keyframing_failed, :keyframing), do: :ok
   def validate_keyframe_state_transition(:keyframe_failed, :keyframing), do: :ok
   def validate_keyframe_state_transition(:keyframing, :keyframed), do: :ok
   def validate_keyframe_state_transition(:keyframing, :keyframe_failed), do: :ok
@@ -102,8 +102,8 @@ defmodule Heaters.Processing.Keyframes.Validation do
     {:error, "Clip does not have a video file for keyframe extraction"}
   end
 
-  @spec validate_strategy_compatibility(map(), String.t()) :: :ok | {:error, String.t()}
-  defp validate_strategy_compatibility(_clip, strategy) when strategy in ~w[midpoint multi] do
+  @spec validate_strategy_compatibility(map(), atom()) :: :ok | {:error, String.t()}
+  defp validate_strategy_compatibility(_clip, strategy) when strategy in [:midpoint, :multi] do
     :ok
   end
 

@@ -104,7 +104,7 @@ defmodule Heaters.Media.Clips do
   @doc """
   Update the ingest state of a clip.
   """
-  @spec update_state(Clip.t(), String.t()) :: {:ok, Clip.t()} | {:error, any()}
+  @spec update_state(Clip.t(), atom()) :: {:ok, Clip.t()} | {:error, any()}
   def update_state(%Clip{} = clip, new_state) do
     import Ecto.Changeset
 
@@ -116,7 +116,7 @@ defmodule Heaters.Media.Clips do
   @doc """
   Mark a clip as failed with error tracking and retry count increment.
   """
-  @spec mark_failed(Clip.t(), String.t(), String.t()) :: {:ok, Clip.t()} | {:error, any()}
+  @spec mark_failed(Clip.t(), atom(), String.t()) :: {:ok, Clip.t()} | {:error, any()}
   def mark_failed(%Clip{} = clip, failure_state, error_message) do
     import Ecto.Changeset
 
@@ -191,8 +191,8 @@ defmodule Heaters.Media.Clips do
   @doc """
   Get all clips with the given ingest state.
   """
-  @spec get_clips_by_state(String.t()) :: [Clip.t()]
-  def get_clips_by_state(state) when is_binary(state) do
+  @spec get_clips_by_state(atom()) :: [Clip.t()]
+  def get_clips_by_state(state) when is_atom(state) do
     from(c in Clip, where: c.ingest_state == ^state)
     |> Repo.all()
   end
@@ -268,9 +268,9 @@ defmodule Heaters.Media.Clips do
   @doc """
   Check if a clip is in a specific state.
   """
-  @spec clip_in_state?(integer(), String.t()) :: {:ok, boolean()} | {:error, atom()}
+  @spec clip_in_state?(integer(), atom()) :: {:ok, boolean()} | {:error, atom()}
   def clip_in_state?(clip_id, expected_state)
-      when is_integer(clip_id) and is_binary(expected_state) do
+      when is_integer(clip_id) and is_atom(expected_state) do
     case get_clip(clip_id) do
       {:ok, %Clip{ingest_state: ^expected_state}} -> {:ok, true}
       {:ok, %Clip{}} -> {:ok, false}

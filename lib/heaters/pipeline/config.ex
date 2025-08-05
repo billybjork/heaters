@@ -154,7 +154,7 @@ defmodule Heaters.Pipeline.Config do
       %{
         label: "exported clips needing keyframes",
         query: fn -> PipelineQueries.get_clips_needing_keyframes() end,
-        build: fn clip -> KeyframeWorker.new(%{clip_id: clip.id, strategy: "multi"}) end
+        build: fn clip -> KeyframeWorker.new(%{clip_id: clip.id, strategy: :multi}) end
       },
 
       # Stage 7: Embeddings (operates on keyframed clips)
@@ -173,7 +173,7 @@ defmodule Heaters.Pipeline.Config do
       # Stage 8: Archive (cleanup archived clips)
       %{
         label: "review_archived clips → archive",
-        query: fn -> Clips.get_clips_by_state("review_archived") end,
+        query: fn -> Clips.get_clips_by_state(:review_archived) end,
         build: fn clip -> ArchiveWorker.new(%{clip_id: clip.id}) end
       }
     ]

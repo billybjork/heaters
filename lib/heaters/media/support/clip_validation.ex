@@ -7,12 +7,12 @@ defmodule Heaters.Media.Support.ClipValidation do
   No side effects or I/O operations.
   """
 
-  @valid_keyframe_states ~w[review_approved keyframe_failed]
+  @valid_keyframe_states [:review_approved, :keyframe_failed]
 
   @doc """
   Validate that a clip is in the correct state for keyframe extraction.
   """
-  @spec validate_clip_state_for_keyframe(String.t()) :: :ok | {:error, atom()}
+  @spec validate_clip_state_for_keyframe(atom()) :: :ok | {:error, atom()}
   def validate_clip_state_for_keyframe(state) when state in @valid_keyframe_states, do: :ok
   def validate_clip_state_for_keyframe(_), do: {:error, :invalid_state_for_keyframe}
 
@@ -25,7 +25,7 @@ defmodule Heaters.Media.Support.ClipValidation do
       iex> ClipValidation.valid_states_for_operation(:keyframe)
       [:review_approved, :keyframe_failed]
   """
-  @spec valid_states_for_operation(atom()) :: [String.t()]
+  @spec valid_states_for_operation(atom()) :: [atom()]
   def valid_states_for_operation(:keyframe), do: @valid_keyframe_states
 
   @doc """
