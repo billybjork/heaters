@@ -15,14 +15,14 @@ defmodule Heaters.Processing.Embeddings.Workflow do
   require Logger
 
   @doc """
-  Transition a clip to "embedding" state.
+  Transition a clip to :embedding state.
   """
   @spec start_embedding(integer()) :: {:ok, Clip.t()} | {:error, any()}
   def start_embedding(clip_id) do
     with {:ok, clip} <- Clips.get_clip(clip_id),
-         :ok <- validate_state_transition(clip.ingest_state, "embedding") do
+         :ok <- validate_state_transition(clip.ingest_state, :embedding) do
       update_clip(clip, %{
-        ingest_state: "embedding",
+        ingest_state: :embedding,
         last_error: nil
       })
     end
@@ -39,7 +39,7 @@ defmodule Heaters.Processing.Embeddings.Workflow do
            with {:ok, clip} <- Clips.get_clip(clip_id),
                 {:ok, updated_clip} <-
                   update_clip(clip, %{
-                    ingest_state: "embedded",
+                    ingest_state: :embedded,
                     embedded_at: DateTime.utc_now(),
                     last_error: nil
                   }),
@@ -60,8 +60,8 @@ defmodule Heaters.Processing.Embeddings.Workflow do
           model_name: embedding_data["model_name"],
           generation_strategy: embedding_data["generation_strategy"],
           embedding_dim:
-            if(is_list(embedding_data["embedding"]),
-              do: length(embedding_data["embedding"]),
+            if(is_list(embedding_data[:embedding]),
+              do: length(embedding_data[:embedding]),
               else: nil
             ),
           metadata: Map.get(embedding_data, "metadata", %{}),
@@ -117,19 +117,19 @@ defmodule Heaters.Processing.Embeddings.Workflow do
   defp validate_state_transition(current_state, target_state) do
     case {current_state, target_state} do
       # Valid transitions for embedding
-      {"pending_review", "embedding"} ->
+      {:pending_review, :embedding} ->
         :ok
 
-      {"review_approved", "embedding"} ->
+      {:review_approved, :embedding} ->
         :ok
 
-      {"keyframed", "embedding"} ->
+      {:keyframed, :embedding} ->
         :ok
 
-      {"embedding_failed", "embedding"} ->
+      {:embedding_failed, :embedding} ->
         :ok
 
-      {"embedding", "embedding"} ->
+      {:embedding, :embedding} ->
         # Allow resuming interrupted embedding generation
         :ok
 
@@ -145,7 +145,7 @@ defmodule Heaters.Processing.Embeddings.Workflow do
       clip_id: clip_id,
       model_name: Map.fetch!(embedding_data, "model_name"),
       generation_strategy: Map.fetch!(embedding_data, "generation_strategy"),
-      embedding: Map.fetch!(embedding_data, "embedding"),
+      embedding: Map.fetch!(embedding_data, :embedding),
       metadata: Map.get(embedding_data, "metadata", %{})
     }
 

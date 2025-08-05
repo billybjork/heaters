@@ -6,9 +6,9 @@ defmodule Heaters.Processing.Preprocess.StateManager do
   Preprocessing creates master and proxy files from the source video.
 
   ## State Flow
-  - "downloaded" → "preprocessing" via `start_preprocessing/1`
-  - "preprocessing" → "preprocessed" via `complete_preprocessing/2`
-  - any state → "preprocessing_failed" via `mark_preprocessing_failed/2`
+  - :downloaded → :preprocessing via `start_preprocessing/1`
+  - :preprocessing → :preprocessed via `complete_preprocessing/2`
+  - any state → :preprocessing_failed via `mark_preprocessing_failed/2`
 
   ## Responsibilities
   - Preprocessing-specific state transitions
@@ -22,7 +22,7 @@ defmodule Heaters.Processing.Preprocess.StateManager do
   require Logger
 
   @doc """
-  Transition a source video to "preprocessing" state.
+  Transition a source video to :preprocessing state.
 
   ## Parameters
   - `source_video_id`: ID of the source video to transition
@@ -34,15 +34,15 @@ defmodule Heaters.Processing.Preprocess.StateManager do
   ## Examples
 
       {:ok, video} = StateManager.start_preprocessing(123)
-      video.ingest_state  # "preprocessing"
+      video.ingest_state  # :preprocessing
   """
   @spec start_preprocessing(integer()) :: {:ok, Video.t()} | {:error, any()}
   def start_preprocessing(source_video_id) do
     with {:ok, source_video} <- Videos.get_source_video(source_video_id),
          :ok <-
-           validate_preprocessing_state_transition(source_video.ingest_state, "preprocessing") do
+           validate_preprocessing_state_transition(source_video.ingest_state, :preprocessing) do
       update_source_video(source_video, %{
-        ingest_state: "preprocessing",
+        ingest_state: :preprocessing,
         last_error: nil
       })
     end
@@ -67,14 +67,14 @@ defmodule Heaters.Processing.Preprocess.StateManager do
         keyframe_offsets: [0, 1500, 3000]
       }
       {:ok, video} = StateManager.complete_preprocessing(123, attrs)
-      video.ingest_state  # "preprocessed"
+      video.ingest_state  # :preprocessed
   """
   @spec complete_preprocessing(integer(), map()) :: {:ok, Video.t()} | {:error, any()}
   def complete_preprocessing(source_video_id, update_attrs) do
     with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
       final_attrs =
         Map.merge(update_attrs, %{
-          ingest_state: "preprocessed",
+          ingest_state: :preprocessed,
           last_error: nil
         })
 
@@ -96,7 +96,7 @@ defmodule Heaters.Processing.Preprocess.StateManager do
   ## Examples
 
       {:ok, video} = StateManager.mark_preprocessing_failed(123, "FFmpeg encoding failed")
-      video.ingest_state  # "preprocessing_failed"
+      video.ingest_state  # :preprocessing_failed
       video.last_error    # "FFmpeg encoding failed"
       video.retry_count   # incremented
   """
@@ -110,7 +110,7 @@ defmodule Heaters.Processing.Preprocess.StateManager do
       )
 
       update_source_video(source_video, %{
-        ingest_state: "preprocessing_failed",
+        ingest_state: :preprocessing_failed,
         last_error: error_message,
         retry_count: source_video.retry_count + 1
       })
@@ -121,9 +121,9 @@ defmodule Heaters.Processing.Preprocess.StateManager do
 
   defp validate_preprocessing_state_transition(current_state, target_state) do
     valid_transitions = %{
-      "downloaded" => ["preprocessing"],
-      "preprocessing" => ["preprocessed", "preprocessing_failed"],
-      "preprocessing_failed" => ["preprocessing"]
+      :downloaded => [:preprocessing],
+      :preprocessing => [:preprocessed, :preprocessing_failed],
+      :preprocessing_failed => [:preprocessing]
     }
 
     case Map.get(valid_transitions, current_state) do

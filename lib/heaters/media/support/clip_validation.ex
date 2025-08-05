@@ -23,7 +23,7 @@ defmodule Heaters.Media.Support.ClipValidation do
   ## Examples
 
       iex> ClipValidation.valid_states_for_operation(:keyframe)
-      ["review_approved", "keyframe_failed"]
+      [:review_approved, :keyframe_failed]
   """
   @spec valid_states_for_operation(atom()) :: [String.t()]
   def valid_states_for_operation(:keyframe), do: @valid_keyframe_states

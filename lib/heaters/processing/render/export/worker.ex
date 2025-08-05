@@ -28,9 +28,9 @@ defmodule Heaters.Processing.Render.Export.Worker do
 
   ## State Management
 
-  - **Input**: Virtual clips in "review_approved" state
+  - **Input**: Virtual clips in :review_approved state
   - **Output**: Physical clips with clip_filepath, is_virtual = false
-  - **Error Handling**: Marks clips as "export_failed" on errors
+  - **Error Handling**: Marks clips as :export_failed on errors
   - **Idempotency**: Skip if is_virtual = false (already exported)
 
   ## Batch Processing
@@ -257,7 +257,7 @@ defmodule Heaters.Processing.Render.Export.Worker do
 
     update_attrs = %{
       clip_filepath: clip_filepath,
-      ingest_state: "exported",
+      ingest_state: :exported,
       processing_metadata:
         Map.merge(clip.processing_metadata || %{}, %{
           export_metadata: metadata,

@@ -9,7 +9,7 @@ defmodule Heaters.Processing.Preprocess.Worker do
 
   ## Workflow
 
-  1. Transition source video to "preprocessing" state
+  1. Transition source video to :preprocessing state
   2. Run Python preprocessing task to create master and proxy
   3. Extract keyframe offsets for efficient seeking
   4. Upload both files to S3 (cold storage for master, hot for proxy)
@@ -17,9 +17,9 @@ defmodule Heaters.Processing.Preprocess.Worker do
 
   ## State Management
 
-  - **Input**: Source videos in "downloaded" state without proxy_filepath
+  - **Input**: Source videos in :downloaded state without proxy_filepath
   - **Output**: Source videos with proxy_filepath, master_filepath, and keyframe_offsets
-  - **Error Handling**: Marks source video as "preprocessing_failed" on errors
+  - **Error Handling**: Marks source video as :preprocessing_failed on errors
   - **Idempotency**: Skip if proxy_filepath IS NOT NULL (preprocessing already complete)
 
   ## Architecture
@@ -220,7 +220,7 @@ defmodule Heaters.Processing.Preprocess.Worker do
         update_attrs = %{
           proxy_filepath: proxy_s3_key,
           keyframe_offsets: keyframe_offsets,
-          ingest_state: "preprocessed"
+          ingest_state: :preprocessed
         }
 
         update_attrs =
@@ -271,7 +271,7 @@ defmodule Heaters.Processing.Preprocess.Worker do
         master_filepath: master_path,
         proxy_filepath: proxy_path,
         keyframe_offsets: keyframe_offsets,
-        ingest_state: "preprocessed"
+        ingest_state: :preprocessed
       }
       |> maybe_put(:duration_seconds, metadata["duration_seconds"])
       |> maybe_put(:fps, metadata["fps"])

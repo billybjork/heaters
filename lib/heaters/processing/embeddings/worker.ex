@@ -17,7 +17,7 @@ defmodule Heaters.Processing.Embeddings.Worker do
   # In configured environments, these functions will succeed normally.
   @dialyzer {:nowarn_function, [handle_embedding_work: 1, run_embedding_task: 2]}
 
-  @complete_states ["embedded"]
+  @complete_states [:embedded]
 
   # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
   @dialyzer {:nowarn_function, [handle_work: 1]}
@@ -59,7 +59,7 @@ defmodule Heaters.Processing.Embeddings.Worker do
 
   defp ensure_embedding_state(clip_id, clip) do
     case clip.ingest_state do
-      "embedding" ->
+      :embedding ->
         Logger.info("EmbeddingWorker: Clip #{clip_id} already in embedding state, resuming")
         {:ok, clip}
 
@@ -78,7 +78,7 @@ defmodule Heaters.Processing.Embeddings.Worker do
       keyframe_artifacts: extract_keyframe_artifacts(clip)
     }
 
-    case PyRunner.run_python_task("embedding", py_args, timeout: :timer.minutes(5)) do
+    case PyRunner.run_python_task(:embedding, py_args, timeout: :timer.minutes(5)) do
       {:ok, result} ->
         Logger.info(
           "EmbeddingWorker: Python embedding completed successfully for clip #{clip.id}"
@@ -91,7 +91,7 @@ defmodule Heaters.Processing.Embeddings.Worker do
           "EmbeddingWorker: Python embedding failed for clip #{clip.id}: #{inspect(reason)}"
         )
 
-        Workflow.mark_failed(clip, "embedding_failed", reason)
+        Workflow.mark_failed(clip, :embedding_failed, reason)
     end
   end
 
@@ -103,7 +103,7 @@ defmodule Heaters.Processing.Embeddings.Worker do
 
       artifacts when is_list(artifacts) ->
         artifacts
-        |> Enum.filter(&(&1.artifact_type == "keyframe"))
+        |> Enum.filter(&(&1.artifact_type == :keyframe))
         |> Enum.map(fn artifact ->
           %{
             id: artifact.id,

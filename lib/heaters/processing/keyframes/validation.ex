@@ -82,11 +82,11 @@ defmodule Heaters.Processing.Keyframes.Validation do
   """
   @spec validate_keyframe_state_transition(String.t(), String.t()) :: :ok | {:error, atom()}
   # Valid transitions for keyframing
-  def validate_keyframe_state_transition("review_approved", "keyframing"), do: :ok
-  def validate_keyframe_state_transition("keyframing_failed", "keyframing"), do: :ok
-  def validate_keyframe_state_transition("keyframe_failed", "keyframing"), do: :ok
-  def validate_keyframe_state_transition("keyframing", "keyframed"), do: :ok
-  def validate_keyframe_state_transition("keyframing", "keyframe_failed"), do: :ok
+  def validate_keyframe_state_transition(:review_approved, :keyframing), do: :ok
+  def validate_keyframe_state_transition("keyframing_failed", :keyframing), do: :ok
+  def validate_keyframe_state_transition(:keyframe_failed, :keyframing), do: :ok
+  def validate_keyframe_state_transition(:keyframing, :keyframed), do: :ok
+  def validate_keyframe_state_transition(:keyframing, :keyframe_failed), do: :ok
   # Invalid transitions
   def validate_keyframe_state_transition(_, _), do: {:error, :invalid_state_transition}
 
@@ -113,7 +113,7 @@ defmodule Heaters.Processing.Keyframes.Validation do
 
   @spec has_keyframe_artifacts?(list()) :: boolean()
   defp has_keyframe_artifacts?(artifacts) when is_list(artifacts) do
-    Enum.any?(artifacts, &(&1.artifact_type == "keyframe"))
+    Enum.any?(artifacts, &(&1.artifact_type == :keyframe))
   end
 
   defp has_keyframe_artifacts?(_), do: false

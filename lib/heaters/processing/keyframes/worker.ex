@@ -10,15 +10,15 @@ defmodule Heaters.Processing.Keyframes.Worker do
   alias Heaters.Pipeline.WorkerBehavior
 
   @complete_states [
-    "keyframed",
-    "keyframe_failed",
-    "embedded",
-    "review_archived"
+    :keyframed,
+    :keyframe_failed,
+    :embedded,
+    :review_archived
   ]
 
   @impl WorkerBehavior
   def handle_work(%{"clip_id" => clip_id} = args) do
-    strategy = Map.get(args, "strategy", "multi")
+    strategy = Map.get(args, "strategy", :multi)
 
     Logger.info(
       "KeyframeWorker: Starting keyframe extraction for clip_id: #{clip_id}, strategy: #{strategy}"
@@ -68,13 +68,13 @@ defmodule Heaters.Processing.Keyframes.Worker do
   end
 
   # For retry states, skip artifact check to allow reprocessing
-  defp check_artifact_exists_unless_retry(%{ingest_state: "keyframe_failed"}), do: :ok
+  defp check_artifact_exists_unless_retry(%{ingest_state: :keyframe_failed}), do: :ok
 
   defp check_artifact_exists_unless_retry(clip),
-    do: WorkerBehavior.check_artifact_exists(clip, "keyframe")
+    do: WorkerBehavior.check_artifact_exists(clip, :keyframe)
 
-  defp check_keyframe_specific_states(%{ingest_state: "review_approved"}), do: :ok
-  defp check_keyframe_specific_states(%{ingest_state: "keyframe_failed"}), do: :ok
+  defp check_keyframe_specific_states(%{ingest_state: :review_approved}), do: :ok
+  defp check_keyframe_specific_states(%{ingest_state: :keyframe_failed}), do: :ok
 
   defp check_keyframe_specific_states(%{ingest_state: state}) do
     Logger.warning("KeyframeWorker: Unexpected clip state '#{state}' for keyframe extraction")

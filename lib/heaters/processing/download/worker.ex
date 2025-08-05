@@ -139,7 +139,7 @@ defmodule Heaters.Processing.Download.Worker do
             "DownloadWorker: PyRunner failed for source_video_id: #{source_video_id}, reason: #{inspect(reason)}"
           )
 
-          case Core.mark_failed(updated_video, "download_failed", reason) do
+          case Core.mark_failed(updated_video, :download_failed, reason) do
             {:ok, _} ->
               {:error, reason}
 
@@ -161,7 +161,7 @@ defmodule Heaters.Processing.Download.Worker do
   # Helper function to ensure video is in downloading state, handling resumable processing
   defp ensure_downloading_state(source_video) do
     case source_video.ingest_state do
-      "downloading" ->
+      :downloading ->
         Logger.info(
           "DownloadWorker: Video #{source_video.id} already in downloading state, resuming"
         )

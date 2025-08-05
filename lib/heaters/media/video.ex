@@ -43,6 +43,8 @@ defmodule Heaters.Media.Video do
         :preprocessing,
         :preprocessed,
         :detect_scenes,
+        :detecting_scenes,
+        :detect_scenes_failed,
         :download_failed,
         :preprocessing_failed
       ],

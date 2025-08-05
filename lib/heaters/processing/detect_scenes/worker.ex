@@ -17,8 +17,8 @@ defmodule Heaters.Processing.DetectScenes.Worker do
   ## State Management
 
   - **Input**: Source videos with proxy_filepath and needs_splicing = true
-  - **Output**: Virtual clips in "pending_review" state, source video with needs_splicing = false
-  - **Error Handling**: Marks source video as "scene_detection_failed" on errors
+  - **Output**: Virtual clips in :pending_review state, source video with needs_splicing = false
+  - **Error Handling**: Marks source video as :detecting_scenes_failed on errors
   - **Idempotency**: Skip if needs_splicing = false OR virtual clips already exist
 
   ## Virtual Clips vs Physical Clips
@@ -134,7 +134,7 @@ defmodule Heaters.Processing.DetectScenes.Worker do
       "DetectScenesWorker: Running Python scene detection for source_video_id: #{source_video.id}"
     )
 
-    # Transition to scene_detection state
+    # Transition to detecting_scenes state
     case StateManager.start_scene_detection(source_video.id) do
       {:ok, updated_video} ->
         execute_scene_detection(updated_video)
@@ -192,15 +192,18 @@ defmodule Heaters.Processing.DetectScenes.Worker do
       "DetectScenesWorker: Running Python scene detection with args: #{inspect(Map.delete(scene_detection_args, :proxy_video_path))}"
     )
 
-    case PyRunner.run_python_task("detect_scenes", scene_detection_args,
+    case PyRunner.run_python_task(:detect_scenes, scene_detection_args,
            timeout: :timer.minutes(15)
          ) do
       {:ok, result} ->
         Logger.info("DetectScenesWorker: Python scene detection completed successfully")
 
-        # Extract cut points from Python scene detection
-        cut_points = Map.get(result, "cut_points", [])
+        # Extract segments from Python scene detection and convert to cut points
+        segments = Map.get(result, "cut_points", [])
         metadata = Map.get(result, "metadata", %{})
+        
+        # Convert segments to actual cut points (boundaries between segments)
+        cut_points = convert_segments_to_cut_points(segments)
 
         case Heaters.Media.Cuts.Operations.create_initial_cuts(
                source_video.id,
@@ -252,4 +255,42 @@ defmodule Heaters.Processing.DetectScenes.Worker do
         {:error, reason}
     end
   end
+
+  # Convert scene detection segments to cut points.
+  # 
+  # Python scene detection returns segments with start/end frames, but the Elixir
+  # cut system expects cut points (boundaries between segments).
+  defp convert_segments_to_cut_points(segments) when is_list(segments) do
+    segments
+    |> Enum.sort_by(& &1["start_frame"])
+    |> Enum.flat_map(fn segment ->
+      cut_points = []
+      
+      # Add cut point at the start of this segment (if not starting at frame 0)
+      cut_points = if segment["start_frame"] > 0 do
+        start_cut = %{
+          "frame_number" => segment["start_frame"],
+          "time_seconds" => segment["start_time_seconds"]
+        }
+        [start_cut | cut_points]
+      else
+        cut_points
+      end
+      
+      # Add cut point at the end of this segment
+      end_cut = %{
+        "frame_number" => segment["end_frame"],
+        "time_seconds" => segment["end_time_seconds"]
+      }
+      [end_cut | cut_points]
+    end)
+    |> Enum.uniq_by(& &1["frame_number"])
+    |> Enum.sort_by(& &1["frame_number"])
+    # Remove the final cut point (end of video)
+    |> Enum.reverse()
+    |> tl()
+    |> Enum.reverse()
+  end
+
+  defp convert_segments_to_cut_points(_), do: []
 end

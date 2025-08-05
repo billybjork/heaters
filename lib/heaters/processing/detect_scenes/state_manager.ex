@@ -6,9 +6,9 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
   Scene detection creates virtual clips from preprocessed videos using the proxy file.
 
   ## State Flow
-  - videos with proxy_filepath and needs_splicing = true → "scene_detection"
-  - "scene_detection" → needs_splicing = false via `complete_scene_detection/1`
-  - any state → "scene_detection_failed" via `mark_scene_detection_failed/2`
+  - videos with proxy_filepath and needs_splicing = true → :detecting_scenes
+  - :detecting_scenes → needs_splicing = false via `complete_scene_detection/1`
+  - any state → :detect_scenes_failed via `mark_scene_detection_failed/2`
 
   ## Responsibilities
   - Scene detection state transitions
@@ -22,7 +22,7 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
   require Logger
 
   @doc """
-  Transition a source video to "scene_detection" state.
+  Transition a source video to :detecting_scenes state.
 
   ## Parameters
   - `source_video_id`: ID of the source video to transition
@@ -34,14 +34,14 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
   ## Examples
 
       {:ok, video} = StateManager.start_scene_detection(123)
-      video.ingest_state  # "scene_detection"
+      video.ingest_state  # :detecting_scenes
   """
   @spec start_scene_detection(integer()) :: {:ok, Video.t()} | {:error, any()}
   def start_scene_detection(source_video_id) do
     with {:ok, source_video} <- Videos.get_source_video(source_video_id),
          :ok <- validate_scene_detection_prerequisites(source_video) do
       update_source_video(source_video, %{
-        ingest_state: "scene_detection",
+        ingest_state: :detecting_scenes,
         last_error: nil
       })
     end
@@ -66,7 +66,7 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
   def complete_scene_detection(source_video_id) do
     with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
       update_source_video(source_video, %{
-        ingest_state: "virtual_clips_created",
+        ingest_state: :preprocessed,
         needs_splicing: false,
         last_error: nil
       })
@@ -107,7 +107,7 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
   ## Examples
 
       {:ok, video} = StateManager.mark_scene_detection_failed(123, "Scene detection timeout")
-      video.ingest_state    # "scene_detection_failed"
+      video.ingest_state    # :detect_scenes_failed
       video.last_error      # "Scene detection timeout"
       video.retry_count     # incremented
   """
@@ -118,11 +118,11 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
       error_message = format_error_message(error_reason)
 
       Logger.error(
-        "StateManager: Marking video #{source_video.id} as scene_detection_failed: #{error_message}"
+        "StateManager: Marking video #{source_video.id} as detect_scenes_failed: #{error_message}"
       )
 
       update_source_video(source_video, %{
-        ingest_state: "scene_detection_failed",
+        ingest_state: :detect_scenes_failed,
         last_error: error_message,
         retry_count: source_video.retry_count + 1
       })

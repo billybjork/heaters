@@ -13,7 +13,7 @@ defmodule Heaters.Media.Support.ErrorFormatting do
 
   ## Examples
 
-      iex> ErrorFormatting.format_domain_error(:invalid_state_for_keyframe, "pending_review")
+      iex> ErrorFormatting.format_domain_error(:invalid_state_for_keyframe, :pending_review)
       "Clip state 'pending_review' is not valid for keyframe extraction. Valid states: [\"review_approved\", \"keyframe_failed\"]"
 
       iex> ErrorFormatting.format_domain_error(:video_too_short, 0.05)
@@ -60,7 +60,7 @@ defmodule Heaters.Media.Support.ErrorFormatting do
   ## Examples
 
       iex> errors = [
-      ...>   {:invalid_state_for_keyframe, "pending_review"},
+      ...>   {:invalid_state_for_keyframe, :pending_review},
       ...>   {:video_too_short, 0.05}
       ...> ]
       iex> ErrorFormatting.format_multiple_errors(errors)

@@ -45,7 +45,7 @@ defmodule Heaters.Review.Actions do
           from(c in Clip, where: c.id == ^clip_id),
           set: [
             reviewed_at: nil,
-            ingest_state: "pending_review",
+            ingest_state: :pending_review,
             grouped_with_clip_id: nil
           ]
         )
@@ -104,7 +104,7 @@ defmodule Heaters.Review.Actions do
         set: [
           reviewed_at: now,
           grouped_with_clip_id: curr_id,
-          ingest_state: "review_approved"
+          ingest_state: :review_approved
         ]
       )
 
@@ -113,7 +113,7 @@ defmodule Heaters.Review.Actions do
         set: [
           reviewed_at: now,
           grouped_with_clip_id: prev_id,
-          ingest_state: "review_approved"
+          ingest_state: :review_approved
         ]
       )
 
@@ -164,7 +164,7 @@ defmodule Heaters.Review.Actions do
     clip = Repo.get(Clip, clip_id)
 
     case clip do
-      %Clip{ingest_state: state} when state in ["split_virtual"] ->
+      %Clip{ingest_state: state} when state in [:split_virtual] ->
         # Virtual clip operations are instant - handle undo by reversing database changes
         handle_virtual_clip_undo(clip)
 
@@ -217,7 +217,7 @@ defmodule Heaters.Review.Actions do
   end
 
   defp handle_virtual_clip_undo(
-         %Clip{ingest_state: "split_virtual", grouped_with_clip_id: _first_split_id} = clip
+         %Clip{ingest_state: :split_virtual, grouped_with_clip_id: _first_split_id} = clip
        ) do
     # Undo virtual split: delete split clips and restore original clip
     Repo.transaction(fn ->
@@ -241,7 +241,7 @@ defmodule Heaters.Review.Actions do
         from(c in Clip, where: c.id == ^clip.id),
         set: [
           reviewed_at: nil,
-          ingest_state: "pending_review",
+          ingest_state: :pending_review,
           grouped_with_clip_id: nil
         ]
       )

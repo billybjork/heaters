@@ -447,7 +447,7 @@ defmodule Heaters.Media.Cuts.Operations do
       end_frame: end_frame,
       start_time_seconds: start_time,
       end_time_seconds: end_time,
-      ingest_state: "pending_review",
+      ingest_state: :pending_review,
       processing_metadata:
         Map.merge(metadata, %{
           created_by_user_id: user_id,
@@ -539,7 +539,7 @@ defmodule Heaters.Media.Cuts.Operations do
       end_frame: right_clip.end_frame,
       start_time_seconds: left_clip.start_time_seconds,
       end_time_seconds: right_clip.end_time_seconds,
-      ingest_state: "pending_review",
+      ingest_state: :pending_review,
       processing_metadata:
         Map.merge(metadata, %{
           created_by_user_id: user_id,
@@ -685,7 +685,7 @@ defmodule Heaters.Media.Cuts.Operations do
       created_by_user_id: nil,
       operation_metadata:
         Map.merge(metadata, %{
-          source: "scene_detection",
+          source: :detecting_scenes,
           detection_index: index,
           created_at: DateTime.utc_now()
         })
@@ -714,9 +714,9 @@ defmodule Heaters.Media.Cuts.Operations do
       end_frame: segment.end_frame,
       start_time_seconds: segment.start_time_seconds,
       end_time_seconds: segment.end_time_seconds,
-      ingest_state: "pending_review",
+      ingest_state: :pending_review,
       processing_metadata: %{
-        created_from: "scene_detection",
+        created_from: :detecting_scenes,
         segment_index: index,
         created_at: DateTime.utc_now()
       }

@@ -30,14 +30,14 @@ defmodule Heaters.Processing.Download.Core do
   # State transition functions for video ingestion workflow
 
   @doc """
-  Transition a source video to "downloading" state and return updated video.
+  Transition a source video to :downloading state and return updated video.
   """
   @spec start_downloading(integer()) :: {:ok, SourceVideo.t()} | {:error, any()}
   def start_downloading(source_video_id) do
     with {:ok, source_video} <- Videos.get_source_video(source_video_id),
-         :ok <- validate_state_transition(source_video.ingest_state, "downloading") do
+         :ok <- validate_state_transition(source_video.ingest_state, :downloading) do
       update_source_video(source_video, %{
-        ingest_state: "downloading",
+        ingest_state: :downloading,
         last_error: nil
       })
     end
@@ -49,7 +49,7 @@ defmodule Heaters.Processing.Download.Core do
   @spec complete_downloading(integer(), map()) :: {:ok, SourceVideo.t()} | {:error, any()}
   def complete_downloading(source_video_id, metadata \\ %{}) do
     attrs = %{
-      ingest_state: "downloaded",
+      ingest_state: :downloaded,
       downloaded_at: DateTime.utc_now(),
       last_error: nil
     }
@@ -115,7 +115,7 @@ defmodule Heaters.Processing.Download.Core do
 
     attrs = %{
       title: title,
-      ingest_state: "new",
+      ingest_state: :new,
       original_url: if(is_http?, do: url, else: nil)
     }
 
@@ -164,12 +164,12 @@ defmodule Heaters.Processing.Download.Core do
 
   defp validate_state_transition(current_state, target_state) do
     valid_transitions = %{
-      "new" => ["downloading"],
-      "downloading" => ["downloaded", "download_failed"],
-      "downloaded" => ["preprocess"],
-      "download_failed" => ["downloading"],
-      "preprocess" => ["preprocessed", "preprocess_failed"],
-      "preprocess_failed" => ["preprocess"]
+      :new => [:downloading],
+      :downloading => [:downloaded, :download_failed],
+      :downloaded => [:preprocess],
+      :download_failed => [:downloading],
+      :preprocess => [:preprocessed, :preprocess_failed],
+      :preprocess_failed => [:preprocess]
     }
 
     case Map.get(valid_transitions, current_state) do

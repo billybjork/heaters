@@ -6,9 +6,9 @@ defmodule Heaters.Processing.Render.Export.StateManager do
   Export converts virtual clips to physical clips using the gold master.
 
   ## State Flow
-  - virtual clips in "review_approved" → "exporting" via `start_export_batch/1`
-  - "exporting" → "exported" (is_virtual = false) via `complete_export/2`
-  - any state → "export_failed" via `mark_export_failed/2`
+  - virtual clips in :review_approved → :exporting via `start_export_batch/1`
+  - :exporting → :exported (is_virtual = false) via `complete_export/2`
+  - any state → :export_failed via `mark_export_failed/2`
 
   ## Responsibilities
   - Export-specific state transitions
@@ -23,7 +23,7 @@ defmodule Heaters.Processing.Render.Export.StateManager do
   require Logger
 
   @doc """
-  Transition a batch of clips to "exporting" state.
+  Transition a batch of clips to :exporting state.
 
   ## Parameters
   - `clips`: List of clip structs to transition
@@ -35,7 +35,7 @@ defmodule Heaters.Processing.Render.Export.StateManager do
   ## Examples
 
       {:ok, clips} = StateManager.start_export_batch([clip1, clip2, clip3])
-      Enum.all?(clips, & &1.ingest_state == "exporting")  # true
+      Enum.all?(clips, & &1.ingest_state == :exporting)  # true
   """
   @spec start_export_batch(list(Clip.t())) :: {:ok, list(Clip.t())} | {:error, any()}
   def start_export_batch(clips) when is_list(clips) do
@@ -45,7 +45,7 @@ defmodule Heaters.Processing.Render.Export.StateManager do
     case validate_clips_for_export(clips) do
       :ok ->
         update_clips_batch(clips, %{
-          ingest_state: "exporting",
+          ingest_state: :exporting,
           last_error: nil
         })
 
@@ -69,7 +69,7 @@ defmodule Heaters.Processing.Render.Export.StateManager do
 
       attrs = %{
         clip_filepath: "final_clips/video_123_clip_001.mp4",
-        ingest_state: "exported"
+        ingest_state: :exported
       }
       {:ok, clip} = StateManager.complete_export(456, attrs)
       clip.clip_filepath  # "final_clips/video_123_clip_001.mp4"
@@ -101,7 +101,7 @@ defmodule Heaters.Processing.Render.Export.StateManager do
   ## Examples
 
       {:ok, clip} = StateManager.mark_export_failed(456, "FFmpeg encoding failed")
-      clip.ingest_state  # "export_failed"
+      clip.ingest_state  # :export_failed
       clip.last_error    # "FFmpeg encoding failed"
       clip.retry_count   # incremented
   """
@@ -113,7 +113,7 @@ defmodule Heaters.Processing.Render.Export.StateManager do
       Logger.error("StateManager: Marking clip #{clip.id} as export_failed: #{error_message}")
 
       update_single_clip(clip, %{
-        ingest_state: "export_failed",
+        ingest_state: :export_failed,
         last_error: error_message,
         retry_count: (clip.retry_count || 0) + 1
       })
@@ -134,7 +134,7 @@ defmodule Heaters.Processing.Render.Export.StateManager do
       not is_nil(clip.clip_filepath) ->
         {:error, "Clip #{clip.id} is not virtual - already exported"}
 
-      clip.ingest_state != "review_approved" ->
+      clip.ingest_state != :review_approved ->
         {:error, "Clip #{clip.id} is not in review_approved state: #{clip.ingest_state}"}
 
       is_nil(clip.cut_points) ->

@@ -28,7 +28,7 @@ defmodule Heaters.Processing.Keyframes.Core do
 
   ## Parameters
   - `clip_id`: ID of the clip to process
-  - `strategy`: Keyframe strategy ("midpoint" or "multi")
+  - `strategy`: Keyframe strategy (:midpoint or :multi)
 
   ## Returns
   - `{:ok, Types.KeyframeResult.t()}` on success
@@ -36,7 +36,7 @@ defmodule Heaters.Processing.Keyframes.Core do
   """
   @spec run_keyframe_extraction(integer(), String.t()) ::
           {:ok, Types.KeyframeResult.t()} | {:error, String.t()}
-  def run_keyframe_extraction(clip_id, strategy \\ "multi") do
+  def run_keyframe_extraction(clip_id, strategy \\ :multi) do
     Logger.info("Keyframe: Starting extraction for clip #{clip_id} with strategy #{strategy}")
 
     with {:ok, clip} <- get_clip_with_validation(clip_id),
@@ -73,7 +73,7 @@ defmodule Heaters.Processing.Keyframes.Core do
   end
 
   defp transition_to_keyframing(clip) do
-    Clips.update_state(clip, "keyframing")
+    Clips.update_state(clip, :keyframing)
   end
 
   defp build_artifact_prefix(clip) do
@@ -171,7 +171,7 @@ defmodule Heaters.Processing.Keyframes.Core do
     keyframes_with_metadata =
       Enum.map(uploaded_keyframes, fn keyframe ->
         Map.merge(keyframe, %{
-          artifact_type: "keyframe",
+          artifact_type: :keyframe,
           processing_metadata: %{
             strategy: strategy_config.strategy,
             extraction_method: "elixir_ffmpeg"
@@ -237,12 +237,12 @@ defmodule Heaters.Processing.Keyframes.Core do
         }
       end)
 
-    Artifacts.create_artifacts(clip_id, "keyframe", artifacts)
+    Artifacts.create_artifacts(clip_id, :keyframe, artifacts)
   end
 
   defp update_clip_to_keyframed(clip_id, _keyframe_metadata) do
     with {:ok, clip} <- Clips.get_clip(clip_id) do
-      Clips.update_state(clip, "keyframed")
+      Clips.update_state(clip, :keyframed)
     end
   end
 
@@ -265,7 +265,7 @@ defmodule Heaters.Processing.Keyframes.Core do
     error_message = ErrorFormatting.format_error(reason)
 
     with {:ok, clip} <- Clips.get_clip(clip.id) do
-      case Clips.mark_failed(clip, "keyframe_failed", error_message) do
+      case Clips.mark_failed(clip, :keyframe_failed, error_message) do
         {:ok, _} ->
           Logger.error("Marked clip #{clip.id} as keyframe_failed: #{error_message}")
 
