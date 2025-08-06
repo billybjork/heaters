@@ -138,6 +138,12 @@ defmodule Heaters.Pipeline.Config do
         # No next_stage - this is the end of the video processing pipeline
       },
 
+      # ===== HUMAN REVIEW BOUNDARY =====
+      # End of automated video processing pipeline (download → preprocess → detect_scenes → persist_cache)
+      # Human review occurs here: cut operations, approve/skip/archive actions
+      # Beginning of clip export pipeline (export → keyframes → embeddings)
+      # ===== HUMAN REVIEW BOUNDARY =====
+
       # Stage 5: Rolling Export (virtual clips → physical clips)
       %{
         label: "approved virtual clips → rolling export",
