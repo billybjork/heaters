@@ -35,7 +35,7 @@ Heaters processes videos through a **cuts-based pipeline**: download → proxy g
 ## Code Organization
 
 - **`Media`**: Domain entities (videos, clips, cuts, artifacts) and cut operations
-- **`Processing`**: Automated pipeline stages (download, preprocess, scene detection, render, keyframes, embeddings)
+- **`Processing`**: Automated pipeline stages with structured results (download, preprocess, scene detection, render, keyframes, embeddings)
 - **`Storage`**: All storage concerns (pipeline cache, playback cache with scheduled cleanup, archive, S3 operations)
 - **`Review`**: Human workflow (queue management, actions)
 - **`Pipeline`**: Declarative orchestration (config, dispatcher, queries)
@@ -43,9 +43,11 @@ Heaters processes videos through a **cuts-based pipeline**: download → proxy g
 ### Type Safety & Data Integrity
 
 - **Ecto Enums**: All state fields (`ingest_state`, `artifact_type`, `strategy`, `generation_strategy`) use native Ecto enums
+- **Structured Results**: All processing workers return enforced struct types with `@enforce_keys` for guaranteed data integrity
 - **Database Constraints**: CHECK constraints prevent invalid enum values at the database level
 - **Compile-time Validation**: Invalid enum values caught during compilation
 - **Performance Indexes**: Strategic indexes on enum fields for optimized queries
+- **Rich Observability**: Worker results include processing metrics, timing data, and structured logging for production monitoring
 
 ## Pipeline & State Flow
 
@@ -90,6 +92,7 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 - **Idempotent Workers**: Prevent duplicate work and handle retries gracefully
 - **Race Condition Prevention**: Strategic state updates prevent Dispatcher timing conflicts
 - **Centralized Error Handling**: Consistent recovery and audit trails
+- **Structured Observability**: Rich worker metrics with processing statistics, timing data, and operation details for comprehensive monitoring
 
 ## Configuration
 
@@ -154,7 +157,7 @@ See module documentation and inline comments for specific implementation details
 5. **Universal Workflow**: Handles all ingest types with smart optimization
 6. **Production Reliable**: Resumable, idempotent, robust with graceful fallbacks
 7. **Maintainable**: Declarative configuration, modular design, centralized S3 path management
-8. **Type Safe**: Ecto enums with database constraints ensure data integrity and prevent invalid states
+8. **Type Safe**: Ecto enums with database constraints and structured worker results ensure complete data integrity
 9. **Self-Managing**: Automated cache maintenance with size limits, LRU eviction, and disk space monitoring
 10. **Reactive Interface**: LiveView reactive patterns eliminate manual refresh requirements
 11. **Single-File Components**: LiveView 1.1 colocated hooks eliminate JavaScript file sprawl
