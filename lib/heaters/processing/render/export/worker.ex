@@ -180,7 +180,7 @@ defmodule Heaters.Processing.Render.Export.Worker do
     Enum.map(clips, fn clip ->
       # Generate S3 output path using centralized path service (eliminates Python coupling)
       s3_output_path =
-        Heaters.Storage.S3Paths.generate_clip_path(
+        Heaters.Storage.S3.Paths.generate_clip_path(
           clip.id,
           video_title || "clip_#{clip.id}",
           clip.clip_identifier

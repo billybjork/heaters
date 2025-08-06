@@ -1,10 +1,10 @@
-defmodule Heaters.Storage.S3 do
+defmodule Heaters.Storage.S3.Core do
   @moduledoc """
   Basic S3 operations providing direct AWS S3 functionality.
 
   This module provides low-level S3 operations with minimal business logic.
   For domain-specific S3 operations that involve business rules or knowledge
-  about clips, artifacts, videos, etc., use `Heaters.Storage.S3Adapter` instead.
+  about clips, artifacts, videos, etc., use `Heaters.Storage.S3.Adapter` instead.
 
   ## When to Use This Module
 
@@ -13,7 +13,7 @@ defmodule Heaters.Storage.S3 do
   - **Infrastructure-level operations**: Bucket configuration, batch operations
   - **Utility functions**: file_exists?, upload_file_simple, etc.
 
-  ## When to Use S3Adapter Instead
+  ## When to Use S3.Adapter Instead
 
   - **Domain-specific operations**: Operations involving clips, videos, or artifacts
   - **Business logic**: S3 paths derived from domain objects, metadata handling
@@ -89,8 +89,8 @@ defmodule Heaters.Storage.S3 do
 
   ## Examples
 
-      S3.download_file("/path/to/video.mp4", "/tmp/video.mp4")
-      S3.download_file("clips/video.mp4", "/tmp/video.mp4", operation_name: "Split")
+      S3.Core.download_file("/path/to/video.mp4", "/tmp/video.mp4")
+      S3.Core.download_file("clips/video.mp4", "/tmp/video.mp4", operation_name: "Split")
 
   ## Returns
   - `{:ok, local_path}` on success
@@ -140,8 +140,8 @@ defmodule Heaters.Storage.S3 do
 
   ## Examples
 
-      S3.head_object("/path/to/video.mp4")
-      S3.head_object("clips/video.mp4")
+      S3.Core.head_object("/path/to/video.mp4")
+      S3.Core.head_object("clips/video.mp4")
 
   ## Returns
   - `{:ok, metadata}` on success - object exists
@@ -197,9 +197,9 @@ defmodule Heaters.Storage.S3 do
 
   ## Examples
 
-      S3.upload_file("/tmp/video.mp4", "clips/new_video.mp4")
-      S3.upload_file("/tmp/keyframe.jpg", "artifacts/keyframe.jpg", operation_name: "Keyframe")
-      S3.upload_file("/tmp/master.mp4", "masters/master.mp4", storage_class: "STANDARD")
+      S3.Core.upload_file("/tmp/video.mp4", "clips/new_video.mp4")
+      S3.Core.upload_file("/tmp/keyframe.jpg", "artifacts/keyframe.jpg", operation_name: "Keyframe")
+      S3.Core.upload_file("/tmp/master.mp4", "masters/master.mp4", storage_class: "STANDARD")
 
   ## Returns
   - `{:ok, s3_key}` on success
@@ -403,8 +403,8 @@ defmodule Heaters.Storage.S3 do
 
   ## Examples
 
-      {:ok, 1} = S3.delete_file("clips/video.mp4")
-      {:ok, 0} = S3.delete_file("nonexistent/file.mp4")
+      {:ok, 1} = S3.Core.delete_file("clips/video.mp4")
+      {:ok, 0} = S3.Core.delete_file("nonexistent/file.mp4")
   """
   @spec delete_file(String.t()) :: {:ok, integer()} | {:error, any()}
   def delete_file(s3_path) do
@@ -417,7 +417,7 @@ defmodule Heaters.Storage.S3 do
 
   ## Examples
 
-      {:ok, 3} = S3.delete_multiple_files(["file1.mp4", "file2.mp4", "file3.mp4"])
+      {:ok, 3} = S3.Core.delete_multiple_files(["file1.mp4", "file2.mp4", "file3.mp4"])
   """
   @spec delete_multiple_files(list(String.t())) :: {:ok, integer()} | {:error, any()}
   def delete_multiple_files(s3_keys) when is_list(s3_keys) do
@@ -429,8 +429,8 @@ defmodule Heaters.Storage.S3 do
 
   ## Examples
 
-      true = S3.file_exists?("clips/video.mp4")
-      false = S3.file_exists?("clips/missing.mp4")
+      true = S3.Core.file_exists?("clips/video.mp4")
+      false = S3.Core.file_exists?("clips/missing.mp4")
   """
   @spec file_exists?(String.t()) :: boolean()
   def file_exists?(s3_path) do
@@ -445,7 +445,7 @@ defmodule Heaters.Storage.S3 do
 
   ## Examples
 
-      :ok = S3.upload_file_simple("/tmp/video.mp4", "clips/new_video.mp4")
+      :ok = S3.Core.upload_file_simple("/tmp/video.mp4", "clips/new_video.mp4")
   """
   @spec upload_file_simple(String.t(), String.t()) :: :ok | {:error, any()}
   def upload_file_simple(local_path, s3_key) do
@@ -460,7 +460,7 @@ defmodule Heaters.Storage.S3 do
 
   ## Examples
 
-      {:ok, "clips/video.mp4"} = S3.upload_file_with_operation("/tmp/video.mp4", "clips/video.mp4", "Split")
+      {:ok, "clips/video.mp4"} = S3.Core.upload_file_with_operation("/tmp/video.mp4", "clips/video.mp4", "Split")
   """
   @spec upload_file_with_operation(String.t(), String.t(), String.t()) ::
           {:ok, String.t()} | {:error, any()}
@@ -487,8 +487,8 @@ defmodule Heaters.Storage.S3 do
 
   ## Examples
 
-      S3.upload_file_with_progress("/tmp/large_video.mp4", "masters/video.mp4")
-      S3.upload_file_with_progress("/tmp/master.mp4", "masters/master.mp4",
+      S3.Core.upload_file_with_progress("/tmp/large_video.mp4", "masters/video.mp4")
+      S3.Core.upload_file_with_progress("/tmp/master.mp4", "masters/master.mp4",
                                    storage_class: "STANDARD", timeout: :timer.minutes(45))
 
   ## Returns

@@ -200,7 +200,7 @@ defmodule Heaters.Storage.TempManager do
       filename = Path.basename(filepath)
       local_path = Path.join(temp_dir, filename)
 
-      case Heaters.Storage.S3.download_file(filepath, local_path) do
+      case Heaters.Storage.S3.Core.download_file(filepath, local_path) do
         {:ok, _} -> {:ok, local_path}
         {:error, reason} -> {:error, "Failed to download from S3: #{inspect(reason)}"}
       end

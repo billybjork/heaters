@@ -124,7 +124,7 @@ defmodule Heaters.Processing.Preprocess.Worker do
         can_reuse_as_proxy = can_reuse_normalized_as_proxy?(source_video, local_source_path)
 
         # Generate S3 paths using centralized path service (eliminates Python coupling)
-        paths = Heaters.Storage.S3Paths.generate_video_paths(source_video.id, source_video.title)
+        paths = Heaters.Storage.S3.Paths.generate_video_paths(source_video.id, source_video.title)
 
         preprocessing_args = %{
           source_video_id: source_video.id,
@@ -397,6 +397,6 @@ defmodule Heaters.Processing.Preprocess.Worker do
       analysis.duration > 0
   end
 
-  # S3 path generation moved to Heaters.Storage.S3Paths module
+  # S3 path generation moved to Heaters.Storage.S3.Paths module
   # to eliminate coupling between Python and Elixir path generation logic
 end

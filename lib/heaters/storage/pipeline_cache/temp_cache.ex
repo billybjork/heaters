@@ -321,13 +321,13 @@ defmodule Heaters.Storage.PipelineCache.TempCache do
   end
 
   defp download_and_cache(s3_key, opts) do
-    alias Heaters.Storage.S3
+    alias Heaters.Storage.S3.Core
 
     # Create temporary download path
     with {:ok, cache_dir} <- ensure_cache_dir(),
          download_path <-
            Path.join(cache_dir, "download_#{:crypto.strong_rand_bytes(8) |> Base.encode16()}"),
-         {:ok, _} <- S3.download_file(s3_key, download_path, opts),
+         {:ok, _} <- Core.download_file(s3_key, download_path, opts),
          {:ok, cached_path} <- put(s3_key, download_path) do
       # Clean up temporary download file
       File.rm(download_path)
@@ -342,7 +342,7 @@ defmodule Heaters.Storage.PipelineCache.TempCache do
 
   defp upload_to_s3(local_path, s3_key, storage_class) do
     # Use existing S3 infrastructure with progress reporting for better visibility
-    alias Heaters.Storage.S3
+    alias Heaters.Storage.S3.Core
 
     # Determine if we should use progress reporting based on file size
     file_size = File.stat!(local_path).size
@@ -355,13 +355,13 @@ defmodule Heaters.Storage.PipelineCache.TempCache do
           "TempCache: Using progress reporting for large file (#{file_size} bytes): #{s3_key}"
         )
 
-        S3.upload_file_with_progress(local_path, s3_key,
+        Core.upload_file_with_progress(local_path, s3_key,
           storage_class: storage_class,
           operation_name: "CachePersist",
           timeout: :timer.minutes(45)
         )
       else
-        S3.upload_file(local_path, s3_key,
+        Core.upload_file(local_path, s3_key,
           storage_class: storage_class,
           operation_name: "CachePersist"
         )

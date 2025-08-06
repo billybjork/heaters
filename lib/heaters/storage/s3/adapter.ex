@@ -1,10 +1,10 @@
-defmodule Heaters.Storage.S3Adapter do
+defmodule Heaters.Storage.S3.Adapter do
   @moduledoc """
   Domain-specific S3 adapter providing clip, artifact, and video operations.
 
   This adapter provides S3 operations that involve business logic and knowledge
   of domain objects (clips, videos, artifacts). For basic S3 file operations
-  without domain logic, use `Heaters.Storage.S3` directly.
+  without domain logic, use `Heaters.Storage.S3.Core` directly.
 
   ## When to Use This Module
 
@@ -13,7 +13,7 @@ defmodule Heaters.Storage.S3Adapter do
   - **Complex workflows**: Master/proxy uploads, artifact management, CDN operations
   - **Domain deletions**: Cleaning up domain objects and their related S3 resources
 
-  ## When to Use S3 Instead
+  ## When to Use S3.Core Instead
 
   - **Basic file operations**: Simple upload/download/delete without domain knowledge
   - **Generic S3 operations**: Working with raw S3 keys and files
@@ -29,7 +29,7 @@ defmodule Heaters.Storage.S3Adapter do
   All functions in this module perform I/O operations with domain-specific logic.
   """
 
-  alias Heaters.Storage.S3
+  alias Heaters.Storage.S3.Core
 
   require Logger
 
@@ -43,8 +43,8 @@ defmodule Heaters.Storage.S3Adapter do
 
   ## Examples
 
-      {:ok, 5} = S3Adapter.delete_clip_and_artifacts(clip_with_artifacts)
-      {:ok, 0} = S3Adapter.delete_clip_and_artifacts(clip_without_files)
+      {:ok, 5} = S3.Adapter.delete_clip_and_artifacts(clip_with_artifacts)
+      {:ok, 0} = S3.Adapter.delete_clip_and_artifacts(clip_without_files)
 
   ## Returns
   - `{:ok, deleted_count}` on success
@@ -65,7 +65,7 @@ defmodule Heaters.Storage.S3Adapter do
       {:ok, 0}
     else
       Logger.info("Deleting #{length(all_keys)} S3 objects for clip #{clip.id}")
-      S3.delete_s3_objects(all_keys)
+      Core.delete_s3_objects(all_keys)
     end
   end
 
@@ -74,13 +74,13 @@ defmodule Heaters.Storage.S3Adapter do
 
   ## Examples
 
-      {:ok, %{"scenes" => [...]}} = S3Adapter.download_json("scene_detection_results/123.json")
-      {:error, :not_found} = S3Adapter.download_json("missing.json")
+      {:ok, %{"scenes" => [...]}} = S3.Adapter.download_json("scene_detection_results/123.json")
+      {:error, :not_found} = S3.Adapter.download_json("missing.json")
   """
   @spec download_json(String.t()) :: {:ok, map()} | {:error, :not_found | any()}
   def download_json(s3_key) do
     # First check if the file exists using head_object
-    case S3.head_object(s3_key) do
+    case Core.head_object(s3_key) do
       {:error, :not_found} ->
         {:error, :not_found}
 
@@ -93,7 +93,7 @@ defmodule Heaters.Storage.S3Adapter do
           Path.join(System.tmp_dir!(), "s3_json_#{System.unique_integer([:positive])}.json")
 
         try do
-          with {:ok, ^temp_file} <- S3.download_file(s3_key, temp_file),
+          with {:ok, ^temp_file} <- Core.download_file(s3_key, temp_file),
                {:ok, json_content} <- File.read(temp_file),
                {:ok, data} <- Jason.decode(json_content) do
             {:ok, data}
@@ -116,7 +116,7 @@ defmodule Heaters.Storage.S3Adapter do
 
   ## Examples
 
-      :ok = S3Adapter.upload_json("scene_detection_results/123.json", %{scenes: [...]})
+      :ok = S3.Adapter.upload_json("scene_detection_results/123.json", %{scenes: [...]})
   """
   @spec upload_json(String.t(), map() | list()) :: :ok | {:error, any()}
   def upload_json(s3_key, data) do
@@ -126,7 +126,7 @@ defmodule Heaters.Storage.S3Adapter do
     try do
       with {:ok, json_content} <- Jason.encode(data, pretty: true),
            :ok <- File.write(temp_file, json_content),
-           :ok <- S3.upload_file_simple(temp_file, s3_key) do
+           :ok <- Core.upload_file_simple(temp_file, s3_key) do
         :ok
       else
         {:error, %Jason.EncodeError{} = error} ->
@@ -155,7 +155,7 @@ defmodule Heaters.Storage.S3Adapter do
   ## Examples
 
       "https://cdn.domain.com/review_proxies/video_123_proxy.mp4" =
-        S3Adapter.proxy_cdn_url("review_proxies/video_123_proxy.mp4")
+        S3.Adapter.proxy_cdn_url("review_proxies/video_123_proxy.mp4")
   """
   @spec proxy_cdn_url(String.t()) :: String.t()
   def proxy_cdn_url(s3_key) do
@@ -167,7 +167,7 @@ defmodule Heaters.Storage.S3Adapter do
 
       {:error, _} ->
         # Fallback to direct S3 URL if CDN not configured
-        case S3.get_bucket_name() do
+        case Core.get_bucket_name() do
           {:ok, bucket_name} ->
             clean_s3_key = String.trim_leading(s3_key, "/")
             "https://#{bucket_name}.s3.amazonaws.com/#{clean_s3_key}"
@@ -186,12 +186,12 @@ defmodule Heaters.Storage.S3Adapter do
 
   ## Examples
 
-      {:ok, binary_data} = S3Adapter.get_range("review_proxies/video.mp4", 1024, 2048)
+      {:ok, binary_data} = S3.Adapter.get_range("review_proxies/video.mp4", 1024, 2048)
   """
   @spec get_range(String.t(), integer(), integer()) :: {:ok, binary()} | {:error, any()}
   def get_range(s3_key, start_byte, end_byte)
       when is_integer(start_byte) and is_integer(end_byte) do
-    case S3.get_bucket_name() do
+    case Core.get_bucket_name() do
       {:ok, bucket_name} ->
         clean_s3_key = String.trim_leading(s3_key, "/")
         range_header = "bytes=#{start_byte}-#{end_byte}"

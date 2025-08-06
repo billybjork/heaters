@@ -90,7 +90,7 @@ defmodule Heaters.Processing.Download.Worker do
       # Generate S3 path for original video using centralized path service
       # Python will use this exact path instead of generating its own
       original_s3_path =
-        Heaters.Storage.S3Paths.generate_original_path(
+        Heaters.Storage.S3.Paths.generate_original_path(
           updated_video.title || "video_#{updated_video.id}",
           generate_timestamp(),
           ".mp4"
@@ -263,7 +263,7 @@ defmodule Heaters.Processing.Download.Worker do
     end
   end
 
-  # Generate timestamp for unique file naming (matches S3Paths format)
+  # Generate timestamp for unique file naming (matches S3.Paths format)
   defp generate_timestamp do
     DateTime.utc_now()
     |> DateTime.to_naive()

@@ -1,4 +1,4 @@
-defmodule Heaters.Storage.S3Paths do
+defmodule Heaters.Storage.S3.Paths do
   @moduledoc """
   Centralized S3 path generation for the Heaters video processing pipeline.
 
@@ -29,13 +29,13 @@ defmodule Heaters.Storage.S3Paths do
   ## Usage
 
       # Generate paths for video processing
-      paths = S3Paths.generate_video_paths(video_id, title)
+      paths = S3.Paths.generate_video_paths(video_id, title)
 
       # Generate paths for clip export
-      clip_path = S3Paths.generate_clip_path(clip_id, title, identifier)
+      clip_path = S3.Paths.generate_clip_path(clip_id, title, identifier)
 
       # Generate paths for artifacts
-      artifact_path = S3Paths.generate_artifact_path(clip_id, :keyframe, "frame_001.jpg")
+      artifact_path = S3.Paths.generate_artifact_path(clip_id, :keyframe, "frame_001.jpg")
 
   All functions in this module are pure functions that generate paths without side effects.
   """
@@ -71,7 +71,7 @@ defmodule Heaters.Storage.S3Paths do
 
   ## Examples
 
-      iex> S3Paths.generate_video_paths(123, "My Video Title")
+      iex> S3.Paths.generate_video_paths(123, "My Video Title")
       %{
         original: "originals/My_Video_Title_20240115_143022.mp4",
         master: "masters/My_Video_Title_123_master.mp4",
@@ -104,7 +104,7 @@ defmodule Heaters.Storage.S3Paths do
 
   ## Examples
 
-      iex> S3Paths.generate_original_path("My Video", "20240115_143022", ".mp4")
+      iex> S3.Paths.generate_original_path("My Video", "20240115_143022", ".mp4")
       "originals/My_Video_20240115_143022.mp4"
   """
   @spec generate_original_path(String.t(), String.t(), String.t()) :: String.t()
@@ -122,7 +122,7 @@ defmodule Heaters.Storage.S3Paths do
 
   ## Examples
 
-      iex> S3Paths.generate_master_path("My Video", 123)
+      iex> S3.Paths.generate_master_path("My Video", 123)
       "masters/My_Video_123_master.mp4"
   """
   @spec generate_master_path(String.t(), integer()) :: String.t()
@@ -140,7 +140,7 @@ defmodule Heaters.Storage.S3Paths do
 
   ## Examples
 
-      iex> S3Paths.generate_proxy_path("My Video", 123)
+      iex> S3.Paths.generate_proxy_path("My Video", 123)
       "proxies/My_Video_123_proxy.mp4"
   """
   @spec generate_proxy_path(String.t(), integer()) :: String.t()
@@ -159,7 +159,7 @@ defmodule Heaters.Storage.S3Paths do
 
   ## Examples
 
-      iex> S3Paths.generate_clip_path(456, "My Video", "clip_001")
+      iex> S3.Paths.generate_clip_path(456, "My Video", "clip_001")
       "final_clips/My_Video_clip_001.mp4"
   """
   @spec generate_clip_path(integer(), String.t(), String.t()) :: String.t()
@@ -179,10 +179,10 @@ defmodule Heaters.Storage.S3Paths do
 
   ## Examples
 
-      iex> S3Paths.generate_artifact_path(456, :keyframe, "frame_001.jpg")
+      iex> S3.Paths.generate_artifact_path(456, :keyframe, "frame_001.jpg")
       "artifacts/keyframes/clip_456_frame_001.jpg"
 
-      iex> S3Paths.generate_artifact_path(789, :thumbnail, "thumb.jpg")
+      iex> S3.Paths.generate_artifact_path(789, :thumbnail, "thumb.jpg")
       "artifacts/thumbnails/clip_789_thumb.jpg"
   """
   @spec generate_artifact_path(integer(), atom(), String.t()) :: String.t()
@@ -197,10 +197,10 @@ defmodule Heaters.Storage.S3Paths do
 
   ## Examples
 
-      iex> S3Paths.validate_s3_path("valid/path/file.mp4")
+      iex> S3.Paths.validate_s3_path("valid/path/file.mp4")
       :ok
 
-      iex> S3Paths.validate_s3_path("invalid//double//slash.mp4")
+      iex> S3.Paths.validate_s3_path("invalid//double//slash.mp4")
       {:error, "Invalid S3 path: contains double slashes"}
   """
   @spec validate_s3_path(String.t()) :: :ok | {:error, String.t()}
@@ -234,7 +234,7 @@ defmodule Heaters.Storage.S3Paths do
 
   ## Examples
 
-      iex> S3Paths.extract_title_from_path("masters/My_Video_123_master.mp4")
+      iex> S3.Paths.extract_title_from_path("masters/My_Video_123_master.mp4")
       "My_Video"
   """
   @spec extract_title_from_path(String.t()) :: String.t() | nil

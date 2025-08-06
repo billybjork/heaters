@@ -356,11 +356,11 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
         case file_type do
           "proxy" ->
             source_video.proxy_filepath ||
-              Heaters.Storage.S3Paths.generate_proxy_path(source_video.title, source_video.id)
+              Heaters.Storage.S3.Paths.generate_proxy_path(source_video.title, source_video.id)
 
           "master" ->
             source_video.master_filepath ||
-              Heaters.Storage.S3Paths.generate_master_path(source_video.title, source_video.id)
+              Heaters.Storage.S3.Paths.generate_master_path(source_video.title, source_video.id)
 
           "source" ->
             source_video.filepath
@@ -380,6 +380,6 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
     end
   end
 
-  # S3 path generation moved to Heaters.Storage.S3Paths module
+  # S3 path generation moved to Heaters.Storage.S3.Paths module
   # to eliminate coupling between Python and Elixir path generation logic
 end
