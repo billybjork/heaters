@@ -72,7 +72,8 @@ defmodule HeatersWeb.ReviewLive do
           current: nil,
           future: [],
           history: [],
-          temp_clip: %{}
+          temp_clip: %{},
+          pending_actions: %{}
         )
 
       [cur | fut] ->
@@ -91,7 +92,8 @@ defmodule HeatersWeb.ReviewLive do
           future: fut,
           history: [],
           page_state: :reviewing,
-          temp_clip: %{}
+          temp_clip: %{},
+          pending_actions: %{}
         )
     end
   end
@@ -126,7 +128,8 @@ defmodule HeatersWeb.ReviewLive do
           future: future_clips,
           history: Enum.reverse(history_clips),
           page_state: :reviewing,
-          temp_clip: %{}
+          temp_clip: %{},
+          pending_actions: %{}
         )
     end
   end
@@ -140,10 +143,14 @@ defmodule HeatersWeb.ReviewLive do
   # ─────────────────────────────────────────────────────────────────────────
   @impl true
   def handle_event("select", %{"action" => action}, %{assigns: %{current: clip}} = socket) do
+    # First, persist any pending actions from previous clips
+    socket = persist_all_pending_actions(socket)
+    
     socket =
       socket
       |> assign(flash_action: action)
       |> push_history(clip)
+      |> track_pending_action(clip.id, action)
       |> advance_queue()
       |> refill_future()
       |> put_flash(:info, "#{flash_verb(action)} clip #{clip.id}")
@@ -151,7 +158,7 @@ defmodule HeatersWeb.ReviewLive do
     # Update URL to reflect new current clip
     socket = update_url_for_current_clip(socket)
 
-    {:noreply, persist_async(socket, clip.id, action)}
+    {:noreply, socket}
   end
 
   # ─────────────────────────────────────────────────────────────────────────
@@ -177,24 +184,22 @@ defmodule HeatersWeb.ReviewLive do
         page_state: :reviewing,
         temp_clip: %{}
       )
+      |> clear_pending_action(prev.id)  # Clear any pending action for the clip we're returning to
       |> refill_future()
       |> clear_flash()
+      |> put_flash(:info, "Undone - showing clip #{prev.id}")
 
-    # Update URL to reflect undone current clip
-    socket = update_url_for_current_clip(socket)
+    # Undo is a pure UI operation - no database persistence
+    # The previous action is effectively "cancelled" until user takes a new action
+    # Don't update URL to preserve in-memory history state
 
-    {:noreply, persist_async(socket, prev.id, "undo")}
+    {:noreply, socket}
   end
 
   # -------------------------------------------------------------------------
   # Async persistence helpers
   # -------------------------------------------------------------------------
 
-  defp persist_async(socket, clip_id, action) do
-    Phoenix.LiveView.start_async(socket, {:persist, clip_id}, fn ->
-      ClipActions.select_clip_and_fetch_next(%Clip{id: clip_id}, action)
-    end)
-  end
 
   # -------------------------------------------------------------------------
   # Queue helpers
@@ -397,6 +402,23 @@ defmodule HeatersWeb.ReviewLive do
     {:noreply, put_flash(socket, :error, "Action crashed: #{inspect(reason)}")}
   end
 
+  # Background persistence handlers (for pending actions)
+  @impl true
+  def handle_async({:persist_background, _}, {:ok, {_next_clip, _metadata}}, socket), do: {:noreply, socket}
+  @impl true
+  def handle_async({:persist_background, clip_id}, {:error, reason}, socket) do
+    require Logger
+    Logger.error("Background persist for clip #{clip_id} failed: #{inspect(reason)}")
+    {:noreply, socket}  # Don't show error flashes for background operations
+  end
+
+  @impl true
+  def handle_async({:persist_background, clip_id}, {:exit, reason}, socket) do
+    require Logger
+    Logger.error("Background persist for clip #{clip_id} crashed: #{inspect(reason)}")
+    {:noreply, socket}  # Don't show error flashes for background operations
+  end
+
   # -------------------------------------------------------------------------
   # PubSub message handlers
   # -------------------------------------------------------------------------
@@ -448,6 +470,30 @@ defmodule HeatersWeb.ReviewLive do
   end
 
   # -------------------------------------------------------------------------
+  # Pending actions management
+  # -------------------------------------------------------------------------
+
+  defp track_pending_action(socket, clip_id, action) do
+    update(socket, :pending_actions, &Map.put(&1, clip_id, action))
+  end
+
+  defp clear_pending_action(socket, clip_id) do
+    update(socket, :pending_actions, &Map.delete(&1, clip_id))
+  end
+
+  defp persist_all_pending_actions(%{assigns: %{pending_actions: pending}} = socket) do
+    # Persist all pending actions to database
+    Enum.each(pending, fn {clip_id, action} ->
+      Phoenix.LiveView.start_async(socket, {:persist_background, clip_id}, fn ->
+        ClipActions.select_clip_and_fetch_next(%Clip{id: clip_id}, action)
+      end)
+    end)
+
+    # Clear all pending actions
+    assign(socket, pending_actions: %{})
+  end
+
+  # -------------------------------------------------------------------------
   # URL management helpers  
   # -------------------------------------------------------------------------
 
@@ -468,6 +514,29 @@ defmodule HeatersWeb.ReviewLive do
   defp flash_verb("skip"), do: "Skipped"
   defp flash_verb("archive"), do: "Archived"
   defp flash_verb(other), do: String.capitalize(other)
+
+  # -------------------------------------------------------------------------
+  # Process cleanup - persist any pending actions on exit
+  # -------------------------------------------------------------------------
+
+  @impl true
+  def terminate(_reason, %{assigns: %{pending_actions: pending_actions}}) when map_size(pending_actions) > 0 do
+    # Persist any remaining pending actions when the LiveView shuts down
+    # This prevents actions from being lost due to browser close, crash, navigation, etc.
+    Task.start(fn ->
+      Enum.each(pending_actions, fn {clip_id, action} ->
+        try do
+          ClipActions.select_clip_and_fetch_next(%Clip{id: clip_id}, action)
+        rescue
+          error ->
+            require Logger
+            Logger.warning("Failed to persist pending action for clip #{clip_id} during terminate: #{inspect(error)}")
+        end
+      end)
+    end)
+  end
+
+  def terminate(_reason, _socket), do: :ok
 
   # -------------------------------------------------------------------------
   # Colocated Hook - Review Hotkeys
