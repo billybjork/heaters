@@ -64,6 +64,7 @@ defmodule Heaters.Processing.Render.Export.Worker do
   alias Heaters.Processing.Render.Export.StateManager
   alias Heaters.Pipeline.WorkerBehavior
   alias Heaters.Processing.Py.Runner, as: PyRunner
+  alias Heaters.Processing.ResultBuilder
   require Logger
 
   # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
@@ -78,7 +79,8 @@ defmodule Heaters.Processing.Render.Export.Worker do
                process_export_results: 2,
                validate_export_results: 2,
                update_clips_to_physical: 3,
-               update_single_clip_to_physical: 3
+               update_single_clip_to_physical: 3,
+               calculate_total_duration: 1
              ]}
 
   @impl WorkerBehavior
@@ -98,7 +100,15 @@ defmodule Heaters.Processing.Render.Export.Worker do
           "ExportWorker: No approved virtual clips found for source_video_id: #{source_video_id}"
         )
 
-        :ok
+        # Return structured result for no clips to process
+        export_result = ResultBuilder.export_success(source_video_id, 0, %{
+          successful_exports: 0,
+          failed_exports: 0,
+          no_clips_to_process: true
+        })
+
+        ResultBuilder.log_result(__MODULE__, export_result)
+        export_result
 
       clips ->
         Logger.info("ExportWorker: Found #{length(clips)} approved virtual clips to export")
@@ -253,7 +263,19 @@ defmodule Heaters.Processing.Render.Export.Worker do
     case Enum.find(results, &match?({:error, _}, &1)) do
       nil ->
         Logger.info("ExportWorker: Successfully updated #{length(clips)} clips to physical")
-        :ok
+        
+        # Build structured result with export statistics
+        source_video_id = List.first(clips).source_video_id
+        export_result = ResultBuilder.export_success(source_video_id, length(clips), %{
+          successful_exports: length(clips),
+          failed_exports: 0,
+          total_duration_exported: calculate_total_duration(exported_clips),
+          metadata: metadata
+        })
+
+        # Log structured result for observability
+        ResultBuilder.log_result(__MODULE__, export_result)
+        export_result
 
       {:error, reason} ->
         Logger.error("ExportWorker: Failed to update clips: #{reason}")
@@ -301,4 +323,14 @@ defmodule Heaters.Processing.Render.Export.Worker do
 
     {:error, reason}
   end
+
+  # Helper function to calculate total duration from exported clips
+  defp calculate_total_duration(exported_clips) when is_list(exported_clips) do
+    exported_clips
+    |> Enum.map(&(Map.get(&1, "duration") || 0))
+    |> Enum.sum()
+    |> Float.round(2)
+  end
+
+  defp calculate_total_duration(_), do: 0.0
 end

@@ -1,50 +1,47 @@
-<main id="review" phx-hook=".ReviewHotkeys">
-  <.review_hotkeys_script />
-  <!-- Empty-queue ------------------------------------------------------- -->
-  <%= if @page_state==:empty do %>
-    <section class="stack-center gap-4">
-      <h2>All clips reviewed!</h2>
-      <p class="muted">Check back later for more.</p>
+<Layouts.app flash={@flash}>
+  <main id="review" phx-hook=".ReviewHotkeys">
+    <.review_hotkeys_script />
+    <!-- Empty-queue ------------------------------------------------------- -->
+    <%= if @page_state==:empty do %>
+      <section class="stack-center gap-4">
+        <h2>All clips reviewed!</h2>
+        <p class="muted">Check back later for more.</p>
 
-      <nav role="group" aria-label="Review actions" class="actions">
-        <button type="button" phx-click="undo" class="btn-ghost" disabled={@history==[]} aria-label="Undo last action"
-          title={if(@history==[], do: "Nothing to undo" , else: "Undo last action" )}>
-          ⬅️
-        </button>
-      </nav>
-    </section>
+        <nav role="group" aria-label="Review actions" class="actions">
+          <button type="button" phx-click="undo" class="btn-ghost" disabled={@history==[]} aria-label="Undo last action"
+            title={if(@history==[], do: "Nothing to undo" , else: "Undo last action" )}>
+            ⬅️
+          </button>
+        </nav>
+      </section>
 
-    <!-- Reviewing --------------------------------------------------------- -->
-    <% else %>
+      <!-- Reviewing --------------------------------------------------------- -->
+      <% else %>
 
-      <article class="stack-center gap-4">
-        <%!-- Clip player component --%>
-          <.clip_player clip={@current} temp_clip={@temp_clip} id={"video-player-#{@current.id}"} />
+        <article class="stack-center gap-4">
+          <%!-- Clip player component --%>
+            <.clip_player clip={@current} temp_clip={@temp_clip} id={"video-player-#{@current.id}"} />
 
-          <!-- Action buttons ------------------------------------------------ -->
-          <nav role="group" aria-label="Review actions" class="actions">
-            <!-- Undo -->
-            <button phx-click="undo" class="btn-ghost" disabled={@history==[]} aria-label="Undo" title={if(@history==[],
-              do: "Nothing to undo" , else: "Undo last action" )}>
-              ⬅️
-            </button>
+            <!-- Action buttons ------------------------------------------------ -->
+            <nav role="group" aria-label="Review actions" class="actions">
+              <!-- Undo -->
+              <button phx-click="undo" class="btn-ghost" disabled={@history==[]} aria-label="Undo" title={if(@history==[],
+                do: "Nothing to undo" , else: "Undo last action" )}>
+                ⬅️
+              </button>
 
-            <!-- Approve / Skip / Archive -->
-            <button id="btn-approve" class="btn approve" phx-click="select" phx-value-action="approve">
-              ✅ Approve
-            </button>
-            <button id="btn-skip" class="btn skip" phx-click="select" phx-value-action="skip">
-              ➡️ Skip
-            </button>
-            <button id="btn-archive" class="btn archive" phx-click="select" phx-value-action="archive">
-              🗑️ Archive
-            </button>
-          </nav>
-
-          <!-- Flash message -->
-          <p :if={msg=@flash["info"]} class={[~c"flash", ~c"flash--#{@flash_action}"]} aria-live="polite">
-            {msg}
-          </p>
-      </article>
-      <% end %>
-</main>
+              <!-- Approve / Skip / Archive -->
+              <button id="btn-approve" class="btn approve" phx-click="select" phx-value-action="approve">
+                ✅ Approve
+              </button>
+              <button id="btn-skip" class="btn skip" phx-click="select" phx-value-action="skip">
+                ➡️ Skip
+              </button>
+              <button id="btn-archive" class="btn archive" phx-click="select" phx-value-action="archive">
+                🗑️ Archive
+              </button>
+            </nav>
+        </article>
+        <% end %>
+  </main>
+</Layouts.app>

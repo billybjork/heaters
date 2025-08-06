@@ -27,6 +27,7 @@ defmodule Heaters.Processing.Download.Worker do
   alias Heaters.Processing.Py.Runner, as: PyRunner
   alias Heaters.Storage.PipelineCache.TempCache
   alias Heaters.Processing.Download.{Core, YtDlpConfig}
+  alias Heaters.Processing.ResultBuilder
 
   alias Heaters.Pipeline.WorkerBehavior
   alias Heaters.Processing.Render.FFmpegConfig
@@ -48,7 +49,11 @@ defmodule Heaters.Processing.Download.Worker do
                handle_ingest_work: 1,
                convert_keys_to_atoms: 1,
                safe_string_to_atom: 1,
-               handle_temp_cache_download_completion: 2
+               handle_temp_cache_download_completion: 2,
+               get_file_size: 1,
+               get_format_info: 1,
+               get_quality_metrics: 1,
+               build_resolution_string: 2
              ]}
 
   # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
@@ -137,11 +142,24 @@ defmodule Heaters.Processing.Download.Worker do
               # Chain directly to next stage using centralized pipeline configuration
               :ok = Heaters.Pipeline.Config.maybe_chain_next_job(__MODULE__, updated_video)
               Logger.info("DownloadWorker: Successfully chained to next pipeline stage")
-              :ok
+              
+              # Build structured result with rich metadata
+              download_result = ResultBuilder.download_success(source_video_id, updated_video.filepath, %{
+                title: updated_video.title,
+                duration_seconds: updated_video.duration_seconds,
+                file_size_bytes: get_file_size(result),
+                format_info: get_format_info(result),
+                quality_metrics: get_quality_metrics(result),
+                metadata: metadata
+              })
+
+              # Log structured result for observability
+              ResultBuilder.log_result(__MODULE__, download_result)
+              download_result
 
             {:error, reason} ->
               Logger.error("DownloadWorker: Failed to update video metadata: #{inspect(reason)}")
-              {:error, reason}
+              ResultBuilder.download_error(source_video_id, reason)
           end
 
         {:error, reason} ->
@@ -273,4 +291,39 @@ defmodule Heaters.Processing.Download.Worker do
     |> String.replace(":", "")
     |> String.replace(" ", "_")
   end
+
+  # Metadata extraction helpers for structured results
+  defp get_file_size(result) do
+    result["filesize"] || result["filesize_approx"]
+  end
+
+  defp get_format_info(result) do
+    %{
+      format_id: result["format_id"],
+      ext: result["ext"],
+      width: result["width"],
+      height: result["height"],
+      fps: result["fps"],
+      vcodec: result["vcodec"],
+      acodec: result["acodec"],
+      resolution: result["resolution"]
+    }
+    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+    |> Enum.into(%{})
+  end
+
+  defp get_quality_metrics(result) do
+    %{
+      resolution: build_resolution_string(result["width"], result["height"]),
+      fps: result["fps"],
+      codec: result["vcodec"],
+      format_note: result["format"]
+    }
+    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+    |> Enum.into(%{})
+  end
+
+  defp build_resolution_string(nil, _), do: nil
+  defp build_resolution_string(_, nil), do: nil
+  defp build_resolution_string(width, height), do: "#{width}x#{height}"
 end

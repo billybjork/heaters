@@ -33,11 +33,13 @@ defmodule HeatersWeb.QueryLive do
         filter_opts: opts,
         filters: filters,
         main_clip: main_clip,
-        similars: similars,
         page: 1,
         sort_asc?: true,
-        per_page: @per_page
+        per_page: @per_page,
+        similars_count: length(similars),
+        form: to_form(filters, as: :filters)
       )
+      |> stream(:similars, similars)
 
     {:ok, socket}
   end
@@ -50,11 +52,9 @@ defmodule HeatersWeb.QueryLive do
     sims = EmbeddingSearch.similar_clips(id, f, sa, 1, @per_page)
 
     {:noreply,
-     assign(socket,
-       main_clip: main,
-       similars: sims,
-       page: 1
-     )}
+     socket
+     |> assign(main_clip: main, page: 1, similars_count: length(sims))
+     |> stream(:similars, sims, reset: true)}
   end
 
   @impl true
@@ -77,10 +77,12 @@ defmodule HeatersWeb.QueryLive do
      |> assign(
        filters: filters,
        main_clip: main_clip,
-       similars: similars,
        page: 1,
-       sort_asc?: true
-     )}
+       sort_asc?: true,
+       similars_count: length(similars),
+       form: to_form(filters, as: :filters)
+     )
+     |> stream(:similars, similars, reset: true)}
   end
 
   @impl true
@@ -88,14 +90,20 @@ defmodule HeatersWeb.QueryLive do
     page = String.to_integer(page_str)
     %{main_clip: mc, filters: f, sort_asc?: sa} = socket.assigns
     similars = EmbeddingSearch.similar_clips(mc.id, f, sa, page, @per_page)
-    {:noreply, assign(socket, similars: similars, page: page)}
+    {:noreply, 
+     socket
+     |> assign(page: page, similars_count: length(similars))
+     |> stream(:similars, similars, reset: true)}
   end
 
   @impl true
   def handle_event("toggle_sort", _params, socket) do
     %{main_clip: mc, filters: f, sort_asc?: sa, page: page} = socket.assigns
     similars = EmbeddingSearch.similar_clips(mc.id, f, !sa, page, @per_page)
-    {:noreply, assign(socket, similars: similars, sort_asc?: !sa)}
+    {:noreply, 
+     socket
+     |> assign(sort_asc?: !sa, similars_count: length(similars))
+     |> stream(:similars, similars, reset: true)}
   end
 
   @impl true
@@ -106,7 +114,10 @@ defmodule HeatersWeb.QueryLive do
     similars =
       if main_clip, do: EmbeddingSearch.similar_clips(main_clip.id, f, sa, 1, @per_page), else: []
 
-    {:noreply, assign(socket, main_clip: main_clip, similars: similars, page: 1)}
+    {:noreply, 
+     socket
+     |> assign(main_clip: main_clip, page: 1, similars_count: length(similars))
+     |> stream(:similars, similars, reset: true)}
   end
 
   # Build a streaming-friendly URL by prefixing the CDN domain

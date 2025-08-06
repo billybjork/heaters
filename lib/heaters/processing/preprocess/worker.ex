@@ -39,6 +39,7 @@ defmodule Heaters.Processing.Preprocess.Worker do
   alias Heaters.Processing.Render.FFmpegConfig
   alias Heaters.Processing.Py.Runner, as: PyRunner
   alias Heaters.Storage.PipelineCache.TempCache
+  alias Heaters.Processing.ResultBuilder
   require Logger
 
   # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
@@ -51,7 +52,10 @@ defmodule Heaters.Processing.Preprocess.Worker do
                run_python_preprocessing: 2,
                process_temp_cache_results: 3,
                process_preprocessing_results: 2,
-               maybe_put: 3
+               maybe_put: 3,
+               extract_encoding_metrics: 1,
+               build_resolution_from_metadata: 2,
+               calculate_compression_ratio: 1
              ]}
 
   @impl WorkerBehavior
@@ -81,7 +85,18 @@ defmodule Heaters.Processing.Preprocess.Worker do
 
       _proxy_path ->
         Logger.info("PreprocessWorker: Video #{source_video.id} already preprocessed, skipping")
-        :ok
+        
+        # Return structured result for completed preprocessing
+        preprocess_result = ResultBuilder.preprocess_success(source_video.id, source_video.proxy_filepath, %{
+          master_filepath: source_video.master_filepath,
+          keyframe_count: length(source_video.keyframe_offsets || []),
+          optimization_stats: %{
+            already_processed: true
+          }
+        })
+
+        ResultBuilder.log_result(__MODULE__, preprocess_result)
+        preprocess_result
     end
   end
 
@@ -251,7 +266,23 @@ defmodule Heaters.Processing.Preprocess.Worker do
             # Chain directly to next stage using centralized pipeline configuration
             :ok = Heaters.Pipeline.Config.maybe_chain_next_job(__MODULE__, final_video)
             Logger.info("PreprocessWorker: Successfully chained to next pipeline stage")
-            :ok
+            
+            # Build structured result with preprocessing metrics
+            preprocess_result = ResultBuilder.preprocess_success(source_video.id, final_video.proxy_filepath, %{
+              master_filepath: final_video.master_filepath,
+              keyframe_count: length(keyframe_offsets),
+              optimization_stats: %{
+                temp_cache_used: true,
+                proxy_reused: Map.get(preprocessing_args, :reuse_as_proxy, false),
+                master_skipped: skip_master
+              },
+              encoding_metrics: extract_encoding_metrics(metadata),
+              metadata: metadata
+            })
+
+            # Log structured result for observability
+            ResultBuilder.log_result(__MODULE__, preprocess_result)
+            preprocess_result
 
           {:error, reason} ->
             Logger.error("PreprocessWorker: Failed to update video state: #{inspect(reason)}")
@@ -292,7 +323,23 @@ defmodule Heaters.Processing.Preprocess.Worker do
         # Chain directly to next stage using centralized pipeline configuration
         :ok = Heaters.Pipeline.Config.maybe_chain_next_job(__MODULE__, final_video)
         Logger.info("PreprocessWorker: Successfully chained to next pipeline stage")
-        :ok
+        
+        # Build structured result with preprocessing metrics
+        preprocess_result = ResultBuilder.preprocess_success(source_video.id, final_video.proxy_filepath, %{
+          master_filepath: final_video.master_filepath,
+          keyframe_count: length(keyframe_offsets),
+          optimization_stats: %{
+            temp_cache_used: false,
+            proxy_reused: false,
+            master_skipped: is_nil(master_path)
+          },
+          encoding_metrics: extract_encoding_metrics(metadata),
+          metadata: metadata
+        })
+
+        # Log structured result for observability
+        ResultBuilder.log_result(__MODULE__, preprocess_result)
+        preprocess_result
 
       {:error, reason} ->
         Logger.error("PreprocessWorker: Failed to update video state: #{inspect(reason)}")
@@ -395,6 +442,45 @@ defmodule Heaters.Processing.Preprocess.Worker do
     # At least 500 kbps
     analysis.bitrate > 500_000 &&
       analysis.duration > 0
+  end
+
+  # Extract encoding metrics from preprocessing metadata
+  defp extract_encoding_metrics(metadata) when is_map(metadata) do
+    %{
+      proxy_codec: metadata["proxy_codec"],
+      proxy_bitrate: metadata["proxy_bitrate"],
+      proxy_resolution: build_resolution_from_metadata(metadata, "proxy_"),
+      master_codec: metadata["master_codec"],
+      master_bitrate: metadata["master_bitrate"],
+      master_resolution: build_resolution_from_metadata(metadata, "master_"),
+      compression_ratio: calculate_compression_ratio(metadata),
+      processing_time_seconds: metadata["processing_time"]
+    }
+    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+    |> Enum.into(%{})
+  end
+
+  defp extract_encoding_metrics(_), do: %{}
+
+  defp build_resolution_from_metadata(metadata, prefix) do
+    width = metadata["#{prefix}width"]
+    height = metadata["#{prefix}height"]
+    
+    case {width, height} do
+      {w, h} when not is_nil(w) and not is_nil(h) -> "#{w}x#{h}"
+      _ -> nil
+    end
+  end
+
+  defp calculate_compression_ratio(metadata) do
+    original_size = metadata["original_file_size"]
+    proxy_size = metadata["proxy_file_size"]
+    
+    case {original_size, proxy_size} do
+      {orig, proxy} when not is_nil(orig) and not is_nil(proxy) and proxy > 0 ->
+        Float.round(orig / proxy, 2)
+      _ -> nil
+    end
   end
 
   # S3 path generation moved to Heaters.Storage.S3.Paths module

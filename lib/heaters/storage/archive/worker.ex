@@ -10,6 +10,7 @@ defmodule Heaters.Storage.Archive.Worker do
   alias Heaters.Storage.S3.Adapter
   alias Heaters.Media.Clip
   alias Heaters.Pipeline.WorkerBehavior
+  alias Heaters.Processing.ResultBuilder
   alias Ecto.Multi
   require Logger
 
@@ -28,7 +29,23 @@ defmodule Heaters.Storage.Archive.Worker do
           )
 
           # 2. If S3 deletion is successful, perform all DB changes in one transaction
-          archive_in_database(clip)
+          case archive_in_database(clip) do
+            :ok ->
+              # Build structured result with archival statistics
+              archive_result = ResultBuilder.archive_success(clip_id, deleted_count, %{
+                s3_operations: %{
+                  objects_deleted: deleted_count,
+                  operation_type: "delete_clip_and_artifacts"
+                }
+              })
+
+              # Log structured result for observability
+              ResultBuilder.log_result(__MODULE__, archive_result)
+              archive_result
+
+            {:error, reason} ->
+              {:error, reason}
+          end
 
         {:error, reason} ->
           # If S3 deletion fails, update the clip with an error and let Oban retry.
@@ -49,7 +66,15 @@ defmodule Heaters.Storage.Archive.Worker do
         WorkerBehavior.handle_not_found("Clip", clip_id)
 
       {:error, :already_processed} ->
-        WorkerBehavior.handle_already_processed("Clip", clip_id)
+        Logger.info("ArchiveWorker: Clip #{clip_id} already archived, skipping")
+        
+        # Return structured result for already processed clip
+        archive_result = ResultBuilder.archive_success(clip_id, 0, %{
+          already_processed: true
+        })
+
+        ResultBuilder.log_result(__MODULE__, archive_result)
+        archive_result
 
       # Propagate other errors.
       {:error, reason} ->

@@ -88,6 +88,8 @@ defmodule HeatersWeb do
 
       # Shortcut for generating JS commands
       alias Phoenix.LiveView.JS
+      # Layouts module for Phoenix 1.8 layout components
+      alias HeatersWeb.Layouts
 
       # Routes generation with the ~p sigil
       unquote(verified_routes())

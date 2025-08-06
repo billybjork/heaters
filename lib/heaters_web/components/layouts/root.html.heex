@@ -17,20 +17,8 @@
   <!-- ▸ global toolbar -->
   <HeatersWeb.Nav.nav current_path={@conn.request_path} />
 
-  <!-- ▸ flash messages -->
-  <%= if info=Phoenix.Flash.get(@flash, :info) do %>
-    <div class="flash flash--approve">
-      {info}
-    </div>
-    <% end %>
-
-      <%= if error=Phoenix.Flash.get(@flash, :error) do %>
-        <div class="flash flash--archive">
-          {error}
-        </div>
-        <% end %>
-
-          {@inner_content}
+  <!-- ▸ flash messages and content handled by LiveView app layout -->
+  {@inner_content}
 </body>
 
 </html>

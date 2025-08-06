@@ -299,7 +299,7 @@ defmodule Heaters.Processing.Py.Runner do
   # Build environment for Python process
   @spec build_env() :: {:ok, list()} | {:error, String.t()}
   defp build_env do
-    app_env = System.get_env("APP_ENV") || "development"
+    app_env = Application.get_env(:heaters, :app_env) || "development"
 
     with {:ok, db_url} <- fetch_env(db_url_var(app_env)),
          {:ok, bucket} <- fetch_env(s3_bucket_var(app_env)) do

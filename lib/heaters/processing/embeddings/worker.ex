@@ -8,6 +8,7 @@ defmodule Heaters.Processing.Embeddings.Worker do
   alias Heaters.Processing.Py.Runner, as: PyRunner
   alias Heaters.Pipeline.WorkerBehavior
   alias Heaters.Media.Clips
+  alias Heaters.Processing.ResultBuilder
   require Logger
 
   # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
@@ -15,7 +16,7 @@ defmodule Heaters.Processing.Embeddings.Worker do
   # JUSTIFICATION: PyRunner requires DEV_DATABASE_URL and DEV_S3_BUCKET_NAME environment
   # variables. When not set, PyRunner always fails, making success patterns unreachable.
   # In configured environments, these functions will succeed normally.
-  @dialyzer {:nowarn_function, [handle_embedding_work: 1, run_embedding_task: 2]}
+  @dialyzer {:nowarn_function, [handle_embedding_work: 1, run_embedding_task: 2, extract_embeddings_count: 1, extract_keyframes_count: 1, extract_vector_dimensions: 1, extract_processing_stats: 1]}
 
   @complete_states [:embedded]
 
@@ -84,7 +85,24 @@ defmodule Heaters.Processing.Embeddings.Worker do
           "EmbeddingWorker: Python embedding completed successfully for clip #{clip.id}"
         )
 
-        Workflow.process_embedding_success(clip, result)
+        case Workflow.process_embedding_success(clip, result) do
+          {:ok, _updated_clip} ->
+            # Build structured result with embedding metrics
+            embedding_result = ResultBuilder.embedding_success(clip.id, extract_embeddings_count(result), %{
+              keyframes_processed: extract_keyframes_count(py_args[:keyframe_artifacts]),
+              vector_dimensions: extract_vector_dimensions(result),
+              processing_stats: extract_processing_stats(result),
+              metadata: result
+            })
+
+            # Log structured result for observability
+            ResultBuilder.log_result(__MODULE__, embedding_result)
+            embedding_result
+
+          {:error, reason} ->
+            Logger.error("EmbeddingWorker: Failed to process embedding success: #{inspect(reason)}")
+            {:error, reason}
+        end
 
       {:error, reason} ->
         Logger.error(
@@ -118,4 +136,36 @@ defmodule Heaters.Processing.Embeddings.Worker do
   defp check_idempotency(clip) do
     WorkerBehavior.check_complete_states(clip, @complete_states)
   end
+
+  # Helper functions for extracting metrics from Python embedding results
+  defp extract_embeddings_count(result) when is_map(result) do
+    result["embeddings_count"] || result["total_embeddings"] || 0
+  end
+
+  defp extract_embeddings_count(_), do: 0
+
+  defp extract_keyframes_count(keyframe_artifacts) when is_list(keyframe_artifacts) do
+    length(keyframe_artifacts)
+  end
+
+  defp extract_keyframes_count(_), do: 0
+
+  defp extract_vector_dimensions(result) when is_map(result) do
+    result["vector_dimensions"] || result["embedding_size"]
+  end
+
+  defp extract_vector_dimensions(_), do: nil
+
+  defp extract_processing_stats(result) when is_map(result) do
+    %{
+      processing_time_seconds: result["processing_time"],
+      model_used: result["model"],
+      total_vectors: result["total_vectors"],
+      success_rate: result["success_rate"]
+    }
+    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+    |> Enum.into(%{})
+  end
+
+  defp extract_processing_stats(_), do: %{}
 end

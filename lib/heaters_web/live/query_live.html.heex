@@ -1,84 +1,89 @@
-<!-- Filters: model, strategy, source video + randomize & sort buttons -->
-<section class="filters" role="search" aria-label="Video clip filters and controls">
-  <form phx-change="filter_changed" aria-label="Filter video clips">
-    <label for="model-filter" class="sr-only">Filter by model</label>
-    <select name="filters[model_name]" id="model-filter" aria-label="Filter by model">
-      <option value="">All models</option>
-      <option :for={mn <- @filter_opts.model_names} :key={mn} value={mn} selected={mn==@filters.model_name}>{mn}
-      </option>
-    </select>
+<Layouts.app flash={@flash}>
+  <!-- Filters: model, strategy, source video + randomize & sort buttons -->
+  <section class="filters" role="search" aria-label="Video clip filters and controls">
+    <.form for={@form} phx-change="filter_changed" id="filter-form" aria-label="Filter video clips">
+      <.input 
+        field={@form[:model_name]} 
+        type="select" 
+        label="Filter by model"
+        options={[{"All models", ""} | Enum.map(@filter_opts.model_names, &{&1, &1})]}
+        class="sr-only-label"
+      />
 
-    <label for="strategy-filter" class="sr-only">Filter by generation strategy</label>
-    <select name="filters[generation_strategy]" id="strategy-filter" aria-label="Filter by generation strategy">
-      <option value="">All strategies</option>
-      <option :for={gs <- @filter_opts.generation_strategies} :key={gs} value={gs}
-        selected={gs==@filters.generation_strategy}>{gs}</option>
-    </select>
+      <.input 
+        field={@form[:generation_strategy]} 
+        type="select" 
+        label="Filter by generation strategy"
+        options={[{"All strategies", ""} | Enum.map(@filter_opts.generation_strategies, &{&1, &1})]}
+        class="sr-only-label"
+      />
 
-    <label for="source-filter" class="sr-only">Filter by source video</label>
-    <select name="filters[source_video_id]" id="source-filter" aria-label="Filter by source video">
-      <option value="">All sources</option>
-      <option :for={{id, title} <- @filter_opts.source_videos} :key={id} value={id}
-        selected={id==@filters.source_video_id}>{title}</option>
-    </select>
+      <.input 
+        field={@form[:source_video_id]} 
+        type="select" 
+        label="Filter by source video"
+        options={[{"All sources", ""} | Enum.map(@filter_opts.source_videos, fn {id, title} -> {title, id} end)]}
+        class="sr-only-label"
+      />
 
-    <!-- Randomize main clip -->
-    <button type="button" phx-click="randomize" class="btn-icon" title="Random clip" aria-label="Select random clip">
-      🎲
-    </button>
-
-    <!-- Toggle sort direction -->
-    <button type="button" phx-click="toggle_sort" class="btn-icon" title="Toggle sort" aria-label={if @sort_asc?,
-      do: "Sort descending" , else: "Sort ascending" }>
-      {if @sort_asc?, do: "🔼", else: "🔽"}
-    </button>
-  </form>
-</section>
-
-<%= if @main_clip do %>
-  <!-- Main Clip: always autoplay & loop -->
-  <section class="main-clip" role="main" aria-label="Featured video clip">
-    <figure aria-label={"Main video clip #{@main_clip.id}"}>
-      <video id={"main-clip-#{@main_clip.id}"} autoplay muted loop src={clip_url(@main_clip)} aria-label={"Playing main
-        clip #{@main_clip.id}"} />
-    </figure>
-  </section>
-
-  <!-- Similar Clips Grid -->
-  <section class="similar-grid" aria-label="Similar video clips">
-    <ul class="similar-grid-container" role="list">
-      <li :for={%{clip: c, similarity_pct: pct} <- @similars} :key={c.id} class="clip-card">
-        <button type="button" phx-click="pick_main" phx-value-clip_id={c.id} class="clip-button" aria-label={"Select
-          clip #{c.id} with #{pct}% similarity as main clip"}>
-          <figure aria-label={"Video clip #{c.id} thumbnail"}>
-            <!-- Thumb: hover-play only -->
-            <video id={"thumb-#{c.id}"} phx-hook="HoverPlay" muted loop src={clip_url(c)} aria-label={"Thumbnail preview
-              for clip #{c.id}"} />
-            <figcaption class="clip-info">
-              #{c.id} — {pct}%
-            </figcaption>
-          </figure>
-        </button>
-      </li>
-    </ul>
-
-    <!-- Pagination controls -->
-    <nav class="pagination" aria-label="Similar clips pagination">
-      <button type="button" phx-click="paginate" phx-value-page={@page - 1} disabled={@page==1}
-        aria-label="Go to previous page">
-        ◀ Prev
+      <!-- Randomize main clip -->
+      <button type="button" phx-click="randomize" class="btn-icon" title="Random clip" aria-label="Select random clip">
+        🎲
       </button>
 
-      <span role="status" aria-live="polite" aria-label={"Currently on page {@page}"}>Page {@page}</span>
-
-      <button type="button" phx-click="paginate" phx-value-page={@page + 1} disabled={length(@similars) < @per_page}
-        aria-label="Go to next page">
-        Next ▶
+      <!-- Toggle sort direction -->
+      <button type="button" phx-click="toggle_sort" class="btn-icon" title="Toggle sort" aria-label={if @sort_asc?,
+        do: "Sort descending" , else: "Sort ascending" }>
+        {if @sort_asc?, do: "🔼", else: "🔽"}
       </button>
-    </nav>
+    </.form>
   </section>
-  <% else %>
-    <section class="no-results" role="status" aria-live="polite">
-      <p>No clips found for those filters.</p>
+
+  <%= if @main_clip do %>
+    <!-- Main Clip: always autoplay & loop -->
+    <section class="main-clip" role="main" aria-label="Featured video clip">
+      <figure aria-label={"Main video clip #{@main_clip.id}"}>
+        <video id={"main-clip-#{@main_clip.id}"} autoplay muted loop src={clip_url(@main_clip)} aria-label={"Playing main
+          clip #{@main_clip.id}"} />
+      </figure>
     </section>
-    <% end %>
+
+    <!-- Similar Clips Grid -->
+    <section class="similar-grid" aria-label="Similar video clips">
+      <ul id="similars" class="similar-grid-container" role="list" phx-update="stream">
+        <li :for={{id, %{clip: c, similarity_pct: pct}} <- @streams.similars} id={id} class="clip-card">
+          <button type="button" phx-click="pick_main" phx-value-clip_id={c.id} class="clip-button" aria-label={"Select
+            clip #{c.id} with #{pct}% similarity as main clip"}>
+            <figure aria-label={"Video clip #{c.id} thumbnail"}>
+              <!-- Thumb: hover-play only -->
+              <video id={"thumb-#{c.id}"} phx-hook="HoverPlay" muted loop src={clip_url(c)} aria-label={"Thumbnail preview
+                for clip #{c.id}"} />
+              <figcaption class="clip-info">
+                #{c.id} — {pct}%
+              </figcaption>
+            </figure>
+          </button>
+        </li>
+      </ul>
+
+      <!-- Pagination controls -->
+      <nav class="pagination" aria-label="Similar clips pagination">
+        <button type="button" phx-click="paginate" phx-value-page={@page - 1} disabled={@page==1}
+          aria-label="Go to previous page">
+          ◀ Prev
+        </button>
+
+        <span role="status" aria-live="polite" aria-label={"Currently on page {@page}"}>Page {@page}</span>
+
+        <button type="button" phx-click="paginate" phx-value-page={@page + 1} disabled={@similars_count < @per_page}
+          aria-label="Go to next page">
+          Next ▶
+        </button>
+      </nav>
+    </section>
+    <% else %>
+      <section class="no-results" role="status" aria-live="polite">
+        <p>No clips found for those filters.</p>
+      </section>
+      <% end %>
+</Layouts.app>
