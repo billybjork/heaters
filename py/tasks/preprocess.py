@@ -391,7 +391,7 @@ def parse_time_string(time_str: str) -> float:
 
 def download_from_s3(s3_path: str, local_path: Path) -> None:
     """Download file from S3 to local path using centralized S3 handler"""
-    from utils.s3_handler import get_s3_config, download_from_s3 as s3_download
+    from tasks.upload_s3 import get_s3_config, download_from_s3 as s3_download
     
     s3_client, bucket_name = get_s3_config()
     s3_download(s3_client, bucket_name, s3_path, local_path)
@@ -399,7 +399,7 @@ def download_from_s3(s3_path: str, local_path: Path) -> None:
 
 def upload_to_s3(local_path: Path, s3_key: str, storage_class: str = "STANDARD") -> None:
     """Upload local file to S3 using centralized S3 handler with optimized transfer settings"""
-    from utils.s3_handler import get_s3_config, get_transfer_config, upload_to_s3 as s3_upload
+    from tasks.upload_s3 import get_s3_config, get_transfer_config, upload_to_s3 as s3_upload
     
     s3_client, bucket_name = get_s3_config()
     transfer_config = get_transfer_config()  # Fresh config for each upload
