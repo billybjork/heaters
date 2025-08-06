@@ -24,7 +24,7 @@ defmodule Heaters.Storage.S3Adapter do
   - All functions accept domain objects (Clip structs, etc.) rather than raw S3 keys
   - S3 paths are constructed from domain object properties (video titles, clip IDs)
   - Metadata is enriched with domain-specific information
-  - Operations are named from the domain perspective (upload_master, upload_proxy)
+  - Operations are named from the domain perspective
 
   All functions in this module perform I/O operations with domain-specific logic.
   """
@@ -33,13 +33,7 @@ defmodule Heaters.Storage.S3Adapter do
 
   require Logger
 
-  # Suppress dialyzer warnings for S3 operations when PyRunner environment is not configured.
-  #
-  # JUSTIFICATION: These functions call S3.upload_file_with_progress which uses PyRunner.
-  # PyRunner requires DEV_DATABASE_URL and DEV_S3_BUCKET_NAME. When not set, PyRunner
-  # always fails, making success patterns and get_file_size calls unreachable.
-  # In configured environments, these functions will succeed normally.
-  @dialyzer {:nowarn_function, [upload_master: 3, upload_proxy: 3, get_file_size: 1]}
+  # No dialyzer suppressions needed - legacy file operations removed
 
   @doc """
   Deletes a clip and its associated artifacts from S3.
@@ -150,85 +144,8 @@ defmodule Heaters.Storage.S3Adapter do
     end
   end
 
-  @doc """
-  Upload master video to S3 Standard storage for instant access.
-
-  ## Examples
-
-      {:ok, result} = S3Adapter.upload_master("/tmp/master.mp4", source_video, "video_123_master.mp4")
-  """
-  @spec upload_master(String.t(), map(), String.t()) :: {:ok, map()} | {:error, any()}
-  def upload_master(local_video_path, source_video, filename)
-      when is_binary(local_video_path) and is_binary(filename) do
-    s3_key = "masters/#{filename}"
-
-    # Use STANDARD storage for instant access to archival masters
-    # High-quality H.264 masters balance quality and storage efficiency
-    case S3.upload_file_with_progress(local_video_path, s3_key,
-           operation_name: "Master",
-           storage_class: "STANDARD",
-           timeout: :timer.minutes(45)
-         ) do
-      {:ok, _s3_key} ->
-        file_size = get_file_size(local_video_path)
-
-        result = %{
-          s3_key: s3_key,
-          metadata: %{
-            file_size: file_size,
-            filename: filename,
-            storage_class: "STANDARD",
-            video_title: source_video.title,
-            upload_timestamp: DateTime.utc_now()
-          }
-        }
-
-        {:ok, result}
-
-      error ->
-        error
-    end
-  end
-
-  @doc """
-  Upload proxy video to hot storage for fast streaming access and export.
-
-  ## Examples
-
-      {:ok, result} = S3Adapter.upload_proxy("/tmp/proxy.mp4", source_video, "video_123_proxy.mp4")
-  """
-  @spec upload_proxy(String.t(), map(), String.t()) :: {:ok, map()} | {:error, any()}
-  def upload_proxy(local_video_path, source_video, filename)
-      when is_binary(local_video_path) and is_binary(filename) do
-    s3_key = "proxies/#{filename}"
-
-    # Use STANDARD storage for hot access during review and export
-    # Proxy files are typically large, so use progress reporting
-    case S3.upload_file_with_progress(local_video_path, s3_key,
-           operation_name: "Proxy",
-           storage_class: "STANDARD",
-           timeout: :timer.minutes(30)
-         ) do
-      {:ok, _s3_key} ->
-        file_size = get_file_size(local_video_path)
-
-        result = %{
-          s3_key: s3_key,
-          metadata: %{
-            file_size: file_size,
-            filename: filename,
-            storage_class: "STANDARD",
-            video_title: source_video.title,
-            upload_timestamp: DateTime.utc_now()
-          }
-        }
-
-        {:ok, result}
-
-      error ->
-        error
-    end
-  end
+  # Legacy upload_master and upload_proxy functions removed
+  # All S3 uploads now handled by Python tasks using centralized S3Paths
 
   @doc """
   Generate CDN URL for streaming proxy videos.
@@ -299,12 +216,7 @@ defmodule Heaters.Storage.S3Adapter do
 
   # Private helper functions
 
-  defp get_file_size(file_path) do
-    case File.stat(file_path) do
-      {:ok, %{size: size}} -> size
-      _ -> 0
-    end
-  end
+  # get_file_size function removed - no longer needed after legacy upload function removal
 
   defp get_cdn_domain() do
     case Application.get_env(:heaters, :proxy_cdn_domain) do

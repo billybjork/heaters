@@ -355,10 +355,12 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
       {:ok, source_video} ->
         case file_type do
           "proxy" ->
-            source_video.proxy_filepath || generate_expected_s3_path(source_video, "proxy")
+            source_video.proxy_filepath ||
+              Heaters.Storage.S3Paths.generate_proxy_path(source_video.title, source_video.id)
 
           "master" ->
-            source_video.master_filepath || generate_expected_s3_path(source_video, "master")
+            source_video.master_filepath ||
+              Heaters.Storage.S3Paths.generate_master_path(source_video.title, source_video.id)
 
           "source" ->
             source_video.filepath
@@ -378,28 +380,6 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
     end
   end
 
-  # Generate expected S3 path using the same pattern as Python preprocessing
-  #
-  # CRITICAL: This must match the path generation logic in py/tasks/preprocess.py:
-  # ```python
-  # sanitized_title = sanitize_filename(video_title)
-  # proxy_s3_key = f"proxies/{sanitized_title}_{source_video_id}_proxy.mp4"
-  # master_s3_key = f"masters/{sanitized_title}_{source_video_id}_master.mp4"
-  # ```
-  #
-  # The sanitization logic must be identical between Python and Elixir to ensure
-  # the S3 paths generated during preprocessing match the paths used during persistence.
-  defp generate_expected_s3_path(source_video, file_type) do
-    # Use the same sanitization logic as Python to ensure path consistency
-    # Python uses: sanitize_filename(video_title) from utils/filename_utils.py
-    # Elixir uses: Heaters.Utils.sanitize_filename/1
-    # Both implementations must produce identical results for the same input
-    sanitized_title = Heaters.Utils.sanitize_filename(source_video.title || "unknown")
-
-    case file_type do
-      "proxy" -> "proxies/#{sanitized_title}_#{source_video.id}_proxy.mp4"
-      "master" -> "masters/#{sanitized_title}_#{source_video.id}_master.mp4"
-      _ -> nil
-    end
-  end
+  # S3 path generation moved to Heaters.Storage.S3Paths module
+  # to eliminate coupling between Python and Elixir path generation logic
 end

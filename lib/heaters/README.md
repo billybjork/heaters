@@ -28,6 +28,7 @@ Heaters processes videos through a **cuts-based pipeline**: download → proxy g
 
 - **"I/O at the Edges"**: Pure business logic isolated from side effects; I/O only at system boundaries
 - **Declarative Pipeline**: Complete workflow defined as data in `Pipeline.Config.stages()`
+- **Centralized Path Management**: All S3 directory structure managed in Elixir; zero coupling between components
 - **Performance-First**: Reduce S3 I/O load via temp caching; near-zero latency via direct job chaining
 - **Idempotency**: All operations safe to retry with graceful error handling
 
@@ -86,11 +87,12 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 ### Media Processing
 - **FFmpeg**: All encoding profiles centralized in `Processing.Render.FFmpegConfig`
 - **yt-dlp**: Quality-first download strategy in `Processing.Download.YtDlpConfig` with validation
-- **"Dumb Python"**: Python tasks receive complete configuration from Elixir
+- **S3 Path Management**: All S3 directory structure centralized in `Storage.S3Paths` module
+- **"Dumb Python"**: Python tasks receive complete configuration and S3 paths from Elixir
 - **Temp Clip Audio**: FFmpeg `-an` flag removes audio streams to prevent browser decode issues
 - **Stream Copy Optimization**: Video stream copy (`-c:v copy`) with web optimization (`+faststart`)
 
-⚠️ **CRITICAL**: All download configuration centralized with built-in validation to prevent quality-reducing mistakes (4K→360p). Review module documentation before modifying.
+⚠️ **CRITICAL**: All configuration centralized (download, encoding, S3 paths) with built-in validation to prevent quality-reducing mistakes (4K→360p) and path inconsistencies. Review module documentation before modifying.
 
 ### Development Environment
 - **Python Integration**: Requires `DEV_DATABASE_URL` and `DEV_S3_BUCKET_NAME` environment variables
@@ -139,7 +141,7 @@ See module documentation and inline comments for specific implementation details
 4. **FLAME Ready**: Near-zero pipeline latency via direct job chaining
 5. **Universal Workflow**: Handles all ingest types with smart optimization
 6. **Production Reliable**: Resumable, idempotent, robust with graceful fallbacks
-7. **Maintainable**: Declarative configuration, modular design, centralized logic
+7. **Maintainable**: Declarative configuration, modular design, centralized S3 path management
 8. **Type Safe**: Ecto enums with database constraints ensure data integrity and prevent invalid states
 9. **Self-Managing**: Automated cache maintenance with size limits, LRU eviction, and disk space monitoring
 10. **Reactive Interface**: LiveView reactive patterns eliminate manual refresh requirements

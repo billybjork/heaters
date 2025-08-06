@@ -127,10 +127,9 @@ def export_single_clip(proxy_url: str, clip_data: dict, temp_dir: Path, video_ti
     end_time = cut_points["end_time_seconds"]
     duration = end_time - start_time
     
-    # Generate output paths
-    sanitized_title = sanitize_filename(video_title)
+    # Use S3 output path provided by Elixir (eliminates path generation coupling)
     local_output = temp_dir / f"{clip_identifier}.mp4"
-    s3_output_key = f"final_clips/{sanitized_title}_{clip_identifier}.mp4"
+    s3_output_key = clip_data["s3_output_path"]
     
     # Build FFmpeg command for stream copy extraction
     cmd = [
@@ -306,15 +305,8 @@ def parse_time_string(time_str: str) -> float:
         return 0.0
 
 
-def sanitize_filename(filename: str) -> str:
-    """Sanitize filename for safe storage"""
-    # Replace problematic characters with underscores
-    import re
-    sanitized = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', filename)
-    # Remove multiple consecutive underscores
-    sanitized = re.sub(r'_+', '_', sanitized)
-    # Trim underscores from ends
-    return sanitized.strip('_')[:100]  # Limit length
+# Filename sanitization moved to Elixir Heaters.Utils.sanitize_filename/1
+# to eliminate coupling and use centralized sanitization logic
 
 
 def download_from_s3(s3_path: str, local_path: Path) -> None:
