@@ -2,34 +2,19 @@ defmodule HeatersWeb.ClipPlayer do
   @moduledoc """
   Phoenix LiveView component for clip playback using colocated hooks architecture.
 
-  This is a **single-file component** that demonstrates Phoenix LiveView 1.1's 
-  colocated hooks feature. All JavaScript functionality is embedded directly in 
+  This is a **single-file component** that demonstrates Phoenix LiveView 1.1's
+  colocated hooks feature. All JavaScript functionality is embedded directly in
   this component file, eliminating the need for separate JS files.
 
   ## Key Features
 
   - **Single-File Architecture**: Elixir, HEEx, and JavaScript in one file
   - **Automatic Namespacing**: Hook name `.ClipPlayer` is prefixed with module name
-  - **Instant Playback**: Small files (2-5MB) generated on-demand using FFmpeg stream copy  
+  - **Instant Playback**: Small files (2-5MB) generated on-demand using FFmpeg stream copy
   - **Perfect Timeline**: Shows exact clip duration, not full video length
   - **Zero Re-encoding**: Stream copy ensures fastest generation with zero quality loss
   - **Universal Compatibility**: Works offline, all browsers, mobile optimized
   - **Reactive Updates**: Phoenix LiveView patterns eliminate manual refresh
-
-  ## Architecture Benefits
-
-  **Before (Multiple Files)**:
-  ```
-  clip_player.ex                 (200+ lines)
-  clip-player.js                 (400+ lines) 
-  clip-player-controller.js      (120+ lines)
-  app.js                         (imports + setup)
-  ```
-
-  **After (Single File)**:
-  ```
-  clip_player.ex                 (500+ lines total, everything colocated)
-  ```
 
   **Advantages**:
   - Single source of truth for component behavior
@@ -114,7 +99,7 @@ defmodule HeatersWeb.ClipPlayer do
       |> assign(:clip_key, "clip-#{assigns.clip.id}")
 
     ~H"""
-    <div class="video-player-container" id={"video-container-#{@clip.id}"}>
+    <figure class="video-player-container" id={"video-container-#{@clip.id}"} role="img" aria-label={"Video clip player for clip #{@clip.id}"}>
       <%= cond do %>
         <% @video_url -> %>
           <video
@@ -131,39 +116,39 @@ defmodule HeatersWeb.ClipPlayer do
             data-player-type={@player_type}
             data-clip-info={Jason.encode!(@clip_info)}
           >
-            <p>Your browser doesn't support HTML5 video playback.</p>
+            <p role="alert">Your browser doesn't support HTML5 video playback. Please update your browser or use a modern browser that supports HTML5 video.</p>
           </video>
 
-          <div class="clip-player-loading" style="display: none;">
-            <div class="spinner"></div>
-            <div class="loading-text">Loading clip...</div>
-          </div>
+          <section class="clip-player-loading" style="display: none;" role="status" aria-live="polite" aria-label="Video loading status">
+            <div class="spinner" role="progressbar" aria-label="Loading video content"></div>
+            <p class="loading-text">Loading clip...</p>
+          </section>
 
         <% @player_type == "loading" -> %>
-          <div class="video-player-loading">
-            <div class="spinner"></div>
-            <div class="loading-text">Generating temp clip...</div>
-          </div>
+          <section class="video-player-loading" role="status" aria-live="polite" aria-label="Video generation status">
+            <div class="spinner" role="progressbar" aria-label="Generating video clip"></div>
+            <p class="loading-text">Generating temp clip...</p>
+          </section>
 
         <% true -> %>
-          <div class="video-player-error">
-              <p>Video not available for playback.</p>
-              <p class="error-details">
-                <%= if is_nil(@clip.clip_filepath) do %>
-                  Clip requires proxy file for temp playback generation.
-                <% else %>
-                  Exported clip file not found.
-                <% end %>
-              </p>
-          </div>
+          <section class="video-player-error" role="alert" aria-live="assertive" aria-label="Video playback error">
+            <h3 class="error-title">Video not available for playback</h3>
+            <p class="error-details">
+              <%= if is_nil(@clip.clip_filepath) do %>
+                Clip requires proxy file for temp playback generation.
+              <% else %>
+                Exported clip file not found.
+              <% end %>
+            </p>
+          </section>
       <% end %>
-    </div>
+    </figure>
 
     <script :type={ColocatedHook} name=".ClipPlayer">
       // Phoenix LiveView Colocated Hook for Clip Player
       // Integrates ClipPlayer functionality with Phoenix LiveView reactive patterns
       /** @type {import("phoenix_live_view").Hook} */
-      
+
       export default {
         mounted() {
           const videoElement = this.el;

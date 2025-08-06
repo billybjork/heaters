@@ -1,28 +1,35 @@
 <!-- Filters: model, strategy, source video + randomize & sort buttons -->
-<section class="filters">
-  <form phx-change="filter_changed">
-    <select name="filters[model_name]">
+<section class="filters" role="search" aria-label="Video clip filters and controls">
+  <form phx-change="filter_changed" aria-label="Filter video clips">
+    <label for="model-filter" class="sr-only">Filter by model</label>
+    <select name="filters[model_name]" id="model-filter" aria-label="Filter by model">
       <option value="">All models</option>
-      <option :for={mn <- @filter_opts.model_names} :key={mn} value={mn} selected={mn==@filters.model_name}>{mn}</option>
+      <option :for={mn <- @filter_opts.model_names} :key={mn} value={mn} selected={mn==@filters.model_name}>{mn}
+      </option>
     </select>
 
-    <select name="filters[generation_strategy]">
+    <label for="strategy-filter" class="sr-only">Filter by generation strategy</label>
+    <select name="filters[generation_strategy]" id="strategy-filter" aria-label="Filter by generation strategy">
       <option value="">All strategies</option>
-      <option :for={gs <- @filter_opts.generation_strategies} :key={gs} value={gs} selected={gs==@filters.generation_strategy}>{gs}</option>
+      <option :for={gs <- @filter_opts.generation_strategies} :key={gs} value={gs}
+        selected={gs==@filters.generation_strategy}>{gs}</option>
     </select>
 
-    <select name="filters[source_video_id]">
+    <label for="source-filter" class="sr-only">Filter by source video</label>
+    <select name="filters[source_video_id]" id="source-filter" aria-label="Filter by source video">
       <option value="">All sources</option>
-      <option :for={{id, title} <- @filter_opts.source_videos} :key={id} value={id} selected={id==@filters.source_video_id}>{title}</option>
+      <option :for={{id, title} <- @filter_opts.source_videos} :key={id} value={id}
+        selected={id==@filters.source_video_id}>{title}</option>
     </select>
 
     <!-- Randomize main clip -->
-    <button type="button" phx-click="randomize" class="btn-icon" title="Random clip">
+    <button type="button" phx-click="randomize" class="btn-icon" title="Random clip" aria-label="Select random clip">
       🎲
     </button>
 
     <!-- Toggle sort direction -->
-    <button type="button" phx-click="toggle_sort" class="btn-icon" title="Toggle sort">
+    <button type="button" phx-click="toggle_sort" class="btn-icon" title="Toggle sort" aria-label={if @sort_asc?,
+      do: "Sort descending" , else: "Sort ascending" }>
       {if @sort_asc?, do: "🔼", else: "🔽"}
     </button>
   </form>
@@ -30,36 +37,48 @@
 
 <%= if @main_clip do %>
   <!-- Main Clip: always autoplay & loop -->
-  <section class="main-clip">
-    <video id={"main-clip-#{@main_clip.id}"} autoplay muted loop src={clip_url(@main_clip)} />
+  <section class="main-clip" role="main" aria-label="Featured video clip">
+    <figure aria-label={"Main video clip #{@main_clip.id}"}>
+      <video id={"main-clip-#{@main_clip.id}"} autoplay muted loop src={clip_url(@main_clip)} aria-label={"Playing main
+        clip #{@main_clip.id}"} />
+    </figure>
   </section>
 
   <!-- Similar Clips Grid -->
-  <section class="similar-grid">
-    <div class="similar-grid-container">
-      <div :for={%{clip: c, similarity_pct: pct} <- @similars} :key={c.id} class="clip-card" phx-click="pick_main" phx-value-clip_id={c.id} style="cursor: pointer">
-        <!-- Thumb: hover-play only -->
-        <video id={"thumb-#{c.id}"} phx-hook="HoverPlay" muted loop src={clip_url(c)} />
-
-        <div class="clip-info">
-          #{c.id} — {pct}%
-        </div>
-      </div>
-    </div>
+  <section class="similar-grid" aria-label="Similar video clips">
+    <ul class="similar-grid-container" role="list">
+      <li :for={%{clip: c, similarity_pct: pct} <- @similars} :key={c.id} class="clip-card">
+        <button type="button" phx-click="pick_main" phx-value-clip_id={c.id} class="clip-button" aria-label={"Select
+          clip #{c.id} with #{pct}% similarity as main clip"}>
+          <figure aria-label={"Video clip #{c.id} thumbnail"}>
+            <!-- Thumb: hover-play only -->
+            <video id={"thumb-#{c.id}"} phx-hook="HoverPlay" muted loop src={clip_url(c)} aria-label={"Thumbnail preview
+              for clip #{c.id}"} />
+            <figcaption class="clip-info">
+              #{c.id} — {pct}%
+            </figcaption>
+          </figure>
+        </button>
+      </li>
+    </ul>
 
     <!-- Pagination controls -->
-    <div class="actions mt-4">
-      <button phx-click="paginate" phx-value-page={@page - 1} disabled={@page==1}>
+    <nav class="pagination" aria-label="Similar clips pagination">
+      <button type="button" phx-click="paginate" phx-value-page={@page - 1} disabled={@page==1}
+        aria-label="Go to previous page">
         ◀ Prev
       </button>
 
-      <span>Page {@page}</span>
+      <span role="status" aria-live="polite" aria-label={"Currently on page {@page}"}>Page {@page}</span>
 
-      <button phx-click="paginate" phx-value-page={@page + 1} disabled={length(@similars) < @per_page}>
+      <button type="button" phx-click="paginate" phx-value-page={@page + 1} disabled={length(@similars) < @per_page}
+        aria-label="Go to next page">
         Next ▶
       </button>
-    </div>
+    </nav>
   </section>
   <% else %>
-    <p>No clips found for those filters.</p>
+    <section class="no-results" role="status" aria-live="polite">
+      <p>No clips found for those filters.</p>
+    </section>
     <% end %>
