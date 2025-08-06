@@ -91,4 +91,51 @@ defmodule Heaters.Review.Queue do
     |> select([c], count("*"))
     |> Repo.one()
   end
+
+  @doc """
+  Get a specific clip if it's in pending_review state.
+  
+  Returns nil if the clip doesn't exist or isn't eligible for review.
+  Used for URL-based navigation to specific clips.
+  """
+  @spec get_clip_if_pending_review(integer()) :: Clip.t() | nil
+  def get_clip_if_pending_review(clip_id) do
+    from(c in Clip,
+      where: c.id == ^clip_id and c.ingest_state == :pending_review,
+      preload: [:source_video, :clip_artifacts]
+    )
+    |> Repo.one()
+  end
+
+  @doc """
+  Get clips before a specific clip ID in review order.
+  
+  Used for building history when navigating to a specific clip via URL.
+  """
+  @spec clips_before(integer(), integer()) :: list(Clip.t())
+  def clips_before(clip_id, limit) do
+    from(c in Clip,
+      where: c.ingest_state == :pending_review and c.id < ^clip_id,
+      order_by: [desc: c.id],
+      limit: ^limit,
+      preload: [:source_video, :clip_artifacts]
+    )
+    |> Repo.all()
+  end
+
+  @doc """
+  Get clips after a specific clip ID in review order.
+  
+  Used for building future queue when navigating to a specific clip via URL.
+  """
+  @spec clips_after(integer(), integer()) :: list(Clip.t())
+  def clips_after(clip_id, limit) do
+    from(c in Clip,
+      where: c.ingest_state == :pending_review and c.id > ^clip_id,
+      order_by: [asc: c.id],
+      limit: ^limit,
+      preload: [:source_video, :clip_artifacts]
+    )
+    |> Repo.all()
+  end
 end

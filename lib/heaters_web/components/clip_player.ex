@@ -119,15 +119,13 @@ defmodule HeatersWeb.ClipPlayer do
             <p role="alert">Your browser doesn't support HTML5 video playback. Please update your browser or use a modern browser that supports HTML5 video.</p>
           </video>
 
-          <section class="clip-player-loading" style="display: none;" role="status" aria-live="polite" aria-label="Video loading status">
-            <div class="spinner" role="progressbar" aria-label="Loading video content"></div>
-            <p class="loading-text">Loading clip...</p>
+          <section class="clip-player-loading" style="display: none;" role="status" aria-live="polite" aria-label="Video loading">
+            <div class="spinner" role="progressbar" aria-label="Loading video"></div>
           </section>
 
         <% @player_type == "loading" -> %>
-          <section class="video-player-loading" role="status" aria-live="polite" aria-label="Video generation status">
-            <div class="spinner" role="progressbar" aria-label="Generating video clip"></div>
-            <p class="loading-text">Generating temp clip...</p>
+          <section class="video-player-loading" role="status" aria-live="polite" aria-label="Video generation">
+            <div class="spinner" role="progressbar" aria-label="Generating video"></div>
           </section>
 
         <% true -> %>
@@ -180,7 +178,7 @@ defmodule HeatersWeb.ClipPlayer do
             });
           } else if (playerType === "loading" && clipInfo.is_loading) {
             // Show loading state for clips being generated
-            this.player.showLoading("Generating temp clip...");
+            this.player.showLoading();
           }
 
           // Store current state for comparison on updates
@@ -302,7 +300,7 @@ defmodule HeatersWeb.ClipPlayer do
           this.clipInfo = clipInfo;
 
           if (playerType === 'ffmpeg_stream') {
-            this.showLoading('Loading clip...');
+            this.showLoading();
           }
 
           this.video.src = videoUrl;
@@ -318,7 +316,7 @@ defmodule HeatersWeb.ClipPlayer do
           
           // Show loading immediately for better UX
           if (playerType === 'ffmpeg_stream') {
-            this.showLoading('Loading next clip...');
+            this.showLoading();
           }
           
           await this.loadVideo(videoUrl, playerType, clipInfo);
@@ -327,7 +325,7 @@ defmodule HeatersWeb.ClipPlayer do
         handleLoadStart() {
           console.log('[ClipPlayer] Load started');
           if (this.playerType === 'ffmpeg_stream') {
-            this.showLoading('Loading clip...');
+            this.showLoading();
           }
         }
 
@@ -373,7 +371,7 @@ defmodule HeatersWeb.ClipPlayer do
         handleWaiting() {
           console.log('[ClipPlayer] Waiting for data');
           if (this.playerType === 'ffmpeg_stream') {
-            this.showLoading('Buffering...');
+            this.showLoading();
           }
         }
 
@@ -427,10 +425,9 @@ defmodule HeatersWeb.ClipPlayer do
           }));
         }
 
-        showLoading(message = 'Loading...') {
+        showLoading() {
           if (!this.loadingSpinner) return;
           this.isLoading = true;
-          this.loadingSpinner.querySelector('.loading-text').textContent = message;
           this.loadingSpinner.style.display = 'block';
         }
 

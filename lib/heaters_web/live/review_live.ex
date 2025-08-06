@@ -1,6 +1,6 @@
 defmodule HeatersWeb.ReviewLive do
   use HeatersWeb, :live_view
-  import Phoenix.LiveView, only: [put_flash: 3, clear_flash: 1, push_event: 3]
+  import Phoenix.LiveView, only: [put_flash: 3, clear_flash: 1, push_event: 3, push_patch: 2]
   alias Phoenix.LiveView.ColocatedHook
 
   # Components / helpers
@@ -25,22 +25,55 @@ defmodule HeatersWeb.ReviewLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    clips = ClipReview.next_pending_review_clips(@prefetch)
-
     socket =
       socket
       |> assign(flash_action: nil)
 
+    {:ok, socket}
+  end
+
+  @impl true
+  def handle_params(params, _url, socket) do
+    clip_id = params["clip"]
+    prefetch_size = String.to_integer(params["prefetch"] || "#{@prefetch}")
+
+    socket =
+      case clip_id do
+        nil ->
+          # No specific clip requested - load default queue
+          load_default_queue(socket, prefetch_size)
+
+        clip_id_str when is_binary(clip_id_str) ->
+          # Specific clip requested - center queue around it
+          case Integer.parse(clip_id_str) do
+            {clip_id, ""} ->
+              load_queue_for_clip(socket, clip_id, prefetch_size)
+
+            _ ->
+              # Invalid clip ID - fall back to default
+              load_default_queue(socket, prefetch_size)
+          end
+      end
+
+    {:noreply, socket}
+  end
+
+  # -------------------------------------------------------------------------
+  # Queue loading helpers
+  # -------------------------------------------------------------------------
+
+  defp load_default_queue(socket, prefetch_size) do
+    clips = ClipReview.next_pending_review_clips(prefetch_size)
+
     case clips do
       [] ->
-        {:ok,
-         assign(socket,
-           page_state: :empty,
-           current: nil,
-           future: [],
-           history: [],
-           temp_clip: %{}
-         )}
+        assign(socket,
+          page_state: :empty,
+          current: nil,
+          future: [],
+          history: [],
+          temp_clip: %{}
+        )
 
       [cur | fut] ->
         # Subscribe to temp clip events for all clips
@@ -53,15 +86,48 @@ defmodule HeatersWeb.ReviewLive do
         # Trigger background prefetch for next clips
         trigger_background_prefetch([cur | Enum.take(fut, 2)])
 
-        {:ok,
-         socket
-         |> assign(
-           current: cur,
-           future: fut,
-           history: [],
-           page_state: :reviewing,
-           temp_clip: %{}
-         )}
+        assign(socket,
+          current: cur,
+          future: fut,
+          history: [],
+          page_state: :reviewing,
+          temp_clip: %{}
+        )
+    end
+  end
+
+  defp load_queue_for_clip(socket, target_clip_id, prefetch_size) do
+    # Try to load the specific clip first
+    case ClipReview.get_clip_if_pending_review(target_clip_id) do
+      nil ->
+        # Clip not found or not in pending_review state - fall back to default
+        load_default_queue(socket, prefetch_size)
+
+      target_clip ->
+        # Load clips around the target clip (before and after)
+        before_count = div(prefetch_size, 3)  # ~1/3 for history
+        after_count = prefetch_size - before_count - 1  # rest for future
+
+        history_clips = ClipReview.clips_before(target_clip_id, before_count)
+        future_clips = ClipReview.clips_after(target_clip_id, after_count)
+
+        # Subscribe to temp clip events for all clips
+        all_clips = [target_clip | history_clips ++ future_clips]
+
+        Enum.each(all_clips, fn clip ->
+          Phoenix.PubSub.subscribe(Heaters.PubSub, "clips:#{clip.id}")
+        end)
+
+        # Trigger background prefetch for current and next few clips
+        trigger_background_prefetch([target_clip | Enum.take(future_clips, 2)])
+
+        assign(socket,
+          current: target_clip,
+          future: future_clips,
+          history: Enum.reverse(history_clips),
+          page_state: :reviewing,
+          temp_clip: %{}
+        )
     end
   end
 
@@ -81,6 +147,9 @@ defmodule HeatersWeb.ReviewLive do
       |> advance_queue()
       |> refill_future()
       |> put_flash(:info, "#{flash_verb(action)} clip #{clip.id}")
+
+    # Update URL to reflect new current clip
+    socket = update_url_for_current_clip(socket)
 
     {:noreply, persist_async(socket, clip.id, action)}
   end
@@ -110,6 +179,9 @@ defmodule HeatersWeb.ReviewLive do
       )
       |> refill_future()
       |> clear_flash()
+
+    # Update URL to reflect undone current clip
+    socket = update_url_for_current_clip(socket)
 
     {:noreply, persist_async(socket, prev.id, "undo")}
   end
@@ -373,6 +445,20 @@ defmodule HeatersWeb.ReviewLive do
       ) do
     # Send error event to JavaScript hook
     {:noreply, push_event(socket, "temp_clip_error", %{clip_id: clip_id, error: error})}
+  end
+
+  # -------------------------------------------------------------------------
+  # URL management helpers  
+  # -------------------------------------------------------------------------
+
+  defp update_url_for_current_clip(%{assigns: %{current: nil}} = socket) do
+    # No current clip - navigate to base review URL
+    push_patch(socket, to: ~p"/review")
+  end
+
+  defp update_url_for_current_clip(%{assigns: %{current: clip}} = socket) do
+    # Update URL to reflect current clip
+    push_patch(socket, to: ~p"/review?#{%{clip: clip.id}}")
   end
 
   # -------------------------------------------------------------------------
