@@ -193,13 +193,13 @@ defmodule Heaters.Storage.S3 do
   - `opts`: Optional keyword list with options
     - `:operation_name`: String to include in log messages (defaults to "S3")
     - `:content_type`: MIME type for the file (auto-detected if not provided)
-    - `:storage_class`: S3 storage class ("STANDARD", "GLACIER", etc.)
+    - `:storage_class`: S3 storage class ("STANDARD", "STANDARD_IA", etc.)
 
   ## Examples
 
       S3.upload_file("/tmp/video.mp4", "clips/new_video.mp4")
       S3.upload_file("/tmp/keyframe.jpg", "artifacts/keyframe.jpg", operation_name: "Keyframe")
-      S3.upload_file("/tmp/master.mkv", "masters/master.mkv", storage_class: "GLACIER")
+      S3.upload_file("/tmp/master.mp4", "masters/master.mp4", storage_class: "STANDARD")
 
   ## Returns
   - `{:ok, s3_key}` on success
@@ -482,14 +482,14 @@ defmodule Heaters.Storage.S3 do
   - `s3_key`: S3 key where the file should be stored (without leading /)
   - `opts`: Optional keyword list with options
     - `:operation_name`: String to include in log messages (defaults to "S3Upload")
-    - `:storage_class`: S3 storage class ("STANDARD", "GLACIER", etc.)
+    - `:storage_class`: S3 storage class ("STANDARD", "STANDARD_IA", etc.)
     - `:timeout`: Upload timeout in milliseconds (defaults to 30 minutes)
 
   ## Examples
 
-      S3.upload_file_with_progress("/tmp/large_video.mp4", "masters/video.mkv")
-      S3.upload_file_with_progress("/tmp/master.mkv", "masters/master.mkv",
-                                   storage_class: "GLACIER", timeout: :timer.minutes(45))
+      S3.upload_file_with_progress("/tmp/large_video.mp4", "masters/video.mp4")
+      S3.upload_file_with_progress("/tmp/master.mp4", "masters/master.mp4",
+                                   storage_class: "STANDARD", timeout: :timer.minutes(45))
 
   ## Returns
   - `{:ok, s3_key}` on success

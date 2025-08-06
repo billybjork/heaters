@@ -47,7 +47,7 @@ def run_preprocess(source_video_path: str, source_video_id: int, video_title: st
     Returns:
         {
             "status": "success",
-            "master_path": "masters/video_123_master.mkv",
+            "master_path": "masters/video_123_master.mp4",
             "proxy_path": "review_proxies/video_123_proxy.mp4", 
             "keyframe_offsets": [0, 150, 300, ...],
             "metadata": {
@@ -88,7 +88,7 @@ def run_preprocess(source_video_path: str, source_video_id: int, video_title: st
             # in lib/heaters/storage/pipeline_cache/persist_cache/worker.ex:generate_expected_s3_path/2
             # to ensure S3 paths are consistent between preprocessing and persistence stages
             sanitized_title = sanitize_filename(video_title)
-            master_s3_key = f"masters/{sanitized_title}_{source_video_id}_master.mkv"
+            master_s3_key = f"masters/{sanitized_title}_{source_video_id}_master.mp4"
             proxy_s3_key = f"proxies/{sanitized_title}_{source_video_id}_proxy.mp4"
             
             # Handle proxy creation/reuse
@@ -107,7 +107,7 @@ def run_preprocess(source_video_path: str, source_video_id: int, video_title: st
             # Handle master creation
             master_local = None
             if not skip_master:
-                master_local = temp_dir_path / "master.mkv"
+                master_local = temp_dir_path / "master.mp4"
                 create_master(local_source_path, master_local, metadata, master_args)
             
             # Handle upload vs temp cache
@@ -150,7 +150,7 @@ def run_preprocess(source_video_path: str, source_video_id: int, video_title: st
                 upload_to_s3(proxy_local, proxy_s3_key, storage_class="STANDARD")
                 
                 if master_local and master_local.exists():
-                    upload_to_s3(master_local, master_s3_key, storage_class="GLACIER")
+                    upload_to_s3(master_local, master_s3_key, storage_class="STANDARD")
                 
                 # Return success result
                 result = {

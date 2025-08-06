@@ -8,13 +8,13 @@ defmodule Heaters.Processing.Render.Export.Worker do
   ## Storage Strategy & Quality Decision
 
   **Why Proxy Instead of Master:**
-  - **Higher Quality**: Proxy uses CRF 20 vs old final_export CRF 23
-  - **Instant Access**: Proxy in S3 Standard vs master in S3 Glacier
+  - **Optimized for Review**: Proxy uses CRF 28, 720p optimized for internal review UI
+  - **Instant Access**: Both proxy and master in S3 Standard for instant access
   - **Stream Copy**: No re-encoding = zero quality loss + 10x faster
-  - **Cost Optimization**: Master in Glacier saves 95% storage costs
-  - **Perfect for Streaming**: CRF 20 all-I-frame is ideal for Cloudflare Stream ingestion
+  - **File Size**: Proxy much smaller than master for efficient temp clips
+  - **Perfect for Review**: CRF 28 all-I-frame is ideal for review workflow
 
-  **Master**: Reserved for true archival/compliance, stored in S3 Glacier
+  **Master**: High-quality H.264 archival stored in S3 Standard
   **Proxy**: Dual-purpose for review AND final export source
 
   ## Workflow
@@ -44,7 +44,7 @@ defmodule Heaters.Processing.Render.Export.Worker do
   - **10x Faster**: Stream copy vs re-encoding significantly reduces processing time
   - **Zero Quality Loss**: No transcoding artifacts or generational loss
   - **Resource Efficient**: Minimal CPU usage compared to encoding operations
-  - **Instant Availability**: No Glacier retrieval delays (1-12 hours)
+  - **Instant Availability**: Both proxy and master in S3 Standard for consistent access
 
   ## Architecture
 

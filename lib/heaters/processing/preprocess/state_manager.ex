@@ -63,7 +63,7 @@ defmodule Heaters.Processing.Preprocess.StateManager do
 
       attrs = %{
         proxy_filepath: "review_proxies/video_123_proxy.mp4",
-        master_filepath: "masters/video_123_master.mkv",
+        master_filepath: "masters/video_123_master.mp4",
         keyframe_offsets: [0, 1500, 3000]
       }
       {:ok, video} = StateManager.complete_preprocessing(123, attrs)

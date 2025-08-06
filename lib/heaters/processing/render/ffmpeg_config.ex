@@ -6,21 +6,26 @@ defmodule Heaters.Processing.Render.FFmpegConfig do
   consistent, maintainable, and easy to configure across the entire pipeline.
 
   Each profile is optimized for its specific use case:
-  - **master**: Lossless archival quality stored in S3 Glacier (cold storage)
-  - **proxy**: All-I-frame seeking optimization for review AND final export source
+  - **master**: High-quality archival with pragmatic storage efficiency (CRF 18 H.264)
+  - **proxy**: Minimal file size with I-frame seeking for internal review UI
   - **download_normalization**: Lightweight fixing of merge issues
   - **keyframe_extraction**: Efficient single-frame extraction
 
   ## Storage Strategy
 
-  **Master**: Stored in S3 Glacier for cost-effective archival (95% storage savings).
-  Used only for true archival/compliance purposes, not regular exports.
+  **Master**: High-quality H.264 (CRF 18) stored in S3 Standard for instant access.
+  Balances archival quality with storage costs—visually lossless with reasonable file sizes.
+  Much more efficient than lossless formats while preserving excellent quality.
 
-  **Proxy**: Stored in S3 Standard for instant access. High quality (CRF 20) all-I-frame
-  encoding serves dual purpose: efficient review AND superior export source.
+  **Proxy**: Optimized for internal review UI with significant file size reduction:
+  - Resolution capped at 720p for smaller files
+  - CRF 28 for acceptable quality with major size reduction
+  - Fast preset for quick encoding during temp clip generation
+  - Optional audio muting for ultimate efficiency
+  - All I-frame encoding preserved for frame-by-frame navigation
 
   **Export Strategy**: Final clips are created via FFmpeg stream copy from proxy,
-  providing zero quality loss and 10x faster processing with superior CRF 20 quality.
+  providing fast processing optimized for internal review workflows.
 
   ## Usage in Elixir
 
@@ -51,6 +56,7 @@ defmodule Heaters.Processing.Render.FFmpegConfig do
     - `:preset`: Override preset
     - `:audio_bitrate`: Override audio bitrate
     - `:threads`: Override thread count
+    - `:no_audio`: Remove audio streams entirely (sets -an flag)
 
   ## Examples
 
@@ -61,7 +67,10 @@ defmodule Heaters.Processing.Render.FFmpegConfig do
       []
 
       iex> FFmpegConfig.get_args(:proxy, crf: 25)
-      ["-c:v", "libx264", "-preset", "medium", "-crf", "25", ...]
+      ["-c:v", "libx264", "-preset", "fast", "-crf", "25", ...]
+
+      iex> FFmpegConfig.get_args(:proxy, no_audio: true)
+      ["-c:v", "libx264", "-preset", "fast", "-crf", "28", "-an", ...]
   """
   @spec get_args(atom(), keyword()) :: [String.t()]
   def get_args(profile, opts \\ []) do
@@ -108,7 +117,7 @@ defmodule Heaters.Processing.Render.FFmpegConfig do
 
       iex> FFmpegConfig.should_skip_master?(skip_master: true)
       true
-      
+
       iex> FFmpegConfig.should_skip_master?([])
       false
   """
@@ -153,45 +162,54 @@ defmodule Heaters.Processing.Render.FFmpegConfig do
   @spec profiles() :: map()
   defp profiles do
     %{
-      # Lossless archival master
+      # High-quality archival master optimized for pragmatic storage costs
       master: %{
-        purpose: "Lossless archival master",
-        optimization: "Maximum quality preservation",
+        purpose: "High-quality archival master optimized for storage efficiency",
+        optimization: "Visually lossless quality with reasonable file sizes",
         video: %{
-          codec: "ffv1",
-          level: "3",
-          # Range coder for better compression
-          coder: "1",
-          # Large context for better compression
-          context: "1",
-          # All intraframes
-          gop_size: "1",
-          # Multi-threading
-          slices: "4",
-          # Error detection
-          slicecrc: "1"
+          codec: "libx264",
+          # Balanced encoding speed
+          preset: "medium",
+          # Visually lossless for most content, much smaller than FFV1
+          crf: "18",
+          pix_fmt: "yuv420p",
+          # Use GOP for better compression (not all I-frames like proxy)
+          gop_size: "250",
+          # Enable B-frames for better compression
+          bframes: "3",
+          # High profile for better compression
+          profile: "high",
+          level: "4.1"
         },
         audio: %{
-          # Lossless audio
-          codec: "pcm_s16le"
+          # High quality audio, not lossless
+          codec: "aac",
+          bitrate: "256k"
         },
-        # MKV container
-        container: "matroska",
+        # MP4 container for universal compatibility
+        container: "mp4",
         threading: %{
           threads: "auto"
+        },
+        web_optimization: %{
+          # Basic optimization for potential streaming
+          movflags: "+faststart"
         }
       },
 
-      # All-I-frame proxy for efficient CloudFront streaming
+      # Optimized proxy for internal review UI with minimal file size
       proxy: %{
-        purpose: "All-I-frame proxy for efficient CloudFront streaming and export",
-        optimization: "Seeking performance and visual quality",
+        purpose:
+          "Optimized proxy for internal review UI with minimal file size and I-frame seeking",
+        optimization: "Minimal file size while preserving frame-by-frame navigation",
         video: %{
           codec: "libx264",
-          # Balance encoding speed vs compression
-          preset: "medium",
-          # High quality (18-23 range)
-          crf: "20",
+          # Fast encoding for temp clip generation
+          preset: "fast",
+          # Higher CRF for smaller files (acceptable quality loss for internal review)
+          crf: "28",
+          # Reduced resolution for smaller files (720p max for review)
+          scale: "min(1280\\,iw):min(720\\,ih):force_original_aspect_ratio=decrease",
           pix_fmt: "yuv420p",
           # All intraframes for perfect seeking
           gop_size: "1",
@@ -201,21 +219,23 @@ defmodule Heaters.Processing.Render.FFmpegConfig do
           sc_threshold: "0",
           # Force baseline profile for universal compatibility
           profile: "baseline",
-          level: "3.0"
+          level: "3.1",
+          # Optimize for speed over compression efficiency
+          tune: "fastdecode"
         },
         audio: %{
           codec: "aac",
-          # Higher quality for review
-          bitrate: "192k"
+          # Lower quality audio for review (can be muted via no_audio option)
+          bitrate: "64k"
         },
         container: "mp4",
         web_optimization: %{
-          # CloudFront optimization: faststart for instant seeking + fragmentation for range requests
-          movflags: "+faststart+frag_keyframe+empty_moov"
+          # Optimize for instant playback and temp clip generation
+          movflags: "+faststart"
         }
       },
 
-      # Lightweight normalization to fix yt-dlp merge issues  
+      # Lightweight normalization to fix yt-dlp merge issues
       download_normalization: %{
         purpose: "Lightweight normalization to fix yt-dlp merge issues",
         optimization: "Minimal re-encoding to fix merge problems",
@@ -289,6 +309,7 @@ defmodule Heaters.Processing.Render.FFmpegConfig do
     |> maybe_update_preset(opts[:preset])
     |> maybe_update_audio_bitrate(opts[:audio_bitrate])
     |> maybe_update_threads(opts[:threads])
+    |> maybe_disable_audio(opts[:no_audio])
   end
 
   defp maybe_update_crf(config, nil), do: config
@@ -315,11 +336,21 @@ defmodule Heaters.Processing.Render.FFmpegConfig do
     put_in(config, [:threading, :threads], to_string(threads))
   end
 
+  defp maybe_disable_audio(config, nil), do: config
+  defp maybe_disable_audio(config, false), do: config
+
+  defp maybe_disable_audio(config, true) do
+    # Remove audio configuration and set no_audio flag
+    config
+    |> Map.delete(:audio)
+    |> Map.put(:no_audio, true)
+  end
+
   @spec build_ffmpeg_args(map()) :: [String.t()]
   defp build_ffmpeg_args(config) do
     []
     |> add_video_args(config.video)
-    |> add_audio_args(config[:audio])
+    |> add_audio_args(config[:audio], config[:no_audio])
     |> add_container_args(config.container)
     |> add_web_optimization_args(config[:web_optimization])
     |> add_threading_args(config[:threading])
@@ -330,12 +361,15 @@ defmodule Heaters.Processing.Render.FFmpegConfig do
     |> add_if_present(["-c:v", video_config.codec])
     |> add_if_present(["-preset", video_config[:preset]])
     |> add_if_present(["-crf", video_config[:crf]])
+    |> add_scale_filter(video_config[:scale])
     |> add_if_present(["-pix_fmt", video_config[:pix_fmt]])
     |> add_if_present(["-g", video_config[:gop_size]])
     |> add_if_present(["-keyint_min", video_config[:keyint_min]])
     |> add_if_present(["-sc_threshold", video_config[:sc_threshold]])
+    |> add_if_present(["-bf", video_config[:bframes]])
     |> add_if_present(["-profile:v", video_config[:profile]])
     |> add_if_present(["-level", video_config[:level]])
+    |> add_if_present(["-tune", video_config[:tune]])
     |> add_if_present(["-coder", video_config[:coder]])
     |> add_if_present(["-context", video_config[:context]])
     |> add_if_present(["-slices", video_config[:slices]])
@@ -344,13 +378,17 @@ defmodule Heaters.Processing.Render.FFmpegConfig do
     |> add_if_present(["-q:v", video_config[:quality]])
   end
 
-  defp add_audio_args(args, nil), do: args
+  defp add_audio_args(args, nil, no_audio), do: maybe_add_no_audio(args, no_audio)
+  defp add_audio_args(args, _audio_config, true), do: args ++ ["-an"]
 
-  defp add_audio_args(args, audio_config) do
+  defp add_audio_args(args, audio_config, _no_audio) do
     args
     |> add_if_present(["-c:a", audio_config.codec])
     |> add_if_present(["-b:a", audio_config[:bitrate]])
   end
+
+  defp maybe_add_no_audio(args, true), do: args ++ ["-an"]
+  defp maybe_add_no_audio(args, _), do: args
 
   defp add_container_args(args, container) do
     args ++ ["-f", container]
@@ -371,6 +409,12 @@ defmodule Heaters.Processing.Render.FFmpegConfig do
   defp add_threading_args(args, threading_opts) do
     args
     |> add_if_present(["-threads", threading_opts[:threads]])
+  end
+
+  defp add_scale_filter(args, nil), do: args
+
+  defp add_scale_filter(args, scale) when is_binary(scale) do
+    args ++ ["-vf", "scale=#{scale}"]
   end
 
   defp add_if_present(args, addition) when is_list(addition) do

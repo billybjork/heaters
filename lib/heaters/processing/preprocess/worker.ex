@@ -44,7 +44,7 @@ defmodule Heaters.Processing.Preprocess.Worker do
   # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
   #
   # JUSTIFICATION: PyRunner requires DEV_DATABASE_URL and DEV_S3_BUCKET_NAME environment
-  # variables. When not set, PyRunner always fails, making success patterns and their 
+  # variables. When not set, PyRunner always fails, making success patterns and their
   # dependent functions unreachable. In configured environments, these will succeed.
   @dialyzer {:nowarn_function,
              [
@@ -198,7 +198,7 @@ defmodule Heaters.Processing.Preprocess.Worker do
         proxy_s3_key = generate_s3_key(source_video, "proxy", ".mp4")
 
         master_s3_key =
-          if skip_master, do: nil, else: generate_s3_key(source_video, "master", ".mkv")
+          if skip_master, do: nil, else: generate_s3_key(source_video, "master", ".mp4")
 
         # Store cache info in job args for final upload stage
         cache_info = %{

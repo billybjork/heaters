@@ -117,8 +117,8 @@ if config_env() != :test and not is_database_operation do
   proxy_cdn_domain = System.get_env("PROXY_CDN_DOMAIN") || current_cloudfront_domain
   config :heaters, :proxy_cdn_domain, proxy_cdn_domain
 
-  # Configure storage classes for cost optimization
-  master_storage_class = System.get_env("MASTER_STORAGE_CLASS", "GLACIER")
+  # Configure storage classes for performance and cost balance
+  master_storage_class = System.get_env("MASTER_STORAGE_CLASS", "STANDARD")
   proxy_storage_class = System.get_env("PROXY_STORAGE_CLASS", "STANDARD")
 
   config :heaters, :master_storage_class, master_storage_class

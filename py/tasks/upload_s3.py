@@ -27,7 +27,7 @@ def run_upload_s3(
     Args:
         local_path: Path to the local file to upload
         s3_key: S3 key where the file should be stored
-        storage_class: S3 storage class (STANDARD, GLACIER, etc.)
+        storage_class: S3 storage class (STANDARD, STANDARD_IA, etc.)
         **kwargs: Additional parameters (unused, for compatibility)
     
     Returns:

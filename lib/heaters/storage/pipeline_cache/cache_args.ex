@@ -19,14 +19,14 @@ defmodule Heaters.Storage.PipelineCache.CacheArgs do
   ## Examples
 
       args = %{
-        source_video_path: "source_videos/video.mp4",
+        source_video_path: "originals/video.mp4",
         proxy_video_path: "proxies/video_proxy.mp4"
       }
 
       resolved = CacheArgs.resolve_cached_paths(args)
       # Returns:
       # %{
-      #   source_video_path: "source_videos/video.mp4",
+      #   source_video_path: "originals/video.mp4",
       #   source_video_local_path: "/tmp/cached_video.mp4",  # if cached
       #   proxy_video_path: "proxies/video_proxy.mp4"
       # }

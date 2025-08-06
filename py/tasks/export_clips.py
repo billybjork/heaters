@@ -1,32 +1,18 @@
 """
-Export Clips Task for Video Pipeline
+Export Clips Task
 
-Handles final export of temp clips to exported clips using the proxy.
-Creates MP4 files optimized for streaming/delivery using stream copy for maximum quality and speed.
+Processes clip export requests by extracting segments from proxy files using FFmpeg stream copy.
 
-## Storage Strategy & Architecture Decision
+Args:
+    proxy_path: S3 path to source proxy file  
+    clips_data: List of clip specifications with cut points
+    source_video_id: Database ID for logging/tracking
+    video_title: Title for generating output filenames
 
-**Why Proxy Instead of Master:**
+Returns:
+    Export results with output paths and metadata for each processed clip.
 
-1. **Quality Advantage**: Proxy (CRF 20) > old final_export (CRF 23)
-2. **Access Speed**: Proxy (S3 Standard) vs master (S3 Glacier = 1-12hr retrieval)
-3. **Processing Speed**: Stream copy = 10x faster than re-encoding
-4. **Quality Preservation**: Zero transcoding artifacts or generational loss
-5. **Cost Optimization**: Master in Glacier saves 95% storage costs
-6. **Streaming Ready**: All-I-frame CRF 20 perfect for Cloudflare Stream ingestion
-
-**Storage Architecture:**
-- **Master** (S3 Glacier): Lossless FFV1/MKV for archival/compliance only
-- **Proxy** (S3 Standard): CRF 20 all-I-frame H.264 for review AND export
-- **Final Clips** (S3 Standard): Stream-copied from proxy, ready for CDN
-
-**Export Method:**
-Uses FFmpeg stream copy (`-c copy`) with S3 presigned URLs for optimal I/O efficiency:
-- Direct byte-range access to proxy files for efficient processing
-- Leverages :moov atom positioning (faststart) for instant seeking
-- Preserves exact quality while achieving 10x performance improvement
-
-This is the final stage of the clip pipeline - optimized for I/O, quality and performance.
+Uses FFmpeg stream copy for fast, lossless segment extraction from proxy files.
 """
 
 import json
@@ -77,9 +63,9 @@ def run_export_clips(proxy_path: str, clips_data: list, source_video_id: int, vi
             # Generate presigned URL for efficient access
             proxy_url = generate_presigned_url(proxy_path, expires_in=3600)
             
-            # Extract video metadata from proxy (still needs local access for reliable metadata)
+            # Extract video metadata from proxy for processing
             local_proxy = temp_dir_path / "proxy.mp4"  
-            download_from_s3(proxy_path, local_proxy)  # Only for metadata extraction
+            download_from_s3(proxy_path, local_proxy)
             metadata = extract_video_metadata(local_proxy)
             logger.info(f"Proxy metadata: {metadata}")
             
@@ -88,7 +74,7 @@ def run_export_clips(proxy_path: str, clips_data: list, source_video_id: int, vi
             for clip_data in clips_data:
                 try:
                     exported_clip = export_single_clip(
-                        proxy_url,  # Use presigned URL instead of local file
+                        proxy_url,
                         clip_data, 
                         temp_dir_path, 
                         video_title, 
@@ -111,11 +97,7 @@ def run_export_clips(proxy_path: str, clips_data: list, source_video_id: int, vi
                     "source_video_id": source_video_id,
                     "total_clips_exported": len(exported_clips),
                     "proxy_metadata": metadata,
-                    "export_settings": {
-                        "method": "stream_copy",
-                        "source": "proxy",
-                        "note": "No re-encoding for maximum quality and speed"
-                    }
+                    "export_method": "stream_copy"
                 }
             }
             
@@ -129,18 +111,9 @@ def run_export_clips(proxy_path: str, clips_data: list, source_video_id: int, vi
 
 def export_single_clip(proxy_url: str, clip_data: dict, temp_dir: Path, video_title: str, metadata: dict) -> Dict[str, Any]:
     """
-    Export a single clip from the proxy using cut points with stream copy for maximum quality.
+    Extract a single clip segment from proxy file using FFmpeg stream copy.
     
-    Uses FFmpeg stream copy with S3 presigned URL for optimal I/O efficiency:
-    - Direct access to S3 via presigned URL (no full download)
-    - Leverages :moov atom at file start (faststart) for instant seeking  
-    - Preserves exact quality from proxy (CRF 20)
-    - 10x faster than re-encoding approaches
-    - Zero transcoding artifacts or generational loss
-    - Perfect for Cloudflare Stream ingestion
-    
-    The proxy's all-I-frame structure ensures clean cut points
-    without GOP boundary issues or seek artifacts.
+    Uses presigned URL for direct S3 access and stream copy for fast, lossless extraction.
     """
     
     clip_id = clip_data["clip_id"]
@@ -159,14 +132,14 @@ def export_single_clip(proxy_url: str, clip_data: dict, temp_dir: Path, video_ti
     local_output = temp_dir / f"{clip_identifier}.mp4"
     s3_output_key = f"final_clips/{sanitized_title}_{clip_identifier}.mp4"
     
-    # Build FFmpeg command - use presigned URL with stream copy for optimal I/O efficiency
+    # Build FFmpeg command for stream copy extraction
     cmd = [
-        "ffmpeg", "-i", proxy_url,       # Direct S3 access via presigned URL
-        "-ss", str(start_time),           # Start time (leverages :moov atom for instant seek)
-        "-t", str(duration),              # Duration (not end time)
-        "-map", "0",                      # Map all streams
-        "-c", "copy",                     # Stream copy - no re-encoding
-        "-avoid_negative_ts", "make_zero", # Fix timestamp issues
+        "ffmpeg", "-i", proxy_url,       
+        "-ss", str(start_time),           
+        "-t", str(duration),              
+        "-map", "0",                      
+        "-c", "copy",                     
+        "-avoid_negative_ts", "make_zero", 
         "-y", str(local_output)
     ]
     

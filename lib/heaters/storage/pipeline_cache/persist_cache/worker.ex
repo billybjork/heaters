@@ -268,7 +268,7 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
               String.contains?(s3_destination, "/master") ->
                 Map.put(acc, :master_filepath, s3_destination)
 
-              String.contains?(s3_destination, "source_videos") ->
+              String.contains?(s3_destination, "originals") ->
                 Map.put(acc, :filepath, s3_destination)
 
               true ->
@@ -384,7 +384,7 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
   # ```python
   # sanitized_title = sanitize_filename(video_title)
   # proxy_s3_key = f"proxies/{sanitized_title}_{source_video_id}_proxy.mp4"
-  # master_s3_key = f"masters/{sanitized_title}_{source_video_id}_master.mkv"
+  # master_s3_key = f"masters/{sanitized_title}_{source_video_id}_master.mp4"
   # ```
   #
   # The sanitization logic must be identical between Python and Elixir to ensure
@@ -398,7 +398,7 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
 
     case file_type do
       "proxy" -> "proxies/#{sanitized_title}_#{source_video.id}_proxy.mp4"
-      "master" -> "masters/#{sanitized_title}_#{source_video.id}_master.mkv"
+      "master" -> "masters/#{sanitized_title}_#{source_video.id}_master.mp4"
       _ -> nil
     end
   end

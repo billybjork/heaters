@@ -36,7 +36,7 @@ defmodule Heaters.Storage.S3Adapter do
   # Suppress dialyzer warnings for S3 operations when PyRunner environment is not configured.
   #
   # JUSTIFICATION: These functions call S3.upload_file_with_progress which uses PyRunner.
-  # PyRunner requires DEV_DATABASE_URL and DEV_S3_BUCKET_NAME. When not set, PyRunner 
+  # PyRunner requires DEV_DATABASE_URL and DEV_S3_BUCKET_NAME. When not set, PyRunner
   # always fails, making success patterns and get_file_size calls unreachable.
   # In configured environments, these functions will succeed normally.
   @dialyzer {:nowarn_function, [upload_master: 3, upload_proxy: 3, get_file_size: 1]}
@@ -151,22 +151,22 @@ defmodule Heaters.Storage.S3Adapter do
   end
 
   @doc """
-  Upload master video to cold storage with appropriate storage class.
+  Upload master video to S3 Standard storage for instant access.
 
   ## Examples
 
-      {:ok, result} = S3Adapter.upload_master("/tmp/master.mkv", source_video, "video_123_master.mkv")
+      {:ok, result} = S3Adapter.upload_master("/tmp/master.mp4", source_video, "video_123_master.mp4")
   """
   @spec upload_master(String.t(), map(), String.t()) :: {:ok, map()} | {:error, any()}
   def upload_master(local_video_path, source_video, filename)
       when is_binary(local_video_path) and is_binary(filename) do
     s3_key = "masters/#{filename}"
 
-    # Use GLACIER storage for cost-effective cold storage of archival masters
-    # Master files are typically large, so use progress reporting
+    # Use STANDARD storage for instant access to archival masters
+    # High-quality H.264 masters balance quality and storage efficiency
     case S3.upload_file_with_progress(local_video_path, s3_key,
            operation_name: "Master",
-           storage_class: "GLACIER",
+           storage_class: "STANDARD",
            timeout: :timer.minutes(45)
          ) do
       {:ok, _s3_key} ->
@@ -177,7 +177,7 @@ defmodule Heaters.Storage.S3Adapter do
           metadata: %{
             file_size: file_size,
             filename: filename,
-            storage_class: "GLACIER",
+            storage_class: "STANDARD",
             video_title: source_video.title,
             upload_timestamp: DateTime.utc_now()
           }

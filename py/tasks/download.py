@@ -531,7 +531,7 @@ def generate_s3_key(source_video_id: int, metadata: dict, file_extension: str) -
     sanitized_title = sanitize_filename(video_title)
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     ext = file_extension or '.mp4'
-    return f"source_videos_original/{sanitized_title}_{timestamp}{ext}"
+    return f"originals/{sanitized_title}_{timestamp}{ext}"
 
 
 def handle_temp_cache_storage(final_path: Path, s3_key: str) -> str:

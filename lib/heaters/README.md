@@ -22,7 +22,7 @@ Heaters processes videos through a **cuts-based pipeline**: download → proxy g
 - **Dual-Purpose Proxy**: Single H.264 proxy serves both review and export (eliminates redundant operations)
 - **Cut Points**: Scene detection creates cut boundaries; clips are segments between cuts
 - **Clip Player**: On-demand MP4 generation with perfect timeline and instant playback
-- **Master Archival**: Lossless FFV1/MKV stored in S3 Glacier
+- **Master Archival**: High-quality H.264 stored in S3 Standard for instant access
 
 ### Core Principles
 
