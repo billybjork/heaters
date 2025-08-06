@@ -33,8 +33,17 @@
     box-shadow: 0 2px 4px rgb(0 0 0 / 0.1);
     transition: transform 0.15s ease-in-out;
   }
-  .similar-grid video:hover {
+  
+  /* CSS-first hover-to-play styling */
+  .similar-grid video.css-hover-play {
+    cursor: pointer;
+    /* Video starts paused, JavaScript polyfill handles play/pause */
+  }
+  
+  .similar-grid video.css-hover-play:hover {
     transform: scale(1.03);
+    /* Enhanced visual feedback for hover-play videos */
+    box-shadow: 0 4px 8px rgb(0 0 0 / 0.2);
   }
   
   /* --- Controls row (filters) ------------------------------------------ */

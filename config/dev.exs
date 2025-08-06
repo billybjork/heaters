@@ -104,6 +104,14 @@ config :phoenix, :plug_init_mode, :runtime
 config :phoenix, :format_version, "3.0"
 
 # ───────────────────────────────────────────
+#  Phoenix LiveView 1.1 Debug Features
+# ───────────────────────────────────────────
+config :phoenix_live_view,
+  debug_heex_annotations: true,
+  debug_attributes: true,
+  enable_expensive_runtime_checks: true
+
+# ───────────────────────────────────────────
 #  Oban Configuration
 # ───────────────────────────────────────────
 # Configure Oban for background job processing

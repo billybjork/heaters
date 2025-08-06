@@ -3,23 +3,17 @@
   <form phx-change="filter_changed">
     <select name="filters[model_name]">
       <option value="">All models</option>
-      <%= for mn <- @filter_opts.model_names do %>
-        <option value={mn} selected={mn==@filters.model_name}>{mn}</option>
-        <% end %>
+      <option :for={mn <- @filter_opts.model_names} :key={mn} value={mn} selected={mn==@filters.model_name}>{mn}</option>
     </select>
 
     <select name="filters[generation_strategy]">
       <option value="">All strategies</option>
-      <%= for gs <- @filter_opts.generation_strategies do %>
-        <option value={gs} selected={gs==@filters.generation_strategy}>{gs}</option>
-        <% end %>
+      <option :for={gs <- @filter_opts.generation_strategies} :key={gs} value={gs} selected={gs==@filters.generation_strategy}>{gs}</option>
     </select>
 
     <select name="filters[source_video_id]">
       <option value="">All sources</option>
-      <%= for {id, title} <- @filter_opts.source_videos do %>
-        <option value={id} selected={id==@filters.source_video_id}>{title}</option>
-        <% end %>
+      <option :for={{id, title} <- @filter_opts.source_videos} :key={id} value={id} selected={id==@filters.source_video_id}>{title}</option>
     </select>
 
     <!-- Randomize main clip -->
@@ -43,18 +37,14 @@
   <!-- Similar Clips Grid -->
   <section class="similar-grid">
     <div class="similar-grid-container">
-      <%= for %{clip: c, similarity_pct: pct} <- @similars do %>
-        <!-- Clicking a thumb promotes it to main -->
-        <div class="clip-card" phx-click="pick_main" phx-value-clip_id={c.id} style="cursor: pointer">
+      <div :for={%{clip: c, similarity_pct: pct} <- @similars} :key={c.id} class="clip-card" phx-click="pick_main" phx-value-clip_id={c.id} style="cursor: pointer">
+        <!-- Thumb: hover-play only -->
+        <video id={"thumb-#{c.id}"} phx-hook="HoverPlay" muted loop src={clip_url(c)} />
 
-          <!-- Thumb: hover-play only -->
-          <video id={"thumb-#{c.id}"} phx-hook="HoverPlay" muted loop src={clip_url(c)} />
-
-          <div class="clip-info">
-            #{c.id} — {pct}%
-          </div>
+        <div class="clip-info">
+          #{c.id} — {pct}%
         </div>
-        <% end %>
+      </div>
     </div>
 
     <!-- Pagination controls -->

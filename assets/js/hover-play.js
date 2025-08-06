@@ -1,3 +1,7 @@
+/**
+ * Phoenix LiveView hook for simple video hover-to-play functionality
+ * @type {import("phoenix_live_view").Hook}
+ */
 export const HoverPlay = {
     mounted() {
         this.el.addEventListener("mouseenter", () => {
@@ -11,6 +15,10 @@ export const HoverPlay = {
     }
 };
 
+/**
+ * Phoenix LiveView hook for thumbnail hover preview with temp clip styling
+ * @type {import("phoenix_live_view").Hook}
+ */
 export const ThumbHoverPlayer = {
     mounted() {
         const cfg = JSON.parse(this.el.dataset.player);
@@ -19,6 +27,10 @@ export const ThumbHoverPlayer = {
         this.el.addEventListener("mouseleave", () => this.stop());
     },
 
+    /**
+     * Initialize virtual thumbnail with temp clip preview styling
+     * @param {Object} cfg - Configuration object from data attribute
+     */
     initVirtualThumb(cfg) {
         /* temp clip thumbnail - show static preview */
         const THUMB_W = 160;

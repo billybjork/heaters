@@ -8,11 +8,11 @@ Heaters processes videos through a **cuts-based pipeline**: download → proxy g
 
 ## Technology Stack
 
-- **Backend**: Elixir/Phoenix with LiveView
+- **Backend**: Elixir/Phoenix 1.8+ with LiveView 1.1
 - **Database**: PostgreSQL with pgvector  
 - **Media Processing**: Python (yt-dlp, FFmpeg, OpenCV, PyTorch)
 - **Storage**: AWS S3 with intelligent caching
-- **Frontend**: Clip player with on-demand generation
+- **Frontend**: Phoenix LiveView 1.1 with colocated hooks and single-file components
 
 ## Architecture
 
@@ -68,13 +68,22 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 - **Smart Proxy Reuse**: H.264 ≤1080p content reused directly when suitable
 - **Batch Upload**: All cached files uploaded to S3 only once at pipeline completion
 
-### Clip Player
+### Clip Player (LiveView 1.1 Colocated Hooks)
+- **Single-File Architecture**: JavaScript and Elixir colocated in one component file
 - **Instant Playback**: Small video files vs. complex byte-range streaming
 - **Perfect Timeline**: Shows exact clip duration (e.g., 3.75s) not full video length
 - **Stream Copy**: Zero re-encoding ensures faster generation with zero quality loss
 - **Universal Compatibility**: Works offline, all browsers, mobile optimized
 - **Smart Cleanup**: Scheduled maintenance with LRU eviction and disk space monitoring
 - **Reactive Updates**: Phoenix LiveView reactive pattern eliminates manual refresh requirements
+- **Automatic Namespacing**: Hook names prefixed with module for collision prevention
+
+### Frontend Architecture (LiveView 1.1)
+- **Colocated Hooks**: JavaScript code embedded directly in Phoenix components
+- **Change Tracking**: `:key` attributes for optimized list rendering performance
+- **Debug Attributes**: Enhanced development experience with `data-phx-loc` annotations
+- **LazyHTML**: Modern CSS selector support (`:is()`, `:has()`, etc.) in tests
+- **Single-File Components**: Eliminates separate JavaScript files for better maintainability
 
 ### Production Reliability
 - **Resumable Processing**: All stages support automatic resume after interruptions
@@ -95,6 +104,9 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 ⚠️ **CRITICAL**: All configuration centralized (download, encoding, S3 paths) with built-in validation to prevent quality-reducing mistakes (4K→360p) and path inconsistencies. Review module documentation before modifying.
 
 ### Development Environment
+- **LiveView 1.1**: Phoenix 1.8+ with colocated hooks compilation support
+- **ESBuild Configuration**: Updated for colocated hooks with `--alias:@=.` and NODE_PATH
+- **Debug Features**: `debug_attributes: true` for enhanced development annotations
 - **Python Integration**: Requires `DEV_DATABASE_URL` and `DEV_S3_BUCKET_NAME` environment variables
 - **Dialyzer**: Zero warnings in configured environments; suppressions handle unconfigured PyRunner dependencies
 - **Type Safety**: Full Dialyzer coverage with documented suppressions for external system interfaces
@@ -145,3 +157,5 @@ See module documentation and inline comments for specific implementation details
 8. **Type Safe**: Ecto enums with database constraints ensure data integrity and prevent invalid states
 9. **Self-Managing**: Automated cache maintenance with size limits, LRU eviction, and disk space monitoring
 10. **Reactive Interface**: LiveView reactive patterns eliminate manual refresh requirements
+11. **Single-File Components**: LiveView 1.1 colocated hooks eliminate JavaScript file sprawl
+12. **Performance Optimized**: Change tracking with `:key` attributes reduces unnecessary re-renders

@@ -1,27 +1,70 @@
 defmodule HeatersWeb.ClipPlayer do
   @moduledoc """
-  Phoenix LiveView component for clip playback in different lifecycle stages.
+  Phoenix LiveView component for clip playback using colocated hooks architecture.
 
-  Provides a simple HTML5 video element that plays clips, with temp clips
-  generating small MP4 files on-demand using FFmpeg stream copy.
+  This is a **single-file component** that demonstrates Phoenix LiveView 1.1's 
+  colocated hooks feature. All JavaScript functionality is embedded directly in 
+  this component file, eliminating the need for separate JS files.
 
-  Key features:
-  - Temp clips: Small files (2-5MB) generated on-demand using FFmpeg stream copy (no re-encoding)
-  - Instant playback with correct timeline duration (clips show their actual length)
-  - Native HTML5 video element (no complex streaming protocols)
-  - CloudFront caching for global distribution
-  - Support for both temp clips (on-demand generated) and exported clips (direct files)
-  - Superior user experience compared to byte-range streaming
+  ## Key Features
+
+  - **Single-File Architecture**: Elixir, HEEx, and JavaScript in one file
+  - **Automatic Namespacing**: Hook name `.ClipPlayer` is prefixed with module name
+  - **Instant Playback**: Small files (2-5MB) generated on-demand using FFmpeg stream copy  
+  - **Perfect Timeline**: Shows exact clip duration, not full video length
+  - **Zero Re-encoding**: Stream copy ensures fastest generation with zero quality loss
+  - **Universal Compatibility**: Works offline, all browsers, mobile optimized
+  - **Reactive Updates**: Phoenix LiveView patterns eliminate manual refresh
+
+  ## Architecture Benefits
+
+  **Before (Multiple Files)**:
+  ```
+  clip_player.ex                 (200+ lines)
+  clip-player.js                 (400+ lines) 
+  clip-player-controller.js      (120+ lines)
+  app.js                         (imports + setup)
+  ```
+
+  **After (Single File)**:
+  ```
+  clip_player.ex                 (500+ lines total, everything colocated)
+  ```
+
+  **Advantages**:
+  - Single source of truth for component behavior
+  - No import/export JavaScript module management
+  - Automatic compilation to `phoenix-colocated/heaters/` directory
+  - Built-in namespacing prevents hook name collisions
+  - Better maintainability with related code together
 
   ## Usage
 
-      <.clip_player clip={@current_clip} />
+      <.clip_player clip={@current_clip} temp_clip={@temp_clip} />
 
   The component automatically determines the appropriate video URL and player type
   based on the clip's properties and generates files as needed.
+
+  ## Colocated Hook Implementation
+
+  The JavaScript functionality is embedded using LiveView 1.1's ColocatedHook:
+
+  ```elixir
+  <script :type={ColocatedHook} name=".ClipPlayer">
+    export default {
+      mounted() { /* Hook lifecycle */ },
+      updated() { /* React to LiveView updates */ },
+      destroyed() { /* Cleanup */ }
+    }
+  </script>
+  ```
+
+  This replaces the previous separate JavaScript files while maintaining identical
+  functionality with improved maintainability and automatic namespacing.
   """
 
   use Phoenix.Component
+  alias Phoenix.LiveView.ColocatedHook
   alias HeatersWeb.VideoUrlHelper
 
   @doc """
@@ -82,7 +125,7 @@ defmodule HeatersWeb.ClipPlayer do
             preload="none"
             playsinline
             crossorigin="anonymous"
-            phx-hook="ClipPlayer"
+            phx-hook=".ClipPlayer"
             phx-update="ignore"
             data-video-url={@video_url}
             data-player-type={@player_type}
@@ -115,6 +158,379 @@ defmodule HeatersWeb.ClipPlayer do
           </div>
       <% end %>
     </div>
+
+    <script :type={ColocatedHook} name=".ClipPlayer">
+      // Phoenix LiveView Colocated Hook for Clip Player
+      // Integrates ClipPlayer functionality with Phoenix LiveView reactive patterns
+      /** @type {import("phoenix_live_view").Hook} */
+      
+      export default {
+        mounted() {
+          const videoElement = this.el;
+          const videoUrl = videoElement.dataset.videoUrl;
+          const playerType = videoElement.dataset.playerType;
+          const clipInfoJson = videoElement.dataset.clipInfo;
+
+          // Parse clip information
+          let clipInfo = {};
+          try {
+            if (clipInfoJson) {
+              clipInfo = JSON.parse(clipInfoJson);
+            }
+          } catch (error) {
+            console.error("[ClipPlayer] Failed to parse clip info:", error);
+          }
+
+          // Create the player instance with embedded class
+          this.player = new ClipPlayerCore(videoElement, {
+            controls: true,
+            preload: 'metadata',
+            showLoadingSpinner: true
+          });
+
+          // Load the video if URL is provided, otherwise show loading state
+          if (videoUrl) {
+            this.player.loadVideo(videoUrl, playerType, clipInfo).catch(error => {
+              console.error("[ClipPlayer] Failed to load video:", error);
+            });
+          } else if (playerType === "loading" && clipInfo.is_loading) {
+            // Show loading state for clips being generated
+            this.player.showLoading("Generating temp clip...");
+          }
+
+          // Store current state for comparison on updates
+          this.currentVideoUrl = videoUrl;
+          this.currentPlayerType = playerType;
+          this.currentClipId = clipInfo.clip_id;
+        },
+
+        updated() {
+          if (!this.player) {
+            console.warn("[ClipPlayer] Player not initialized on update");
+            return;
+          }
+
+          const videoElement = this.el;
+          const videoUrl = videoElement.dataset.videoUrl;
+          const playerType = videoElement.dataset.playerType;
+          const clipInfoJson = videoElement.dataset.clipInfo;
+
+          // Parse updated clip information
+          let clipInfo = {};
+          try {
+            if (clipInfoJson) {
+              clipInfo = JSON.parse(clipInfoJson);
+            }
+          } catch (error) {
+            console.error("[ClipPlayer] Failed to parse updated clip info:", error);
+          }
+
+          // Reactive Pattern: Detect state transitions from LiveView assign updates
+          const wasLoading = this.currentPlayerType === "loading" || !this.currentVideoUrl;
+          const nowReady = videoUrl && playerType && playerType !== "loading";
+          const urlChanged = videoUrl && videoUrl !== this.currentVideoUrl;
+          const typeChanged = playerType && playerType !== this.currentPlayerType;
+
+          if ((wasLoading && nowReady) || urlChanged || typeChanged) {
+            this.currentVideoUrl = videoUrl;
+            this.currentPlayerType = playerType;
+
+            // Use switchClip for smooth transitions between clips
+            this.player.switchClip(videoUrl, playerType, clipInfo).catch(error => {
+              console.error("[ClipPlayer] Failed to switch to new clip:", error);
+            });
+          }
+        },
+
+        destroyed() {
+          if (this.player) {
+            this.player.destroy();
+            this.player = null;
+          }
+
+          this.currentVideoUrl = null;
+          this.currentPlayerType = null;
+          this.currentClipId = null;
+        }
+      }
+
+      // ClipPlayer core functionality - embedded in colocated hook
+      class ClipPlayerCore {
+        constructor(videoElement, options = {}) {
+          this.video = videoElement;
+          this.options = {
+            preload: 'metadata',
+            controls: true,
+            showLoadingSpinner: true,
+            ...options
+          };
+
+          this.playerType = null;
+          this.isLoading = false;
+          this.isLoadingNewVideo = false;
+          this.loadingSpinner = null;
+
+          this.init();
+        }
+
+        init() {
+          this.setupLoadingSpinner();
+
+          // Add event listeners for clip playback behavior
+          this.video.addEventListener('loadstart', this.handleLoadStart.bind(this));
+          this.video.addEventListener('loadedmetadata', this.handleLoadedMetadata.bind(this));
+          this.video.addEventListener('canplay', this.handleCanPlay.bind(this));
+          this.video.addEventListener('canplaythrough', this.handleCanPlayThrough.bind(this));
+          this.video.addEventListener('waiting', this.handleWaiting.bind(this));
+          this.video.addEventListener('error', this.handleError.bind(this));
+          this.video.addEventListener('ended', this.handleEnded.bind(this));
+
+          console.log('[ClipPlayer] Initialized with colocated hooks');
+        }
+
+        setupLoadingSpinner() {
+          if (!this.options.showLoadingSpinner) return;
+
+          const container = this.video.parentElement;
+          this.loadingSpinner = container?.querySelector('.clip-player-loading');
+
+          if (!this.loadingSpinner) {
+            console.warn('[ClipPlayer] Loading spinner not found in template');
+          }
+        }
+
+        async loadVideo(videoUrl, playerType = 'ffmpeg_stream', clipInfo = null) {
+          if (!videoUrl) {
+            console.error('[ClipPlayer] No video URL provided');
+            return;
+          }
+
+          console.log(`[ClipPlayer] Loading ${playerType} video: ${videoUrl}`);
+
+          try {
+            this.video.pause();
+            this.video.removeAttribute('src');
+            this.video.load();
+          } catch (_) { }
+
+          this.playerType = playerType;
+          this.clipInfo = clipInfo;
+
+          if (playerType === 'ffmpeg_stream') {
+            this.showLoading('Loading clip...');
+          }
+
+          this.video.src = videoUrl;
+
+          if (clipInfo) {
+            console.log(`[ClipPlayer] Clip info:`, clipInfo);
+          }
+        }
+
+        async switchClip(videoUrl, playerType = 'ffmpeg_stream', clipInfo = null) {
+          console.log(`[ClipPlayer] Switching to new clip: ${videoUrl}`);
+          this.video.pause();
+          await this.loadVideo(videoUrl, playerType, clipInfo);
+        }
+
+        handleLoadStart() {
+          console.log('[ClipPlayer] Load started');
+          if (this.playerType === 'ffmpeg_stream') {
+            this.showLoading('Loading clip...');
+          }
+        }
+
+        handleLoadedMetadata() {
+          console.log('[ClipPlayer] Metadata loaded - clip ready');
+          if (this.playerType === 'direct_s3' && this.video.currentTime > 0.01 &&
+              this.video.dataset.clipOffsetReset !== '1') {
+            this.video.currentTime = 0;
+            this.video.dataset.clipOffsetReset = '1';
+          }
+        }
+
+        handleCanPlay() {
+          console.log('[ClipPlayer] Can play - video is ready but may still buffer');
+        }
+
+        handleCanPlayThrough() {
+          console.log('[ClipPlayer] Can play through - hiding loading spinner and starting autoplay');
+          this.hideLoading();
+          this.attemptAutoplay();
+        }
+
+        async attemptAutoplay() {
+          try {
+            console.log('[ClipPlayer] Attempting autoplay...');
+            await this.video.play();
+            console.log('[ClipPlayer] Autoplay succeeded');
+          } catch (error) {
+            console.log('[ClipPlayer] Autoplay failed:', error);
+
+            setTimeout(async () => {
+              try {
+                console.log('[ClipPlayer] Retrying autoplay after delay...');
+                await this.video.play();
+                console.log('[ClipPlayer] Delayed autoplay succeeded');
+              } catch (retryError) {
+                console.log('[ClipPlayer] Autoplay blocked by browser policy');
+              }
+            }, 100);
+          }
+        }
+
+        handleWaiting() {
+          console.log('[ClipPlayer] Waiting for data');
+          if (this.playerType === 'ffmpeg_stream') {
+            this.showLoading('Buffering...');
+          }
+        }
+
+        handleError(event) {
+          if (this.video.error && this.video.error.code === 4 &&
+              (this.video.error.message.includes('Empty src attribute') ||
+               this.video.error.message.includes('MEDIA_ELEMENT_ERROR: Empty src attribute'))) {
+            console.log('[ClipPlayer] Ignoring empty src error during video transition');
+            return;
+          }
+
+          if (this.isLoadingNewVideo) {
+            console.log('[ClipPlayer] Ignoring error during new video load');
+            return;
+          }
+
+          console.error('[ClipPlayer] Video error:', event);
+          console.error('[ClipPlayer] Video error details:', {
+            error: this.video.error,
+            networkState: this.video.networkState,
+            readyState: this.video.readyState,
+            currentSrc: this.video.currentSrc
+          });
+
+          this.hideLoading();
+
+          this.video.dispatchEvent(new CustomEvent('cliperror', {
+            detail: {
+              error: event,
+              playerType: this.playerType
+            }
+          }));
+        }
+
+        handleEnded() {
+          console.log('[ClipPlayer] Clip ended');
+
+          const isClip = this.playerType === 'direct_s3' || this.clipInfo;
+
+          if (isClip) {
+            console.log('[ClipPlayer] Clip finished playing - stopping');
+          } else {
+            console.log('[ClipPlayer] Video ended - looping back to start');
+            this.video.currentTime = 0;
+            this.video.play().catch(error => {
+              console.log('[ClipPlayer] Loop playback failed:', error);
+            });
+          }
+
+          this.video.dispatchEvent(new CustomEvent('clipended', {
+            detail: {
+              playerType: this.playerType,
+              currentTime: this.video.currentTime,
+              duration: this.video.duration,
+              looped: !isClip
+            }
+          }));
+        }
+
+        showLoading(message = 'Loading...') {
+          if (!this.loadingSpinner) return;
+          this.isLoading = true;
+          this.loadingSpinner.querySelector('.loading-text').textContent = message;
+          this.loadingSpinner.style.display = 'block';
+        }
+
+        hideLoading() {
+          if (!this.loadingSpinner) return;
+          this.isLoading = false;
+          this.loadingSpinner.style.display = 'none';
+        }
+
+        async play() {
+          try {
+            await this.video.play();
+          } catch (error) {
+            console.error('[ClipPlayer] Play error:', error);
+            throw error;
+          }
+        }
+
+        pause() {
+          this.video.pause();
+        }
+
+        seekTo(timeSeconds) {
+          this.video.currentTime = Math.max(0, Math.min(this.video.duration || 0, timeSeconds));
+        }
+
+        getCurrentTime() {
+          return this.video.currentTime;
+        }
+
+        getDuration() {
+          return this.video.duration || 0;
+        }
+
+        loop() {
+          this.video.loop = true;
+        }
+
+        unloop() {
+          this.video.loop = false;
+        }
+
+        isLoadingState() {
+          return this.isLoading;
+        }
+
+        getPlayerType() {
+          return this.playerType;
+        }
+
+        destroy() {
+          console.log('[ClipPlayer] Destroying player...');
+
+          try {
+            if (!this.video.paused) {
+              this.video.pause();
+            }
+          } catch (error) {
+            // Ignore errors during destruction
+          }
+
+          // Remove event listeners
+          this.video.removeEventListener('loadstart', this.handleLoadStart);
+          this.video.removeEventListener('loadedmetadata', this.handleLoadedMetadata);
+          this.video.removeEventListener('canplay', this.handleCanPlay);
+          this.video.removeEventListener('canplaythrough', this.handleCanPlayThrough);
+          this.video.removeEventListener('waiting', this.handleWaiting);
+          this.video.removeEventListener('error', this.handleError);
+          this.video.removeEventListener('ended', this.handleEnded);
+
+          if (this.loadingSpinner) {
+            this.hideLoading();
+            this.loadingSpinner = null;
+          }
+
+          this.isLoadingNewVideo = false;
+          this.isLoading = false;
+
+          this.video.src = '';
+          this.video.load();
+
+          console.log('[ClipPlayer] Destroyed');
+        }
+      }
+    </script>
     """
   end
 

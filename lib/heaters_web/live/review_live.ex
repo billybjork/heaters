@@ -1,6 +1,7 @@
 defmodule HeatersWeb.ReviewLive do
   use HeatersWeb, :live_view
   import Phoenix.LiveView, only: [put_flash: 3, clear_flash: 1, push_event: 3]
+  alias Phoenix.LiveView.ColocatedHook
 
   # Components / helpers
   import HeatersWeb.ClipPlayer, only: [clip_player: 1]
@@ -381,4 +382,117 @@ defmodule HeatersWeb.ReviewLive do
   defp flash_verb("skip"), do: "Skipped"
   defp flash_verb("archive"), do: "Archived"
   defp flash_verb(other), do: String.capitalize(other)
+
+  # -------------------------------------------------------------------------
+  # Colocated Hook - Review Hotkeys
+  # -------------------------------------------------------------------------
+  
+  @doc """
+  Renders the colocated ReviewHotkeys JavaScript hook.
+  
+  This hook provides keyboard shortcuts for the review workflow:
+  - A: Approve
+  - S: Skip  
+  - D: Archive
+  - G: Group
+  - Ctrl/Cmd+Z: Undo
+  
+  The hook is embedded directly in this LiveView module to keep
+  all review-related functionality together.
+  """
+  def review_hotkeys_script(assigns) do
+    ~H"""
+    <script :type={ColocatedHook} name=".ReviewHotkeys">
+      /**
+       * Phoenix LiveView colocated hook for keyboard review actions
+       * @type {import("phoenix_live_view").Hook}
+       *
+       * Keyboard shortcuts for review workflow:
+       *   ┌─────────────┬────────┐
+       *   │ Letter-key  │ Action │
+       *   ├─────────────┼────────┤
+       *   │  A          │ approve│
+       *   │  S          │ skip   │
+       *   │  D          │ archive│
+       *   │  G          │ group  │
+       *   └─────────────┴────────┘
+       *
+       * Usage:
+       *  - Hold a letter → the corresponding button highlights (is-armed)
+       *  - Press ENTER while a letter is armed → commits the action
+       *  - Press ⌘/Ctrl+Z to undo the last action (UI-level only)
+       */
+      export default {
+        mounted() {
+          // Map single-letter keys to their respective actions
+          this.keyMap    = { a: "approve", s: "skip", d: "archive", g: "group" };
+          this.armed     = null;             // currently-armed key, e.g. "a"
+          this.btn       = null;             // highlighted button element
+
+          // Key-down handler: manages arming keys and committing actions
+          this._onKeyDown = (e) => {
+            const tag  = (e.target.tagName || "").toLowerCase();
+            const k    = e.key.toLowerCase();
+
+            // Let digits go into any input uninterrupted
+            if (tag === "input") {
+              return;
+            }
+
+            // Undo – ⌘/Ctrl+Z (UI-level only)
+            if ((e.metaKey || e.ctrlKey) && k === "z") {
+              this.pushEvent("undo", {});
+              this._reset();
+              e.preventDefault();
+              return;
+            }
+
+            // 1) First press of A/S/D/G → arm and highlight
+            if (this.keyMap[k] && !this.armed) {
+              if (e.repeat) { e.preventDefault(); return; }
+              this.armed = k;
+              this.btn   = document.getElementById(`btn-${this.keyMap[k]}`);
+              this.btn?.classList.add("is-armed");
+              e.preventDefault();
+              return;
+            }
+
+            // 2) ENTER commits the armed action
+            if (e.key === "Enter") {
+              // If a letter is armed, commit that action
+              if (this.armed) {
+                const action  = this.keyMap[this.armed];
+                const payload = { action };
+                this.pushEvent("select", payload);
+                this._reset();
+                e.preventDefault();
+              }
+            }
+          };
+
+          // Key-up handler: clears the button highlight
+          this._onKeyUp = (e) => {
+            if (e.key.toLowerCase() === this.armed) {
+              this._reset();
+            }
+          };
+
+          window.addEventListener("keydown", this._onKeyDown);
+          window.addEventListener("keyup",   this._onKeyUp);
+        },
+
+        destroyed() {
+          window.removeEventListener("keydown", this._onKeyDown);
+          window.removeEventListener("keyup",   this._onKeyUp);
+        },
+
+        // Reset armed state and button highlight
+        _reset() {
+          this.btn?.classList.remove("is-armed");
+          this.armed = this.btn = null;
+        }
+      }
+    </script>
+    """
+  end
 end
