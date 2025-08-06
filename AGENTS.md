@@ -6,7 +6,7 @@ Unified agent guidance for working with this codebase. See `lib/heaters/README.m
 
 | Layer      | Technology & Version |
 | ---------- | -------------------- |
-| **Backend** | Elixir/Phoenix ~> 1.7.10 with LiveView ~> 1.0 |
+| **Backend** | Elixir/Phoenix ~> 1.8.0 with LiveView ~> 1.1 |
 | **Database** | PostgreSQL + `pgvector` extension |
 | **Frontend** | Phoenix LiveView, vanilla JS, CSS |
 | **Build** | `esbuild` for JavaScript bundling |
