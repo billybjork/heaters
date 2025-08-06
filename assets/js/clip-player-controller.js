@@ -1,17 +1,33 @@
 /**
  * Phoenix LiveView Hook for Clip Player
  * 
- * Integrates the ClipPlayer with Phoenix LiveView.
+ * Integrates the ClipPlayer with Phoenix LiveView using reactive patterns.
  * Handles initialization, data updates, and cleanup for clips in different stages:
  * temp clips (on-demand generated) and exported clips (direct files).
+ * 
+ * ## Reactive Pattern Implementation
+ * 
+ * This hook implements a clean Phoenix LiveView reactive pattern that eliminates
+ * the need for manual push_event/addEventListener patterns:
+ * 
+ * 1. LiveView stores temp clip state in assigns (separate from clip struct)
+ * 2. PubSub messages from background jobs trigger assign updates
+ * 3. updated() lifecycle automatically detects URL/state changes
+ * 4. Hook smoothly transitions video player to new content
+ * 5. No manual refresh or event handling required
+ * 
+ * ## AbortError Prevention
+ * 
+ * Prevents JavaScript AbortError by avoiding competing play() calls:
+ * - HTML autoplay attribute removed from video element
+ * - Clean state transitions with removeAttribute('src') before loading
+ * - Let canplaythrough event handler manage autoplay timing
  */
 
 import { ClipPlayer } from "./clip-player";
 
 export const ClipPlayerController = {
     mounted() {
-        console.log("[ClipPlayerController] Mounted");
-
         const videoElement = this.el;
         const videoUrl = videoElement.dataset.videoUrl;
         const playerType = videoElement.dataset.playerType;
@@ -27,9 +43,6 @@ export const ClipPlayerController = {
             console.error("[ClipPlayerController] Failed to parse clip info:", error);
         }
 
-        console.log(`[ClipPlayerController] Initializing ${playerType} player with URL: ${videoUrl}`);
-        console.log(`[ClipPlayerController] Clip info:`, clipInfo);
-
         // Create the player instance
         this.player = new ClipPlayer(videoElement, {
             controls: true,
@@ -44,7 +57,6 @@ export const ClipPlayerController = {
             });
         } else if (playerType === "loading" && clipInfo.is_loading) {
             // Show loading state for clips being generated
-            console.log(`[ClipPlayerController] Clip ${clipInfo.clip_id} is loading, showing spinner`);
             this.player.showLoading("Generating temp clip...");
         }
 
@@ -52,16 +64,9 @@ export const ClipPlayerController = {
         this.currentVideoUrl = videoUrl;
         this.currentPlayerType = playerType;
         this.currentClipId = clipInfo.clip_id;
-
-        // No need for manual event listeners - using reactive LiveView pattern
-        console.log("[ClipPlayerController] Using reactive LiveView updates (no manual events needed)");
     },
 
     updated() {
-        console.log("[ClipPlayerController] Updated");
-        console.log("[ClipPlayerController] Element ID:", this.el.id);
-        console.log("[ClipPlayerController] Player exists:", !!this.player);
-
         if (!this.player) {
             console.warn("[ClipPlayerController] Player not initialized on update - component was likely recreated");
             return;
@@ -71,9 +76,6 @@ export const ClipPlayerController = {
         const videoUrl = videoElement.dataset.videoUrl;
         const playerType = videoElement.dataset.playerType;
         const clipInfoJson = videoElement.dataset.clipInfo;
-
-        console.log(`[ClipPlayerController] Update data - URL: ${videoUrl}, Type: ${playerType}`);
-        console.log(`[ClipPlayerController] Current state - URL: ${this.currentVideoUrl}, Type: ${this.currentPlayerType}`);
 
         // Parse updated clip information
         let clipInfo = {};
@@ -85,16 +87,14 @@ export const ClipPlayerController = {
             console.error("[ClipPlayerController] Failed to parse updated clip info:", error);
         }
 
-        // Check if video URL changed from loading state to ready state (reactive update)
+        // Reactive Pattern: Detect state transitions from LiveView assign updates
+        // This replaces manual push_event patterns with automatic detection
         const wasLoading = this.currentPlayerType === "loading" || !this.currentVideoUrl;
         const nowReady = videoUrl && playerType && playerType !== "loading";
         const urlChanged = videoUrl && videoUrl !== this.currentVideoUrl;
         const typeChanged = playerType && playerType !== this.currentPlayerType;
 
         if ((wasLoading && nowReady) || urlChanged || typeChanged) {
-            console.log(`[ClipPlayerController] 🎬 Video became ready! Switching to: ${videoUrl} (${playerType})`);
-            console.log(`[ClipPlayerController] State change: loading=${wasLoading}, ready=${nowReady}, urlChanged=${urlChanged}`);
-
             this.currentVideoUrl = videoUrl;
             this.currentPlayerType = playerType;
 
@@ -102,13 +102,10 @@ export const ClipPlayerController = {
             this.player.switchClip(videoUrl, playerType, clipInfo).catch(error => {
                 console.error("[ClipPlayerController] Failed to switch to new clip:", error);
             });
-        } else {
-            console.log(`[ClipPlayerController] No significant changes detected`);
         }
     },
 
     destroyed() {
-        console.log("[ClipPlayerController] Destroyed");
 
         if (this.player) {
             this.player.destroy();

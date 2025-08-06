@@ -68,7 +68,12 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
   # Generate the actual clip file
   defp generate_clip_file(tmp_file, proxy_url, start_seconds, duration_seconds, timestamp) do
     # FFmpeg command optimized for browser compatibility
-    # Handle problematic audio streams by removing audio entirely for temp clips
+    #
+    # Audio Removal (-an flag):
+    # Removes audio streams entirely to prevent browser PIPELINE_ERROR_DECODE issues.
+    # Some source videos have problematic audio codecs that cause playback failures.
+    # Since temp clips are for visual review only, audio removal improves compatibility
+    # without impacting the review workflow.
     cmd_args = [
       "-hide_banner",
       "-loglevel",

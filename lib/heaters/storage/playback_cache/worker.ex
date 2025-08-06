@@ -4,6 +4,26 @@ defmodule Heaters.Storage.PlaybackCache.Worker do
 
   This prevents LiveView blocking during FFmpeg processing and provides
   a better user experience with loading states and instant UI responses.
+
+  ## Features
+
+  - **Oban Uniqueness**: Uses 60-second uniqueness constraints to prevent duplicate jobs
+  - **PubSub Integration**: Broadcasts completion events to LiveView for reactive updates
+  - **Error Handling**: Single attempt with detailed logging for failure analysis
+  - **Dedicated Queue**: Runs on `temp_clips` queue for responsive review interface
+
+  ## Troubleshooting
+
+  **Duplicate Job Prevention**
+  If you see logs like "Job already queued for clip X, skipping duplicate", this is
+  normal behavior preventing redundant FFmpeg processes. The uniqueness constraint
+  ensures only one generation job runs per clip within a 60-second window.
+
+  **Failed Generation**
+  Single-attempt jobs fail fast. Check:
+  - Source video proxy file availability in S3
+  - FFmpeg command execution in temp_clip.ex
+  - PubSub message delivery to LiveView
   """
 
   use Oban.Worker,

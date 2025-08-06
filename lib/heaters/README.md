@@ -73,6 +73,7 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 - **Stream Copy**: Zero re-encoding ensures faster generation with zero quality loss
 - **Universal Compatibility**: Works offline, all browsers, mobile optimized
 - **Smart Cleanup**: Scheduled maintenance with LRU eviction and disk space monitoring
+- **Reactive Updates**: Phoenix LiveView reactive pattern eliminates manual refresh requirements
 
 ### Production Reliability
 - **Resumable Processing**: All stages support automatic resume after interruptions
@@ -86,6 +87,8 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 - **FFmpeg**: All encoding profiles centralized in `Processing.Render.FFmpegConfig`
 - **yt-dlp**: Quality-first download strategy in `Processing.Download.YtDlpConfig` with validation
 - **"Dumb Python"**: Python tasks receive complete configuration from Elixir
+- **Temp Clip Audio**: FFmpeg `-an` flag removes audio streams to prevent browser decode issues
+- **Stream Copy Optimization**: Video stream copy (`-c:v copy`) with web optimization (`+faststart`)
 
 ⚠️ **CRITICAL**: All download configuration centralized with built-in validation to prevent quality-reducing mistakes (4K→360p). Review module documentation before modifying.
 
@@ -107,6 +110,27 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 - **Startup Cleanup**: Automatic removal of orphaned temp files on application start
 - **Comprehensive Logging**: Cache statistics, utilization metrics, and cleanup operations
 
+## Troubleshooting
+
+### Common Issues
+
+**Video Playback Problems**
+- Check browser console for decode errors and JavaScript exceptions
+- Verify source video proxy files are available in S3
+- Review FFmpeg command logs for encoding issues
+
+**Performance Issues**
+- Monitor Oban job queues for backlog or failed jobs
+- Check database query performance for large clip sets
+- Verify S3 connectivity and CloudFront cache behavior
+
+**Background Job Issues**
+- Review Oban worker logs for failed attempts
+- Check for duplicate job execution patterns
+- Verify PubSub message delivery for LiveView updates
+
+See module documentation and inline comments for specific implementation details and solutions.
+
 ## Key Benefits
 
 1. **Zero Re-encoding During Review**: Cut-based clips enable instant operations
@@ -118,3 +142,4 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 7. **Maintainable**: Declarative configuration, modular design, centralized logic
 8. **Type Safe**: Ecto enums with database constraints ensure data integrity and prevent invalid states
 9. **Self-Managing**: Automated cache maintenance with size limits, LRU eviction, and disk space monitoring
+10. **Reactive Interface**: LiveView reactive patterns eliminate manual refresh requirements

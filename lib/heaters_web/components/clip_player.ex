@@ -30,10 +30,23 @@ defmodule HeatersWeb.ClipPlayer do
   ## Attributes
 
   - `clip` - The clip to play (required)
+  - `temp_clip` - Temp clip state from LiveView reactive updates (optional)
   - `id` - HTML id for the video element (optional, defaults to "video-player")
   - `class` - Additional CSS classes (optional)
   - `controls` - Show video controls (optional, defaults to true)
   - `preload` - Video preload strategy (optional, defaults to "metadata")
+
+  ## Reactive Pattern
+
+  The `temp_clip` attribute enables Phoenix LiveView reactive updates:
+  - LiveView stores temp clip state separately in assigns
+  - When background jobs complete, PubSub updates trigger assign changes
+  - Component automatically detects URL changes and updates player
+  - JavaScript ClipPlayerController handles transitions via updated() lifecycle
+  - No manual refresh or push_event calls required
+
+  This eliminates the need for manual event listeners and provides a clean,
+  idiomatic Phoenix LiveView reactive pattern for real-time video updates.
   """
   attr(:clip, :map, required: true)
   attr(:temp_clip, :map, default: %{})

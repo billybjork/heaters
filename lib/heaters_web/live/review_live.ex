@@ -196,8 +196,10 @@ defmodule HeatersWeb.ReviewLive do
   end
 
   defp maybe_trigger_background_generation(clip) do
+    # Smart Prefetch Logic:
     # Check if this clip already has a temp file or generation in progress
-    # by trying to generate the URL - if it fails or is loading, queue background generation
+    # by trying to generate the URL - if it fails or is loading, queue background generation.
+    # Oban uniqueness constraints prevent duplicate jobs for the same clip.
     case HeatersWeb.VideoUrlHelper.get_video_url(clip, clip.source_video || %{}) do
       {:error, _reason} ->
         # Queue background generation via Oban worker (with uniqueness constraints)
@@ -208,10 +210,10 @@ defmodule HeatersWeb.ReviewLive do
 
         case job_result do
           {:ok, %Oban.Job{}} ->
-            Logger.debug("ReviewLive: Queued temp clip generation for clip #{clip.id}")
+            :ok
 
           {:error, %Ecto.Changeset{errors: [unique: _]}} ->
-            Logger.debug("ReviewLive: Job already queued for clip #{clip.id}, skipping duplicate")
+            :ok
 
           {:error, reason} ->
             Logger.warning(
@@ -228,10 +230,10 @@ defmodule HeatersWeb.ReviewLive do
 
         case job_result do
           {:ok, %Oban.Job{}} ->
-            Logger.debug("ReviewLive: Queued temp clip generation for clip #{clip.id}")
+            :ok
 
           {:error, %Ecto.Changeset{errors: [unique: _]}} ->
-            Logger.debug("ReviewLive: Job already queued for clip #{clip.id}, skipping duplicate")
+            :ok
 
           {:error, reason} ->
             Logger.warning(
@@ -241,21 +243,20 @@ defmodule HeatersWeb.ReviewLive do
 
       {:ok, _url, _type} ->
         # Already available, no need to prefetch
-        Logger.debug(
-          "ReviewLive: Temp clip already available for clip #{clip.id}, skipping generation"
-        )
-
         :ok
     end
   rescue
     # Gracefully handle any errors in prefetch - don't break the main flow
-    error ->
-      Logger.debug("ReviewLive: Error in prefetch for clip #{clip.id}: #{inspect(error)}")
-      :ok
+    _error -> :ok
   end
 
   # Pre-warm additional clips from the same source videos for sequential review
   defp trigger_sequential_prewarming(clips) when is_list(clips) do
+    # Sequential Prewarming Optimization:
+    # When users review clips sequentially from the same source video,
+    # pre-generate the next N clips to reduce wait times. This excludes
+    # clips already being processed to avoid duplicate work.
+
     # Get unique source video IDs from current clips
     source_video_ids =
       clips
@@ -264,10 +265,6 @@ defmodule HeatersWeb.ReviewLive do
 
     # Get clip IDs that are already being processed to avoid duplicates
     already_processing_ids = Enum.map(clips, & &1.id)
-
-    Logger.debug(
-      "ReviewLive: Sequential prewarming for source videos #{inspect(source_video_ids)}, excluding already processing clips #{inspect(already_processing_ids)}"
-    )
 
     # For each source video, pre-warm the next N clips in review queue order
     Enum.each(
@@ -298,10 +295,6 @@ defmodule HeatersWeb.ReviewLive do
         preload: [:source_video]
       )
       |> Repo.all()
-
-    Logger.debug(
-      "ReviewLive: Found #{length(next_clips)} additional clips to prefetch for source video #{source_video_id}"
-    )
 
     # Queue background generation for these clips
     # Note: Oban uniqueness constraints prevent duplicate jobs for same clip_id
@@ -351,9 +344,11 @@ defmodule HeatersWeb.ReviewLive do
     current_clip_id = socket.assigns[:current] && socket.assigns.current.id
 
     if current_clip_id && current_clip_id == clip_id do
-      Logger.info("ReviewLive: Updating current clip #{clip_id} with temp URL: #{path}")
-
-      # Store temp clip info in assigns separately from the clip struct
+      # Reactive Pattern Implementation:
+      # Store temp clip info in assigns separately from the clip struct.
+      # This triggers the updated() lifecycle in the JavaScript ClipPlayerController,
+      # which detects the state change and automatically loads the video without
+      # requiring manual push_event calls or page refreshes.
       temp_clip_info = %{
         clip_id: clip_id,
         url: path,
@@ -362,7 +357,6 @@ defmodule HeatersWeb.ReviewLive do
 
       {:noreply, assign(socket, temp_clip: temp_clip_info)}
     else
-      Logger.info("ReviewLive: Temp clip ready for non-current clip #{clip_id}, ignoring")
       {:noreply, socket}
     end
   end
