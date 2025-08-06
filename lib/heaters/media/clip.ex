@@ -63,7 +63,7 @@ defmodule Heaters.Media.Clip do
     field(:action_committed_at, :naive_datetime)
 
     belongs_to(:source_video, Heaters.Media.Video)
-    has_many(:clip_artifacts, Heaters.Media.Artifact)
+    has_many(:clip_artifacts, Heaters.Media.Artifact, on_delete: :delete_all)
 
     timestamps(type: :utc_datetime)
   end
