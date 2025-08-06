@@ -9,6 +9,8 @@ defmodule HeatersWeb.ReviewLive do
   alias Heaters.Review.Actions, as: ClipActions
   alias Heaters.Media.Clip
 
+  require Logger
+
   # 1 current + 5 future
   @prefetch 6
   @refill_threshold 3
@@ -35,7 +37,8 @@ defmodule HeatersWeb.ReviewLive do
            page_state: :empty,
            current: nil,
            future: [],
-           history: []
+           history: [],
+           temp_clip: %{}
          )}
 
       [cur | fut] ->
@@ -55,7 +58,8 @@ defmodule HeatersWeb.ReviewLive do
            current: cur,
            future: fut,
            history: [],
-           page_state: :reviewing
+           page_state: :reviewing,
+           temp_clip: %{}
          )}
     end
   end
@@ -100,7 +104,8 @@ defmodule HeatersWeb.ReviewLive do
         current: prev,
         future: [cur | fut],
         history: rest,
-        page_state: :reviewing
+        page_state: :reviewing,
+        temp_clip: %{}
       )
       |> refill_future()
       |> clear_flash()
@@ -155,7 +160,7 @@ defmodule HeatersWeb.ReviewLive do
   end
 
   defp advance_queue(%{assigns: %{future: []}} = socket) do
-    assign(socket, current: nil, page_state: :empty)
+    assign(socket, current: nil, page_state: :empty, temp_clip: %{})
   end
 
   defp advance_queue(%{assigns: %{future: [next | rest]}} = socket) do
@@ -164,7 +169,7 @@ defmodule HeatersWeb.ReviewLive do
     trigger_background_prefetch(upcoming_clips)
 
     socket
-    |> assign(current: next, future: rest, page_state: :reviewing)
+    |> assign(current: next, future: rest, page_state: :reviewing, temp_clip: %{})
   end
 
   # -------------------------------------------------------------------------
@@ -174,63 +179,117 @@ defmodule HeatersWeb.ReviewLive do
   defp trigger_background_prefetch(clips) when is_list(clips) do
     # Only prefetch clips without exported files in development (where sync generation causes delays)
     if Application.get_env(:heaters, :app_env) == "development" do
-      clips
-      # Only clips that haven't been exported yet (nil clip_filepath)
-      |> Enum.filter(fn clip -> is_nil(clip.clip_filepath) end)
-      |> Enum.each(&maybe_trigger_background_generation/1)
-      
+      clips_to_process =
+        clips
+        # Only clips that haven't been exported yet (nil clip_filepath)
+        |> Enum.filter(fn clip -> is_nil(clip.clip_filepath) end)
+
+      # Process immediate clips first
+      Enum.each(clips_to_process, &maybe_trigger_background_generation/1)
+
       # Pre-warm additional clips from the same source videos for sequential review
-      trigger_sequential_prewarming(clips)
+      # Only do this if we have clips to process (avoids unnecessary DB queries)
+      if length(clips_to_process) > 0 do
+        trigger_sequential_prewarming(clips_to_process)
+      end
     end
   end
 
   defp maybe_trigger_background_generation(clip) do
     # Check if this clip already has a temp file or generation in progress
-    # by trying to generate the URL - if it fails, queue background generation
+    # by trying to generate the URL - if it fails or is loading, queue background generation
     case HeatersWeb.VideoUrlHelper.get_video_url(clip, clip.source_video || %{}) do
       {:error, _reason} ->
-        # Queue background generation via Oban worker
-        %{clip_id: clip.id}
-        |> Heaters.Storage.PlaybackCache.Worker.new()
-        |> Oban.insert()
+        # Queue background generation via Oban worker (with uniqueness constraints)
+        job_result =
+          %{clip_id: clip.id}
+          |> Heaters.Storage.PlaybackCache.Worker.new()
+          |> Oban.insert()
+
+        case job_result do
+          {:ok, %Oban.Job{}} ->
+            Logger.debug("ReviewLive: Queued temp clip generation for clip #{clip.id}")
+
+          {:error, %Ecto.Changeset{errors: [unique: _]}} ->
+            Logger.debug("ReviewLive: Job already queued for clip #{clip.id}, skipping duplicate")
+
+          {:error, reason} ->
+            Logger.warning(
+              "ReviewLive: Failed to queue job for clip #{clip.id}: #{inspect(reason)}"
+            )
+        end
+
+      {:loading, nil} ->
+        # Temp clip needs to be generated - queue background generation (with uniqueness constraints)
+        job_result =
+          %{clip_id: clip.id}
+          |> Heaters.Storage.PlaybackCache.Worker.new()
+          |> Oban.insert()
+
+        case job_result do
+          {:ok, %Oban.Job{}} ->
+            Logger.debug("ReviewLive: Queued temp clip generation for clip #{clip.id}")
+
+          {:error, %Ecto.Changeset{errors: [unique: _]}} ->
+            Logger.debug("ReviewLive: Job already queued for clip #{clip.id}, skipping duplicate")
+
+          {:error, reason} ->
+            Logger.warning(
+              "ReviewLive: Failed to queue job for clip #{clip.id}: #{inspect(reason)}"
+            )
+        end
 
       {:ok, _url, _type} ->
         # Already available, no need to prefetch
-        :ok
+        Logger.debug(
+          "ReviewLive: Temp clip already available for clip #{clip.id}, skipping generation"
+        )
 
-      {:loading, nil} ->
-        # Production case - might want to trigger export job here
         :ok
     end
   rescue
     # Gracefully handle any errors in prefetch - don't break the main flow
-    _error -> :ok
+    error ->
+      Logger.debug("ReviewLive: Error in prefetch for clip #{clip.id}: #{inspect(error)}")
+      :ok
   end
 
   # Pre-warm additional clips from the same source videos for sequential review
   defp trigger_sequential_prewarming(clips) when is_list(clips) do
     # Get unique source video IDs from current clips
-    source_video_ids = 
+    source_video_ids =
       clips
       |> Enum.map(& &1.source_video_id)
       |> Enum.uniq()
-    
+
+    # Get clip IDs that are already being processed to avoid duplicates
+    already_processing_ids = Enum.map(clips, & &1.id)
+
+    Logger.debug(
+      "ReviewLive: Sequential prewarming for source videos #{inspect(source_video_ids)}, excluding already processing clips #{inspect(already_processing_ids)}"
+    )
+
     # For each source video, pre-warm the next N clips in review queue order
-    Enum.each(source_video_ids, &prefetch_next_clips_for_video(&1, @sequential_prefetch_count))
+    Enum.each(
+      source_video_ids,
+      &prefetch_next_clips_for_video(&1, @sequential_prefetch_count, already_processing_ids)
+    )
   end
-  
-  defp prefetch_next_clips_for_video(source_video_id, prefetch_count) do
+
+  defp prefetch_next_clips_for_video(source_video_id, prefetch_count, exclude_clip_ids) do
     # Get the next clips for this source video in review order
     # Use a direct query to avoid loading full associations for prefetch
     import Ecto.Query
     alias Heaters.Repo
-    
-    next_clips = 
+
+    next_clips =
       from(c in Heaters.Media.Clip,
         join: sv in assoc(c, :source_video),
         where: c.source_video_id == ^source_video_id,
         where: c.ingest_state == :pending_review,
         where: is_nil(c.clip_filepath),
+        # Exclude clips that are already being processed
+        where: c.id not in ^exclude_clip_ids,
         # Only include clips where proxy is available (same filters as review queue)
         where: not is_nil(sv.proxy_filepath),
         where: not is_nil(sv.cache_persisted_at),
@@ -239,8 +298,13 @@ defmodule HeatersWeb.ReviewLive do
         preload: [:source_video]
       )
       |> Repo.all()
-    
+
+    Logger.debug(
+      "ReviewLive: Found #{length(next_clips)} additional clips to prefetch for source video #{source_video_id}"
+    )
+
     # Queue background generation for these clips
+    # Note: Oban uniqueness constraints prevent duplicate jobs for same clip_id
     Enum.each(next_clips, &maybe_trigger_background_generation/1)
   rescue
     # Gracefully handle any database errors in prefetch
@@ -283,10 +347,24 @@ defmodule HeatersWeb.ReviewLive do
     require Logger
     Logger.info("ReviewLive: Received temp_ready for clip #{clip_id}, path: #{path}")
 
-    # Send event to JavaScript hook to update the video player
-    result = push_event(socket, "temp_clip_ready", %{clip_id: clip_id, path: path})
-    Logger.info("ReviewLive: Sent push_event temp_clip_ready")
-    {:noreply, result}
+    # Check if this is for the current clip being reviewed
+    current_clip_id = socket.assigns[:current] && socket.assigns.current.id
+
+    if current_clip_id && current_clip_id == clip_id do
+      Logger.info("ReviewLive: Updating current clip #{clip_id} with temp URL: #{path}")
+
+      # Store temp clip info in assigns separately from the clip struct
+      temp_clip_info = %{
+        clip_id: clip_id,
+        url: path,
+        ready: true
+      }
+
+      {:noreply, assign(socket, temp_clip: temp_clip_info)}
+    else
+      Logger.info("ReviewLive: Temp clip ready for non-current clip #{clip_id}, ignoring")
+      {:noreply, socket}
+    end
   end
 
   @impl true

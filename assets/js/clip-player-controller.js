@@ -53,9 +53,8 @@ export const ClipPlayerController = {
         this.currentPlayerType = playerType;
         this.currentClipId = clipInfo.clip_id;
 
-        // Set up event listeners for LiveView push events
-        this.handleEvent("temp_clip_ready", (data) => this.onTempClipReady(data));
-        this.handleEvent("temp_clip_error", (data) => this.onTempClipError(data));
+        // No need for manual event listeners - using reactive LiveView pattern
+        console.log("[ClipPlayerController] Using reactive LiveView updates (no manual events needed)");
     },
 
     updated() {
@@ -73,6 +72,9 @@ export const ClipPlayerController = {
         const playerType = videoElement.dataset.playerType;
         const clipInfoJson = videoElement.dataset.clipInfo;
 
+        console.log(`[ClipPlayerController] Update data - URL: ${videoUrl}, Type: ${playerType}`);
+        console.log(`[ClipPlayerController] Current state - URL: ${this.currentVideoUrl}, Type: ${this.currentPlayerType}`);
+
         // Parse updated clip information
         let clipInfo = {};
         try {
@@ -83,12 +85,15 @@ export const ClipPlayerController = {
             console.error("[ClipPlayerController] Failed to parse updated clip info:", error);
         }
 
-        // Check if video URL or player type changed
+        // Check if video URL changed from loading state to ready state (reactive update)
+        const wasLoading = this.currentPlayerType === "loading" || !this.currentVideoUrl;
+        const nowReady = videoUrl && playerType && playerType !== "loading";
         const urlChanged = videoUrl && videoUrl !== this.currentVideoUrl;
         const typeChanged = playerType && playerType !== this.currentPlayerType;
 
-        if (urlChanged || typeChanged) {
-            console.log(`[ClipPlayerController] Switching to new clip: ${videoUrl} (${playerType})`);
+        if ((wasLoading && nowReady) || urlChanged || typeChanged) {
+            console.log(`[ClipPlayerController] 🎬 Video became ready! Switching to: ${videoUrl} (${playerType})`);
+            console.log(`[ClipPlayerController] State change: loading=${wasLoading}, ready=${nowReady}, urlChanged=${urlChanged}`);
 
             this.currentVideoUrl = videoUrl;
             this.currentPlayerType = playerType;
@@ -97,6 +102,8 @@ export const ClipPlayerController = {
             this.player.switchClip(videoUrl, playerType, clipInfo).catch(error => {
                 console.error("[ClipPlayerController] Failed to switch to new clip:", error);
             });
+        } else {
+            console.log(`[ClipPlayerController] No significant changes detected`);
         }
     },
 
@@ -108,44 +115,12 @@ export const ClipPlayerController = {
             this.player = null;
         }
 
+        // No manual event listeners to clean up with reactive pattern
+
         this.currentVideoUrl = null;
         this.currentPlayerType = null;
         this.currentClipId = null;
     },
 
-    // Handle temp clip ready events from LiveView
-    onTempClipReady(data) {
-        console.log(`[ClipPlayerController] Received temp_clip_ready for clip ${data.clip_id}`);
-        
-        // Check if this is for the current clip
-        if (this.currentClipId && data.clip_id.toString() === this.currentClipId.toString()) {
-            console.log(`[ClipPlayerController] Loading generated clip for current clip ${data.clip_id}`);
-            
-            if (this.player) {
-                // Load the newly generated clip
-                this.player.loadVideo(data.path, "direct_s3", { clip_id: data.clip_id })
-                    .catch(error => {
-                        console.error(`[ClipPlayerController] Failed to load generated clip: ${error}`);
-                    });
-                
-                // Update tracking state
-                this.currentVideoUrl = data.path;
-                this.currentPlayerType = "direct_s3";
-            }
-        } else {
-            console.log(`[ClipPlayerController] Ignoring temp_clip_ready for clip ${data.clip_id} (current: ${this.currentClipId})`);
-        }
-    },
-
-    onTempClipError(data) {
-        console.error(`[ClipPlayerController] Received temp_clip_error for clip ${data.clip_id}: ${data.error}`);
-        
-        // Check if this is for the current clip
-        if (this.currentClipId && data.clip_id.toString() === this.currentClipId.toString()) {
-            if (this.player) {
-                this.player.hideLoading();
-                // Could show an error state here
-            }
-        }
-    }
+    // Event handlers removed - using reactive LiveView pattern instead
 };

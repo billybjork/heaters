@@ -36,14 +36,15 @@ defmodule HeatersWeb.ClipPlayer do
   - `preload` - Video preload strategy (optional, defaults to "metadata")
   """
   attr(:clip, :map, required: true)
+  attr(:temp_clip, :map, default: %{})
   attr(:id, :string, default: nil)
   attr(:class, :string, default: "")
   attr(:controls, :boolean, default: true)
   attr(:preload, :string, default: "metadata")
 
   def clip_player(assigns) do
-    # Get video URL and player type
-    {video_url, player_type, clip_info} = get_video_data(assigns.clip)
+    # Get video URL and player type, passing temp clip info from LiveView assigns
+    {video_url, player_type, clip_info} = get_video_data(assigns.clip, assigns.temp_clip)
 
     # Use a stable ID based on clip to prevent unnecessary DOM recreation
     video_id = assigns.id || "video-player-#{assigns.clip.id}"
@@ -64,7 +65,6 @@ defmodule HeatersWeb.ClipPlayer do
             id={@video_id}
             class={["video-player", @class]}
             controls={@controls}
-            autoplay
             muted
             preload="none"
             playsinline
@@ -106,7 +106,7 @@ defmodule HeatersWeb.ClipPlayer do
   end
 
   # Helper function to get video data for the component
-  defp get_video_data(clip) do
+  defp get_video_data(clip, temp_clip \\ %{}) do
     # Load source video if not already loaded
     source_video =
       case clip do
@@ -122,18 +122,27 @@ defmodule HeatersWeb.ClipPlayer do
           %{proxy_filepath: nil}
       end
 
-    case VideoUrlHelper.get_video_url(clip, source_video) do
-      {:ok, url, player_type} ->
-        clip_info = build_clip_info(clip, player_type)
-        {url, to_string(player_type), clip_info}
+    # Check if temp clip is ready (reactive update from LiveView assigns)
+    case temp_clip do
+      %{clip_id: clip_id, url: url, ready: true} when clip_id == clip.id and not is_nil(url) ->
+        clip_info = build_clip_info(clip, :direct_s3)
+        {url, "direct_s3", clip_info}
 
-      {:loading, nil} ->
-        # Return a placeholder data structure for loading state
-        clip_info = build_clip_info(clip, :loading)
-        {nil, "loading", clip_info}
+      _ ->
+        # Fall back to normal video URL generation
+        case VideoUrlHelper.get_video_url(clip, source_video) do
+          {:ok, url, player_type} ->
+            clip_info = build_clip_info(clip, player_type)
+            {url, to_string(player_type), clip_info}
 
-      {:error, _reason} ->
-        {nil, "error", %{}}
+          {:loading, nil} ->
+            # Return a placeholder data structure for loading state
+            clip_info = build_clip_info(clip, :loading)
+            {nil, "loading", clip_info}
+
+          {:error, _reason} ->
+            {nil, "error", %{}}
+        end
     end
   end
 

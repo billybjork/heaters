@@ -6,7 +6,10 @@ defmodule Heaters.Storage.PlaybackCache.Worker do
   a better user experience with loading states and instant UI responses.
   """
 
-  use Oban.Worker, queue: :temp_clips, max_attempts: 1
+  use Oban.Worker,
+    queue: :temp_clips,
+    max_attempts: 1,
+    unique: [period: 60]
 
   alias Heaters.Repo
   require Logger

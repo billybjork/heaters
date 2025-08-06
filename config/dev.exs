@@ -123,7 +123,9 @@ config :heaters, Oban,
     # Reduced from 8 - only 1 concurrent video processing
     media_processing: 1,
     # Keep dispatcher and light operations
-    background_jobs: 2
+    background_jobs: 2,
+    # Temp clip generation for review interface
+    temp_clips: 5
   ]
 
 # Enable development-specific routes if you have them

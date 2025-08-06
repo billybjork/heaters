@@ -83,11 +83,11 @@ class ClipPlayer {
 
         // Clean handshake to prevent AbortError
         try {
-            await this.video.pause();
+            this.video.pause();
+            // Remove src and load to ensure clean state
+            this.video.removeAttribute('src');
+            this.video.load();
         } catch (_) { }
-
-        this.video.src = '';
-        this.video.load();
 
         this.playerType = playerType;
         this.clipInfo = clipInfo;  // Store clip info for later use
@@ -100,8 +100,7 @@ class ClipPlayer {
         // Set new clip
         this.video.src = videoUrl;
 
-        // Swallow AbortError safely
-        this.video.play().catch(() => { });
+        // Let the canplaythrough event handler manage autoplay to avoid competing play() calls
 
         // Log clip info for debugging
         if (clipInfo) {
@@ -121,15 +120,8 @@ class ClipPlayer {
         // Pause current playback
         this.video.pause();
 
-        // Load new clip
+        // Load new clip - autoplay will be handled by canplaythrough event
         await this.loadVideo(videoUrl, playerType, clipInfo);
-
-        // Auto-play new clip (browser permitting)
-        try {
-            await this.video.play();
-        } catch (error) {
-            console.log('[ClipPlayer] Auto-play prevented, waiting for user interaction');
-        }
     }
 
     /**

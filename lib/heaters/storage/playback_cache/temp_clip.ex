@@ -67,8 +67,8 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
 
   # Generate the actual clip file
   defp generate_clip_file(tmp_file, proxy_url, start_seconds, duration_seconds, timestamp) do
-    # FFmpeg command with stream copy (no re-encoding)
-    # Put -ss before -i for more accurate seeking with local files
+    # FFmpeg command optimized for browser compatibility
+    # Handle problematic audio streams by removing audio entirely for temp clips
     cmd_args = [
       "-hide_banner",
       "-loglevel",
@@ -84,9 +84,11 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
       # Duration to copy
       "-t",
       "#{duration_seconds}",
-      # Stream copy (no re-encode)
-      "-c",
+      # Copy video stream only
+      "-c:v",
       "copy",
+      # Remove audio entirely for temp clips (fixes decode issues)
+      "-an",
       # Optimize for web playback
       "-movflags",
       "+faststart",

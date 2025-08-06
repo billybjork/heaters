@@ -124,9 +124,13 @@ defmodule Heaters.Storage.PipelineCache.TempCache do
             # Only cleanup after successful upload
             cleanup_cache_entry(cached_path)
             :ok
+
           {:error, reason} ->
             # Keep file on upload failure for retry
-            Logger.warning("TempCache: Keeping cached file #{cached_path} after upload failure: #{inspect(reason)}")
+            Logger.warning(
+              "TempCache: Keeping cached file #{cached_path} after upload failure: #{inspect(reason)}"
+            )
+
             {:error, reason}
         end
 
