@@ -10,7 +10,7 @@ defmodule Heaters.Storage.Archive.Worker do
   alias Heaters.Storage.S3.Adapter
   alias Heaters.Media.Clip
   alias Heaters.Pipeline.WorkerBehavior
-  alias Heaters.Processing.ResultBuilder
+  alias Heaters.Processing.Support.ResultBuilder
   alias Ecto.Multi
   require Logger
 
@@ -32,12 +32,13 @@ defmodule Heaters.Storage.Archive.Worker do
           case archive_in_database(clip) do
             :ok ->
               # Build structured result with archival statistics
-              archive_result = ResultBuilder.archive_success(clip_id, deleted_count, %{
-                s3_operations: %{
-                  objects_deleted: deleted_count,
-                  operation_type: "delete_clip_and_artifacts"
-                }
-              })
+              archive_result =
+                ResultBuilder.archive_success(clip_id, deleted_count, %{
+                  s3_operations: %{
+                    objects_deleted: deleted_count,
+                    operation_type: "delete_clip_and_artifacts"
+                  }
+                })
 
               # Log structured result for observability
               ResultBuilder.log_result(__MODULE__, archive_result)
@@ -67,11 +68,12 @@ defmodule Heaters.Storage.Archive.Worker do
 
       {:error, :already_processed} ->
         Logger.info("ArchiveWorker: Clip #{clip_id} already archived, skipping")
-        
+
         # Return structured result for already processed clip
-        archive_result = ResultBuilder.archive_success(clip_id, 0, %{
-          already_processed: true
-        })
+        archive_result =
+          ResultBuilder.archive_success(clip_id, 0, %{
+            already_processed: true
+          })
 
         ResultBuilder.log_result(__MODULE__, archive_result)
         archive_result

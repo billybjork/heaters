@@ -152,7 +152,7 @@ python_executable =
     Path.join(Path.expand("."), "py/venv/bin/python")
   end
 
-config :heaters, Heaters.Processing.Py.Runner,
+config :heaters, Heaters.Processing.Support.PythonRunner,
   python_executable: python_executable,
   working_dir: if(in_docker, do: "/app", else: Path.expand(".")),
   runner_script: "py/runner.py"

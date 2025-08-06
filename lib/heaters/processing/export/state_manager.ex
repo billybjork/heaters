@@ -1,4 +1,4 @@
-defmodule Heaters.Processing.Render.Export.StateManager do
+defmodule Heaters.Processing.Export.StateManager do
   @moduledoc """
   State management for the export workflow.
 

@@ -43,8 +43,8 @@ defmodule Heaters.Processing.DetectScenes.Worker do
   alias Heaters.Processing.DetectScenes.StateManager
   alias Heaters.Pipeline.WorkerBehavior
   alias Heaters.Pipeline.Config, as: PipelineConfig
-  alias Heaters.Processing.Py.Runner, as: PyRunner
-  alias Heaters.Processing.ResultBuilder
+  alias Heaters.Processing.Support.PythonRunner, as: PyRunner
+  alias Heaters.Processing.Support.ResultBuilder
   require Logger
 
   # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
@@ -57,7 +57,12 @@ defmodule Heaters.Processing.DetectScenes.Worker do
   # Suppress false positive for convert_segments_to_cut_points/1 being unused.
   # This function is called from run_python_scene_detection/2, but the suppression above
   # prevents dialyzer from seeing the call path.
-  @dialyzer {:nowarn_function, [convert_segments_to_cut_points: 1, count_existing_clips: 1, calculate_average_confidence: 1]}
+  @dialyzer {:nowarn_function,
+             [
+               convert_segments_to_cut_points: 1,
+               count_existing_clips: 1,
+               calculate_average_confidence: 1
+             ]}
 
   @impl WorkerBehavior
   def handle_work(args) do
@@ -86,10 +91,11 @@ defmodule Heaters.Processing.DetectScenes.Worker do
         )
 
         # Return structured result for completed scene detection
-        scene_result = ResultBuilder.scene_detection_success(source_video.id, 0, %{
-          clips_created: count_existing_clips(source_video.id),
-          already_processed: true
-        })
+        scene_result =
+          ResultBuilder.scene_detection_success(source_video.id, 0, %{
+            clips_created: count_existing_clips(source_video.id),
+            already_processed: true
+          })
 
         ResultBuilder.log_result(__MODULE__, scene_result)
         scene_result
@@ -237,14 +243,15 @@ defmodule Heaters.Processing.DetectScenes.Worker do
                 # Chain directly to next stage using centralized pipeline configuration
                 :ok = PipelineConfig.maybe_chain_next_job(__MODULE__, final_video)
                 Logger.info("DetectScenesWorker: Successfully chained to next pipeline stage")
-                
+
                 # Build structured result with scene detection metrics
-                scene_result = ResultBuilder.scene_detection_success(source_video.id, length(cut_points), %{
-                  clips_created: length(created_clips),
-                  scene_confidence_avg: calculate_average_confidence(metadata),
-                  detection_method: metadata["method"] || "correl",
-                  metadata: metadata
-                })
+                scene_result =
+                  ResultBuilder.scene_detection_success(source_video.id, length(cut_points), %{
+                    clips_created: length(created_clips),
+                    scene_confidence_avg: calculate_average_confidence(metadata),
+                    detection_method: metadata["method"] || "correl",
+                    metadata: metadata
+                  })
 
                 # Log structured result for observability
                 ResultBuilder.log_result(__MODULE__, scene_result)
@@ -348,15 +355,19 @@ defmodule Heaters.Processing.DetectScenes.Worker do
   # Calculate average scene detection confidence from metadata
   defp calculate_average_confidence(metadata) when is_map(metadata) do
     confidence_scores = metadata["confidence_scores"] || []
-    
+
     case confidence_scores do
-      [] -> nil
+      [] ->
+        nil
+
       scores when is_list(scores) ->
         scores
         |> Enum.sum()
         |> Kernel./(length(scores))
         |> Float.round(3)
-      _ -> nil
+
+      _ ->
+        nil
     end
   end
 

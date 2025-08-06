@@ -519,7 +519,7 @@ defmodule Heaters.Storage.S3.Core do
         storage_class: storage_class
       }
 
-      case Heaters.Processing.Py.Runner.run_python_task("upload_s3", upload_args,
+      case Heaters.Processing.Support.PythonRunner.run_python_task("upload_s3", upload_args,
              timeout: timeout
            ) do
         {:ok, %{"status" => "success"} = result} ->

@@ -1,4 +1,4 @@
-defmodule Heaters.Processing.Types do
+defmodule Heaters.Processing.Support.Types do
   @moduledoc """
   Structured result types for processing pipeline workers.
 
@@ -9,7 +9,7 @@ defmodule Heaters.Processing.Types do
   defmodule DownloadResult do
     @moduledoc """
     Result structure for download operations with rich metadata.
-    
+
     Contains download statistics, quality metrics, and file information
     extracted from yt-dlp processing.
     """
@@ -46,7 +46,7 @@ defmodule Heaters.Processing.Types do
   defmodule PreprocessResult do
     @moduledoc """
     Result structure for preprocessing operations.
-    
+
     Contains proxy generation results, encoding statistics,
     and optimization metrics from FFmpeg processing.
     """
@@ -81,7 +81,7 @@ defmodule Heaters.Processing.Types do
   defmodule SceneDetectionResult do
     @moduledoc """
     Result structure for scene detection operations.
-    
+
     Contains cut point creation results, confidence metrics,
     and analysis data from scene detection algorithms.
     """
@@ -114,7 +114,7 @@ defmodule Heaters.Processing.Types do
   defmodule ExportResult do
     @moduledoc """
     Result structure for export operations.
-    
+
     Contains batch export statistics and individual clip
     processing outcomes.
     """
@@ -147,7 +147,7 @@ defmodule Heaters.Processing.Types do
   defmodule CachePersistResult do
     @moduledoc """
     Result structure for cache persistence operations.
-    
+
     Contains file upload statistics, cache performance
     metrics, and S3 operation details.
     """
@@ -178,7 +178,7 @@ defmodule Heaters.Processing.Types do
   defmodule EmbeddingResult do
     @moduledoc """
     Result structure for embedding generation operations.
-    
+
     Contains embedding statistics, keyframe analysis data,
     and vector processing metrics.
     """
@@ -211,7 +211,7 @@ defmodule Heaters.Processing.Types do
   defmodule ArchiveResult do
     @moduledoc """
     Result structure for clip archival operations.
-    
+
     Contains deletion statistics, S3 operation details,
     and cleanup metrics.
     """

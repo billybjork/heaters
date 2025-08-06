@@ -31,7 +31,7 @@ defmodule Heaters.Processing.Download.YtDlpConfig do
       # In worker:
       PyRunner.run("download", %{
         download_config: YtDlpConfig.get_download_config(),
-        normalize_args: FFmpegConfig.get_args(:download_normalization),
+        normalize_args: Heaters.Processing.Support.FFmpeg.Config.get_args(:download_normalization),
         ...
       })
 
@@ -173,7 +173,7 @@ defmodule Heaters.Processing.Download.YtDlpConfig do
       purpose: "Lightweight normalization to fix yt-dlp merge issues",
       when_to_apply: "Only for primary downloads that use separate video/audio streams",
       fallback_behavior: "Proceed with original download if normalization fails",
-      # FFmpeg args are provided by FFmpegConfig.get_args(:download_normalization)
+      # FFmpeg args are provided by Heaters.Processing.Support.FFmpeg.Config.get_args(:download_normalization)
       uses_ffmpeg_config: true
     }
   end

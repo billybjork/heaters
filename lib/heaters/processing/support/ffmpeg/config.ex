@@ -1,4 +1,4 @@
-defmodule Heaters.Processing.Render.FFmpegConfig do
+defmodule Heaters.Processing.Support.FFmpeg.Config do
   @moduledoc """
   Centralized FFmpeg configuration for all video processing operations.
 

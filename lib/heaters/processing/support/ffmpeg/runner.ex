@@ -1,4 +1,4 @@
-defmodule Heaters.Processing.Render.FFmpegRunner do
+defmodule Heaters.Processing.Support.FFmpeg.Runner do
   @moduledoc """
   Centralized FFmpeg operations for video processing.
 
@@ -15,7 +15,7 @@ defmodule Heaters.Processing.Render.FFmpegRunner do
   import FFmpex
   use FFmpex.Options
 
-  alias Heaters.Processing.Render.FFmpegConfig
+  alias Heaters.Processing.Support.FFmpeg.Config
 
   @type ffmpeg_result :: {:ok, integer()} | {:error, any()}
   @type metadata_result :: {:ok, map()} | {:error, any()}
@@ -43,7 +43,7 @@ defmodule Heaters.Processing.Render.FFmpegRunner do
     try do
       # Get encoding profile configuration
       profile = Keyword.get(opts, :profile, :keyframe_extraction)
-      config = FFmpegConfig.get_profile_config(profile)
+      config = Config.get_profile_config(profile)
 
       # Convert float times to strings for FFmpex compatibility
       start_time_str = Float.to_string(start_time)
@@ -396,7 +396,7 @@ defmodule Heaters.Processing.Render.FFmpegRunner do
           {:ok, [map()]} | {:error, any()}
   def extract_keyframes_by_timestamp(video_path, output_dir, timestamps, opts \\ []) do
     # Get single frame profile for consistent settings
-    config = FFmpegConfig.get_profile_config(:single_frame)
+    config = Config.get_profile_config(:single_frame)
 
     prefix = Keyword.get(opts, :prefix, "keyframe")
     quality = Keyword.get(opts, :quality, config.video[:quality] || "2")

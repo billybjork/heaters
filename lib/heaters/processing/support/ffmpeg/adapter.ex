@@ -1,4 +1,4 @@
-defmodule Heaters.Processing.Render.FFmpegAdapter do
+defmodule Heaters.Processing.Support.FFmpeg.Adapter do
   @moduledoc """
   FFmpeg adapter providing consistent I/O interface for domain operations.
 
@@ -7,7 +7,7 @@ defmodule Heaters.Processing.Render.FFmpegAdapter do
   All functions in this module perform I/O operations.
   """
 
-  alias Heaters.Processing.Render.FFmpegRunner
+  alias Heaters.Processing.Support.FFmpeg.Runner
 
   @doc """
   Get video metadata from a local video file.
@@ -19,7 +19,7 @@ defmodule Heaters.Processing.Render.FFmpegAdapter do
   """
   @spec get_video_metadata(String.t()) :: {:ok, map()} | {:error, any()}
   def get_video_metadata(video_path) when is_binary(video_path) do
-    FFmpegRunner.get_video_metadata(video_path)
+    Runner.get_video_metadata(video_path)
   end
 
   @doc """
@@ -47,7 +47,7 @@ defmodule Heaters.Processing.Render.FFmpegAdapter do
   def create_video_clip(input_path, output_path, start_time, end_time, opts \\ [])
       when is_binary(input_path) and is_binary(output_path) and is_float(start_time) and
              is_float(end_time) do
-    FFmpegRunner.create_video_clip(input_path, output_path, start_time, end_time, opts)
+    Runner.create_video_clip(input_path, output_path, start_time, end_time, opts)
   end
 
   @doc """
@@ -73,7 +73,7 @@ defmodule Heaters.Processing.Render.FFmpegAdapter do
           {:ok, [map()]} | {:error, any()}
   def extract_keyframes(video_path, output_dir, timestamps, opts \\ [])
       when is_binary(video_path) and is_binary(output_dir) and is_list(timestamps) do
-    FFmpegRunner.extract_keyframes_by_timestamp(video_path, output_dir, timestamps, opts)
+    Runner.extract_keyframes_by_timestamp(video_path, output_dir, timestamps, opts)
   end
 
   @doc """
@@ -93,7 +93,7 @@ defmodule Heaters.Processing.Render.FFmpegAdapter do
           {:ok, [map()]} | {:error, any()}
   def extract_keyframes_by_percentage(video_path, output_dir, percentages, opts \\ [])
       when is_binary(video_path) and is_binary(output_dir) and is_list(percentages) do
-    FFmpegRunner.extract_keyframes_by_percentage(video_path, output_dir, percentages, opts)
+    Runner.extract_keyframes_by_percentage(video_path, output_dir, percentages, opts)
   end
 
   @doc """
@@ -115,7 +115,7 @@ defmodule Heaters.Processing.Render.FFmpegAdapter do
       when is_binary(video_path) and is_binary(output_path) and is_float(timestamp) do
     output_dir = Path.dirname(output_path)
 
-    case FFmpegRunner.extract_keyframes_by_timestamp(video_path, output_dir, [timestamp], opts) do
+    case Runner.extract_keyframes_by_timestamp(video_path, output_dir, [timestamp], opts) do
       {:ok, [keyframe_data]} -> {:ok, keyframe_data}
       {:ok, []} -> {:error, "No keyframe extracted"}
       {:error, reason} -> {:error, reason}

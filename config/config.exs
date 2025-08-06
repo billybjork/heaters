@@ -77,7 +77,7 @@ config :elixir, :ansi_enabled, true
 config :heaters, :repo_port, Heaters.Database.EctoAdapter
 
 # Configure PyRunner paths and executables
-config :heaters, Heaters.Processing.Py.Runner,
+config :heaters, Heaters.Processing.Support.PythonRunner,
   python_executable: System.get_env("PYTHON_EXECUTABLE") || "python3",
   working_dir: System.get_env("PYTHON_WORKING_DIR") || File.cwd!(),
   runner_script: "py/runner.py"

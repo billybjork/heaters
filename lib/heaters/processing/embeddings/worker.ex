@@ -5,10 +5,10 @@ defmodule Heaters.Processing.Embeddings.Worker do
     unique: [period: 600, fields: [:args]]
 
   alias Heaters.Processing.Embeddings.Workflow
-  alias Heaters.Processing.Py.Runner, as: PyRunner
+  alias Heaters.Processing.Support.PythonRunner, as: PyRunner
   alias Heaters.Pipeline.WorkerBehavior
   alias Heaters.Media.Clips
-  alias Heaters.Processing.ResultBuilder
+  alias Heaters.Processing.Support.ResultBuilder
   require Logger
 
   # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
@@ -16,7 +16,15 @@ defmodule Heaters.Processing.Embeddings.Worker do
   # JUSTIFICATION: PyRunner requires DEV_DATABASE_URL and DEV_S3_BUCKET_NAME environment
   # variables. When not set, PyRunner always fails, making success patterns unreachable.
   # In configured environments, these functions will succeed normally.
-  @dialyzer {:nowarn_function, [handle_embedding_work: 1, run_embedding_task: 2, extract_embeddings_count: 1, extract_keyframes_count: 1, extract_vector_dimensions: 1, extract_processing_stats: 1]}
+  @dialyzer {:nowarn_function,
+             [
+               handle_embedding_work: 1,
+               run_embedding_task: 2,
+               extract_embeddings_count: 1,
+               extract_keyframes_count: 1,
+               extract_vector_dimensions: 1,
+               extract_processing_stats: 1
+             ]}
 
   @complete_states [:embedded]
 
@@ -88,19 +96,23 @@ defmodule Heaters.Processing.Embeddings.Worker do
         case Workflow.process_embedding_success(clip, result) do
           {:ok, _updated_clip} ->
             # Build structured result with embedding metrics
-            embedding_result = ResultBuilder.embedding_success(clip.id, extract_embeddings_count(result), %{
-              keyframes_processed: extract_keyframes_count(py_args[:keyframe_artifacts]),
-              vector_dimensions: extract_vector_dimensions(result),
-              processing_stats: extract_processing_stats(result),
-              metadata: result
-            })
+            embedding_result =
+              ResultBuilder.embedding_success(clip.id, extract_embeddings_count(result), %{
+                keyframes_processed: extract_keyframes_count(py_args[:keyframe_artifacts]),
+                vector_dimensions: extract_vector_dimensions(result),
+                processing_stats: extract_processing_stats(result),
+                metadata: result
+              })
 
             # Log structured result for observability
             ResultBuilder.log_result(__MODULE__, embedding_result)
             embedding_result
 
           {:error, reason} ->
-            Logger.error("EmbeddingWorker: Failed to process embedding success: #{inspect(reason)}")
+            Logger.error(
+              "EmbeddingWorker: Failed to process embedding success: #{inspect(reason)}"
+            )
+
             {:error, reason}
         end
 

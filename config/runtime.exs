@@ -334,7 +334,7 @@ if config_env() == :prod do
         end
       end)
 
-  config :heaters, Heaters.Processing.Py.Runner,
+  config :heaters, Heaters.Processing.Support.PythonRunner,
     python_executable: python_exe,
     working_dir: working_dir,
     runner_script: "py/runner.py"

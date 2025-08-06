@@ -1,4 +1,4 @@
-defmodule Heaters.Processing.ResultBuilder do
+defmodule Heaters.Processing.Support.ResultBuilder do
   @moduledoc """
   Helper functions for building structured worker results.
 
@@ -6,7 +6,7 @@ defmodule Heaters.Processing.ResultBuilder do
   with proper metadata and timing information.
   """
 
-  alias Heaters.Processing.Types.{
+  alias Heaters.Processing.Support.Types.{
     DownloadResult,
     PreprocessResult,
     SceneDetectionResult,

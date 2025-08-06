@@ -1,4 +1,4 @@
-defmodule Heaters.Processing.Py.Runner do
+defmodule Heaters.Processing.Support.PythonRunner do
   @moduledoc """
   Spawn-and-monitor a Python task through an OS port, with
   environment injection and Phoenix-PubSub progress streaming.
@@ -11,7 +11,7 @@ defmodule Heaters.Processing.Py.Runner do
 
   ## Configuration
 
-  @config_key Heaters.Processing.Py.Runner
+  @config_key Heaters.Processing.Support.PythonRunner
 
   defp python_executable do
     get_config!(:python_executable)

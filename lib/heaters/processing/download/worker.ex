@@ -24,13 +24,12 @@ defmodule Heaters.Processing.Download.Worker do
     unique: [period: 600, fields: [:args], keys: [:source_video_id]]
 
   alias Heaters.Media.Videos
-  alias Heaters.Processing.Py.Runner, as: PyRunner
+  alias Heaters.Processing.Support.PythonRunner, as: PyRunner
   alias Heaters.Storage.PipelineCache.TempCache
   alias Heaters.Processing.Download.{Core, YtDlpConfig}
-  alias Heaters.Processing.ResultBuilder
+  alias Heaters.Processing.Support.ResultBuilder
 
   alias Heaters.Pipeline.WorkerBehavior
-  alias Heaters.Processing.Render.FFmpegConfig
 
   require Logger
 
@@ -111,7 +110,7 @@ defmodule Heaters.Processing.Download.Worker do
         # Complete yt-dlp configuration from YtDlpConfig (validated)
         download_config: download_config,
         # FFmpeg normalization arguments from FFmpegConfig
-        normalize_args: FFmpegConfig.get_args(:download_normalization)
+        normalize_args: Heaters.Processing.Support.FFmpeg.Config.get_args(:download_normalization)
       }
 
       case PyRunner.run_python_task("download", py_args, timeout: :timer.minutes(20)) do
@@ -142,16 +141,17 @@ defmodule Heaters.Processing.Download.Worker do
               # Chain directly to next stage using centralized pipeline configuration
               :ok = Heaters.Pipeline.Config.maybe_chain_next_job(__MODULE__, updated_video)
               Logger.info("DownloadWorker: Successfully chained to next pipeline stage")
-              
+
               # Build structured result with rich metadata
-              download_result = ResultBuilder.download_success(source_video_id, updated_video.filepath, %{
-                title: updated_video.title,
-                duration_seconds: updated_video.duration_seconds,
-                file_size_bytes: get_file_size(result),
-                format_info: get_format_info(result),
-                quality_metrics: get_quality_metrics(result),
-                metadata: metadata
-              })
+              download_result =
+                ResultBuilder.download_success(source_video_id, updated_video.filepath, %{
+                  title: updated_video.title,
+                  duration_seconds: updated_video.duration_seconds,
+                  file_size_bytes: get_file_size(result),
+                  format_info: get_format_info(result),
+                  quality_metrics: get_quality_metrics(result),
+                  metadata: metadata
+                })
 
               # Log structured result for observability
               ResultBuilder.log_result(__MODULE__, download_result)

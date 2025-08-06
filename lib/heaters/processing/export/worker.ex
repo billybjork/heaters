@@ -1,4 +1,4 @@
-defmodule Heaters.Processing.Render.Export.Worker do
+defmodule Heaters.Processing.Export.Worker do
   @moduledoc """
   Worker for exporting virtual clips to physical clips using the proxy.
 
@@ -61,10 +61,10 @@ defmodule Heaters.Processing.Render.Export.Worker do
 
   alias Heaters.Repo
   alias Heaters.Media.Clip
-  alias Heaters.Processing.Render.Export.StateManager
+  alias Heaters.Processing.Export.StateManager
   alias Heaters.Pipeline.WorkerBehavior
-  alias Heaters.Processing.Py.Runner, as: PyRunner
-  alias Heaters.Processing.ResultBuilder
+  alias Heaters.Processing.Support.PythonRunner, as: PyRunner
+  alias Heaters.Processing.Support.ResultBuilder
   require Logger
 
   # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
@@ -101,11 +101,12 @@ defmodule Heaters.Processing.Render.Export.Worker do
         )
 
         # Return structured result for no clips to process
-        export_result = ResultBuilder.export_success(source_video_id, 0, %{
-          successful_exports: 0,
-          failed_exports: 0,
-          no_clips_to_process: true
-        })
+        export_result =
+          ResultBuilder.export_success(source_video_id, 0, %{
+            successful_exports: 0,
+            failed_exports: 0,
+            no_clips_to_process: true
+          })
 
         ResultBuilder.log_result(__MODULE__, export_result)
         export_result
@@ -263,15 +264,17 @@ defmodule Heaters.Processing.Render.Export.Worker do
     case Enum.find(results, &match?({:error, _}, &1)) do
       nil ->
         Logger.info("ExportWorker: Successfully updated #{length(clips)} clips to physical")
-        
+
         # Build structured result with export statistics
         source_video_id = List.first(clips).source_video_id
-        export_result = ResultBuilder.export_success(source_video_id, length(clips), %{
-          successful_exports: length(clips),
-          failed_exports: 0,
-          total_duration_exported: calculate_total_duration(exported_clips),
-          metadata: metadata
-        })
+
+        export_result =
+          ResultBuilder.export_success(source_video_id, length(clips), %{
+            successful_exports: length(clips),
+            failed_exports: 0,
+            total_duration_exported: calculate_total_duration(exported_clips),
+            metadata: metadata
+          })
 
         # Log structured result for observability
         ResultBuilder.log_result(__MODULE__, export_result)
