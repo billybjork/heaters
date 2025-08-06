@@ -107,7 +107,7 @@ defmodule HeatersWeb.ClipPlayer do
             class={["video-player", @class]}
             controls={@controls}
             muted
-            preload="none"
+            preload={@preload}
             playsinline
             crossorigin="anonymous"
             phx-hook=".ClipPlayer"
@@ -315,6 +315,12 @@ defmodule HeatersWeb.ClipPlayer do
         async switchClip(videoUrl, playerType = 'ffmpeg_stream', clipInfo = null) {
           console.log(`[ClipPlayer] Switching to new clip: ${videoUrl}`);
           this.video.pause();
+          
+          // Show loading immediately for better UX
+          if (playerType === 'ffmpeg_stream') {
+            this.showLoading('Loading next clip...');
+          }
+          
           await this.loadVideo(videoUrl, playerType, clipInfo);
         }
 
@@ -403,26 +409,20 @@ defmodule HeatersWeb.ClipPlayer do
         }
 
         handleEnded() {
-          console.log('[ClipPlayer] Clip ended');
-
-          const isClip = this.playerType === 'direct_s3' || this.clipInfo;
-
-          if (isClip) {
-            console.log('[ClipPlayer] Clip finished playing - stopping');
-          } else {
-            console.log('[ClipPlayer] Video ended - looping back to start');
-            this.video.currentTime = 0;
-            this.video.play().catch(error => {
-              console.log('[ClipPlayer] Loop playback failed:', error);
-            });
-          }
+          console.log('[ClipPlayer] Clip ended - looping back to start');
+          
+          // Always loop clips back to the beginning
+          this.video.currentTime = 0;
+          this.video.play().catch(error => {
+            console.log('[ClipPlayer] Loop playback failed:', error);
+          });
 
           this.video.dispatchEvent(new CustomEvent('clipended', {
             detail: {
               playerType: this.playerType,
               currentTime: this.video.currentTime,
               duration: this.video.duration,
-              looped: !isClip
+              looped: true
             }
           }));
         }
