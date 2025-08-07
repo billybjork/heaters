@@ -2,8 +2,13 @@ defmodule Heaters.Processing.Encode.Core do
   @moduledoc """
   Native Elixir implementation of media encoding functionality.
 
-  Replaces the Python encode.py task with native Elixir/FFmpex implementation,
-  providing the same capabilities with better integration and performance.
+  This module provides the main interface for video encoding operations,
+  delegating to focused sub-modules for specific concerns:
+
+  - `FileOperations` - File and directory management
+  - `MetadataExtraction` - Video metadata and keyframe extraction  
+  - `VideoProcessing` - Proxy and master file creation
+  - `OutputHandling` - Upload vs cache strategies
 
   This module handles:
   - Master file creation (lossless archival)
@@ -21,12 +26,14 @@ defmodule Heaters.Processing.Encode.Core do
   """
 
   require Logger
-  import FFmpex
-  use FFmpex.Options
 
-  alias Heaters.Processing.Support.FFmpeg.{Runner, Config}
   alias Heaters.Processing.Support.Types.EncodeResult
-  alias Heaters.Storage.S3.Core, as: S3Core
+  alias Heaters.Processing.Encode.{
+    FileOperations,
+    MetadataExtraction,
+    VideoProcessing,
+    OutputHandling
+  }
 
   @type encode_result :: {:ok, EncodeResult.t()} | {:error, String.t()}
   @type encode_opts :: [
@@ -41,8 +48,6 @@ defmodule Heaters.Processing.Encode.Core do
 
   @doc """
   Process a source video into master and proxy formats using native Elixir implementation.
-
-  Replaces the Python `run_encode` function with native FFmpex-based processing.
 
   ## Parameters
   - `source_video_path`: Local or S3 path to source video
@@ -97,12 +102,12 @@ defmodule Heaters.Processing.Encode.Core do
       "#{operation_name}: Master profile: #{master_profile}, Proxy profile: #{proxy_profile}"
     )
 
-    with {:ok, work_dir} <- setup_temp_directory(Keyword.get(opts, :temp_dir), operation_name),
+    with {:ok, work_dir} <- FileOperations.setup_temp_directory(Keyword.get(opts, :temp_dir), operation_name),
          {:ok, local_source_path} <-
-           get_local_source_video(source_video_path, work_dir, operation_name),
-         {:ok, source_metadata} <- extract_source_metadata(local_source_path, operation_name),
+           FileOperations.get_local_source_video(source_video_path, work_dir, operation_name),
+         {:ok, source_metadata} <- MetadataExtraction.extract_source_metadata(local_source_path, operation_name),
          {:ok, proxy_info} <-
-           create_proxy_file(
+           VideoProcessing.create_proxy_file(
              local_source_path,
              proxy_output_path,
              source_metadata,
@@ -112,7 +117,7 @@ defmodule Heaters.Processing.Encode.Core do
              operation_name
            ),
          {:ok, master_info} <-
-           create_master_file(
+           VideoProcessing.create_master_file(
              local_source_path,
              master_output_path,
              source_metadata,
@@ -122,7 +127,7 @@ defmodule Heaters.Processing.Encode.Core do
              operation_name
            ),
          {:ok, final_result} <-
-           handle_output_strategy(
+           OutputHandling.handle_output_strategy(
              proxy_info,
              master_info,
              source_metadata,
@@ -165,6 +170,8 @@ defmodule Heaters.Processing.Encode.Core do
 
   This function handles the proxy creation process including smart reuse
   when the source video is already suitable as a proxy.
+
+  Delegates to VideoProcessing.create_proxy_file/7.
   """
   @spec create_proxy_file(
           String.t(),
@@ -185,50 +192,23 @@ defmodule Heaters.Processing.Encode.Core do
         work_dir,
         operation_name
       ) do
-    proxy_local_path = Path.join(work_dir, "proxy.mp4")
-
-    Logger.info("#{operation_name}: Creating proxy file using profile: #{profile}")
-
-    if reuse_source && can_reuse_as_proxy?(metadata) do
-      Logger.info("#{operation_name}: Reusing source file as proxy (smart optimization)")
-
-      case File.cp(source_path, proxy_local_path) do
-        :ok ->
-          # Extract keyframes from the reused proxy
-          keyframe_offsets = extract_keyframe_offsets(proxy_local_path, operation_name)
-
-          {:ok,
-           %{
-             local_path: proxy_local_path,
-             s3_path: output_s3_path,
-             keyframe_offsets: keyframe_offsets,
-             reused_source: true
-           }}
-
-        {:error, reason} ->
-          Logger.error(
-            "#{operation_name}: Failed to copy source for proxy reuse: #{inspect(reason)}"
-          )
-
-          {:error, "Failed to copy source for proxy reuse: #{inspect(reason)}"}
-      end
-    else
-      # Create new proxy using FFmpeg encoding
-      create_encoded_proxy(
-        source_path,
-        proxy_local_path,
-        output_s3_path,
-        metadata,
-        profile,
-        operation_name
-      )
-    end
+    VideoProcessing.create_proxy_file(
+      source_path,
+      output_s3_path,
+      metadata,
+      profile,
+      reuse_source,
+      work_dir,
+      operation_name
+    )
   end
 
   @doc """
   Create a master video file using FFmpeg with lossless encoding.
 
   Creates an archival-quality master file for long-term storage.
+
+  Delegates to VideoProcessing.create_master_file/7.
   """
   @spec create_master_file(
           String.t(),
@@ -249,630 +229,14 @@ defmodule Heaters.Processing.Encode.Core do
         work_dir,
         operation_name
       ) do
-    if skip_creation do
-      Logger.info("#{operation_name}: Skipping master file creation (cost optimization)")
-      {:ok, %{s3_path: nil, local_path: nil, skipped: true}}
-    else
-      master_local_path = Path.join(work_dir, "master.mp4")
-
-      Logger.info("#{operation_name}: Creating master file using profile: #{profile}")
-
-      case create_encoded_master(
-             source_path,
-             master_local_path,
-             output_s3_path,
-             metadata,
-             profile,
-             operation_name
-           ) do
-        {:ok, master_info} ->
-          {:ok, master_info}
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    end
-  end
-
-  ## Private helper functions
-
-  # Set up temporary working directory
-  @spec setup_temp_directory(String.t() | nil, String.t()) ::
-          {:ok, String.t()} | {:error, String.t()}
-  defp setup_temp_directory(nil, operation_name) do
-    case System.tmp_dir() do
-      nil ->
-        {:error, "#{operation_name}: Unable to determine system temporary directory"}
-
-      temp_dir ->
-        work_dir = Path.join(temp_dir, "heaters_encode_#{:os.system_time(:millisecond)}")
-
-        case File.mkdir_p(work_dir) do
-          :ok ->
-            {:ok, work_dir}
-
-          {:error, reason} ->
-            {:error, "#{operation_name}: Failed to create temp directory: #{inspect(reason)}"}
-        end
-    end
-  end
-
-  defp setup_temp_directory(custom_temp_dir, operation_name) do
-    work_dir = Path.join(custom_temp_dir, "heaters_encode_#{:os.system_time(:millisecond)}")
-
-    case File.mkdir_p(work_dir) do
-      :ok ->
-        {:ok, work_dir}
-
-      {:error, reason} ->
-        {:error, "#{operation_name}: Failed to create custom temp directory: #{inspect(reason)}"}
-    end
-  end
-
-  # Get local source video (download from S3 if needed)
-  @spec get_local_source_video(String.t(), String.t(), String.t()) ::
-          {:ok, String.t()} | {:error, String.t()}
-  defp get_local_source_video(source_path, work_dir, operation_name) do
-    if File.exists?(source_path) do
-      Logger.info("#{operation_name}: Using local source video: #{source_path}")
-      {:ok, source_path}
-    else
-      # Assume it's an S3 path and download it
-      local_source_path = Path.join(work_dir, "source.mp4")
-
-      Logger.info("#{operation_name}: Downloading source video from S3: #{source_path}")
-
-      case S3Core.download_file(source_path, local_source_path, operation_name: operation_name) do
-        {:ok, ^local_source_path} ->
-          {:ok, local_source_path}
-
-        {:error, reason} ->
-          {:error, "Failed to download source video: #{reason}"}
-      end
-    end
-  end
-
-  # Extract source video metadata
-  @spec extract_source_metadata(String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
-  defp extract_source_metadata(source_path, operation_name) do
-    Logger.info("#{operation_name}: Extracting source video metadata")
-
-    case Runner.get_video_metadata(source_path) do
-      {:ok, metadata} ->
-        Logger.info("#{operation_name}: Source metadata: #{inspect(metadata)}")
-        {:ok, metadata}
-
-      {:error, reason} ->
-        {:error, "Failed to extract source metadata: #{reason}"}
-    end
-  end
-
-  # Check if source can be reused as proxy
-  @spec can_reuse_as_proxy?(map()) :: boolean()
-  defp can_reuse_as_proxy?(%{width: width, height: height})
-       when is_integer(width) and is_integer(height) do
-    # Reuse if resolution is 1080p or lower (suitable for proxy)
-    width <= 1920 and height <= 1080
-  end
-
-  defp can_reuse_as_proxy?(_metadata), do: false
-
-  # Create encoded proxy using FFmpeg
-  @spec create_encoded_proxy(String.t(), String.t(), String.t(), map(), atom(), String.t()) ::
-          {:ok, map()} | {:error, String.t()}
-  defp create_encoded_proxy(
-         source_path,
-         local_output_path,
-         s3_output_path,
-         metadata,
-         profile,
-         operation_name
-       ) do
-    config = Config.get_profile_config(profile)
-    duration = Map.get(metadata, :duration, 0.0)
-
-    Logger.info("#{operation_name}: Encoding proxy with duration: #{duration}s")
-
-    # Build FFmpeg command using configuration
-    command = build_proxy_ffmpeg_command(source_path, local_output_path, config)
-
-    case execute_ffmpeg_with_progress(command, duration, "Proxy Creation", operation_name) do
-      {:ok, _} ->
-        case File.stat(local_output_path) do
-          {:ok, %File.Stat{size: file_size}} when file_size > 0 ->
-            Logger.info("#{operation_name}: Proxy created successfully: #{file_size} bytes")
-
-            # Extract keyframes from the new proxy
-            keyframe_offsets = extract_keyframe_offsets(local_output_path, operation_name)
-
-            {:ok,
-             %{
-               local_path: local_output_path,
-               s3_path: s3_output_path,
-               keyframe_offsets: keyframe_offsets,
-               reused_source: false
-             }}
-
-          {:ok, %File.Stat{size: 0}} ->
-            {:error, "Proxy file is empty: #{local_output_path}"}
-
-          {:error, reason} ->
-            {:error, "Proxy file not created: #{inspect(reason)}"}
-        end
-
-      {:error, reason} ->
-        {:error, "FFmpeg proxy creation failed: #{reason}"}
-    end
-  end
-
-  # Create encoded master using FFmpeg
-  @spec create_encoded_master(String.t(), String.t(), String.t(), map(), atom(), String.t()) ::
-          {:ok, map()} | {:error, String.t()}
-  defp create_encoded_master(
-         source_path,
-         local_output_path,
-         s3_output_path,
-         metadata,
-         profile,
-         operation_name
-       ) do
-    config = Config.get_profile_config(profile)
-    duration = Map.get(metadata, :duration, 0.0)
-
-    Logger.info("#{operation_name}: Encoding master with duration: #{duration}s")
-
-    # Build FFmpeg command using configuration
-    command = build_master_ffmpeg_command(source_path, local_output_path, config)
-
-    case execute_ffmpeg_with_progress(command, duration, "Master Creation", operation_name) do
-      {:ok, _} ->
-        case File.stat(local_output_path) do
-          {:ok, %File.Stat{size: file_size}} when file_size > 0 ->
-            Logger.info("#{operation_name}: Master created successfully: #{file_size} bytes")
-
-            {:ok,
-             %{
-               local_path: local_output_path,
-               s3_path: s3_output_path,
-               skipped: false
-             }}
-
-          {:ok, %File.Stat{size: 0}} ->
-            {:error, "Master file is empty: #{local_output_path}"}
-
-          {:error, reason} ->
-            {:error, "Master file not created: #{inspect(reason)}"}
-        end
-
-      {:error, reason} ->
-        {:error, "FFmpeg master creation failed: #{reason}"}
-    end
-  end
-
-  # Build FFmpeg command for proxy encoding
-  @spec build_proxy_ffmpeg_command(String.t(), String.t(), map()) :: FFmpex.Command.t()
-  defp build_proxy_ffmpeg_command(input_path, output_path, config) do
-    FFmpex.new_command()
-    |> add_input_file(input_path)
-    |> add_output_file(output_path)
-    |> add_profile_encoding_options(config)
-    |> add_global_option(option_y())
-  end
-
-  # Build FFmpeg command for master encoding
-  @spec build_master_ffmpeg_command(String.t(), String.t(), map()) :: FFmpex.Command.t()
-  defp build_master_ffmpeg_command(input_path, output_path, config) do
-    FFmpex.new_command()
-    |> add_input_file(input_path)
-    |> add_output_file(output_path)
-    |> add_profile_encoding_options(config)
-    |> add_global_option(option_y())
-  end
-
-  # Add profile encoding options to FFmpeg command (similar to existing Runner implementation)
-  @spec add_profile_encoding_options(FFmpex.Command.t(), map()) :: FFmpex.Command.t()
-  defp add_profile_encoding_options(command, config) do
-    command
-    |> add_video_encoding_options(config.video)
-    |> add_audio_encoding_options(config[:audio])
-    |> add_web_optimization_options(config[:web_optimization])
-  end
-
-  defp add_video_encoding_options(command, video_config) do
-    command
-    |> add_stream_specifier(stream_type: :video)
-    |> add_stream_option(option_c(video_config.codec))
-    |> add_optional_stream_option(&option_preset/1, video_config[:preset])
-    |> add_optional_stream_option(&option_crf/1, video_config[:crf])
-    |> add_optional_stream_option(&option_pix_fmt/1, video_config[:pix_fmt])
-    |> add_optional_stream_option(&option_g/1, video_config[:gop_size])
-  end
-
-  defp add_audio_encoding_options(command, nil), do: command
-
-  defp add_audio_encoding_options(command, audio_config) do
-    command
-    |> add_stream_specifier(stream_type: :audio)
-    |> add_stream_option(option_c(audio_config.codec))
-    |> add_optional_stream_option(&option_b/1, audio_config[:bitrate])
-  end
-
-  defp add_web_optimization_options(command, nil), do: command
-
-  defp add_web_optimization_options(command, web_opts) do
-    command
-    |> add_optional_file_option(&option_movflags/1, web_opts[:movflags])
-  end
-
-  defp add_optional_stream_option(command, _option_func, nil), do: command
-
-  defp add_optional_stream_option(command, option_func, value) do
-    add_stream_option(command, option_func.(value))
-  end
-
-  defp add_optional_file_option(command, _option_func, nil), do: command
-
-  defp add_optional_file_option(command, option_func, value) do
-    add_file_option(command, option_func.(value))
-  end
-
-  # Execute FFmpeg with progress reporting
-  @spec execute_ffmpeg_with_progress(FFmpex.Command.t(), float(), String.t(), String.t()) ::
-          {:ok, any()} | {:error, String.t()}
-  defp execute_ffmpeg_with_progress(command, duration, task_name, operation_name) do
-    Logger.info("#{operation_name}: Starting #{task_name}")
-
-    # Convert FFmpex command to raw arguments for progress monitoring
-    case ffmpeg_command_to_args(command) do
-      {:ok, args} ->
-        execute_ffmpeg_with_real_progress(args, duration, task_name, operation_name)
-
-      {:error, reason} ->
-        Logger.error("#{operation_name}: Failed to build FFmpeg command: #{inspect(reason)}")
-        {:error, "Failed to build FFmpeg command: #{inspect(reason)}"}
-    end
-  end
-
-  # Convert FFmpex command to raw FFmpeg arguments
-  @spec ffmpeg_command_to_args(FFmpex.Command.t()) :: {:ok, [String.t()]} | {:error, String.t()}
-  defp ffmpeg_command_to_args(command) do
-    try do
-      case FFmpex.prepare(command) do
-        {_executable, args} -> {:ok, args}
-      end
-    rescue
-      error ->
-        {:error, "FFmpex command preparation failed: #{Exception.message(error)}"}
-    end
-  end
-
-  # Execute FFmpeg with real-time progress reporting (similar to Python implementation)
-  @spec execute_ffmpeg_with_real_progress([String.t()], float(), String.t(), String.t()) ::
-          {:ok, any()} | {:error, String.t()}
-  defp execute_ffmpeg_with_real_progress(args, duration, task_name, operation_name) do
-    # Add progress reporting to stderr (similar to Python: -progress pipe:2)
-    args_with_progress = args ++ ["-progress", "pipe:2"]
-
-    Logger.info("#{operation_name}: #{task_name} with duration: #{duration}s")
-
-    # Use Port for real-time stderr processing
-    port_opts = [
-      :stderr_to_stdout,
-      :exit_status,
-      :binary,
-      :use_stdio,
-      args: args_with_progress
-    ]
-
-    port = Port.open({:spawn_executable, System.find_executable("ffmpeg")}, port_opts)
-
-    result = monitor_ffmpeg_progress(port, duration, task_name, operation_name, "")
-
-    case result do
-      {:ok, _} ->
-        Logger.info("#{operation_name}: #{task_name} completed successfully")
-        {:ok, nil}
-
-      {:error, reason} ->
-        Logger.error("#{operation_name}: #{task_name} failed: #{reason}")
-        {:error, "#{task_name} failed: #{reason}"}
-    end
-  rescue
-    error ->
-      Logger.error("#{operation_name}: #{task_name} exception: #{Exception.message(error)}")
-      {:error, "#{task_name} exception: #{Exception.message(error)}"}
-  end
-
-  # Monitor FFmpeg progress by parsing stderr output (entry point)
-  @spec monitor_ffmpeg_progress(port(), float(), String.t(), String.t(), String.t()) ::
-          {:ok, any()} | {:error, String.t()}
-  defp monitor_ffmpeg_progress(port, duration, task_name, operation_name, buffer) do
-    monitor_ffmpeg_progress_with_state(port, duration, task_name, operation_name, buffer, 0)
-  end
-
-  # Internal function with progress state tracking
-  @spec monitor_ffmpeg_progress_with_state(
-          port(),
-          float(),
-          String.t(),
-          String.t(),
-          String.t(),
-          integer()
-        ) ::
-          {:ok, any()} | {:error, String.t()}
-  defp monitor_ffmpeg_progress_with_state(
-         port,
-         duration,
-         task_name,
-         operation_name,
-         buffer,
-         last_progress
-       ) do
-    receive do
-      {^port, {:data, data}} ->
-        new_buffer = buffer <> data
-        {processed_lines, remaining_buffer} = extract_complete_lines(new_buffer)
-
-        new_last_progress =
-          Enum.reduce(processed_lines, last_progress, fn line, acc_progress ->
-            parse_and_log_progress(line, duration, task_name, operation_name, acc_progress)
-          end)
-
-        monitor_ffmpeg_progress_with_state(
-          port,
-          duration,
-          task_name,
-          operation_name,
-          remaining_buffer,
-          new_last_progress
-        )
-
-      {^port, {:exit_status, 0}} ->
-        Logger.info("#{operation_name}: #{task_name} (100% complete)")
-        {:ok, :success}
-
-      {^port, {:exit_status, exit_code}} ->
-        {:error, "FFmpeg exited with code #{exit_code}"}
-    after
-      30 * 60 * 1000 ->
-        Port.close(port)
-        {:error, "FFmpeg operation timed out after 30 minutes"}
-    end
-  end
-
-  # Extract complete lines from buffer
-  @spec extract_complete_lines(String.t()) :: {[String.t()], String.t()}
-  defp extract_complete_lines(buffer) do
-    lines = String.split(buffer, "\n")
-
-    case List.pop_at(lines, -1) do
-      {remaining_buffer, complete_lines} ->
-        {complete_lines, remaining_buffer || ""}
-    end
-  end
-
-  # Parse progress lines and log percentage updates
-  @spec parse_and_log_progress(String.t(), float(), String.t(), String.t(), integer()) ::
-          integer()
-  defp parse_and_log_progress(line, duration, task_name, operation_name, last_progress) do
-    if String.contains?(line, "out_time=") && duration > 0 do
-      case extract_time_from_progress_line(line) do
-        {:ok, current_seconds} ->
-          progress = min(100, trunc(current_seconds / duration * 100))
-
-          if progress > 0 && progress >= last_progress + 10 && rem(progress, 10) == 0 do
-            Logger.info("#{operation_name}: #{task_name} #{progress}% complete")
-            progress
-          else
-            last_progress
-          end
-
-        :error ->
-          last_progress
-      end
-    else
-      last_progress
-    end
-  end
-
-  # Extract time from FFmpeg progress line (out_time=00:01:23.45)
-  @spec extract_time_from_progress_line(String.t()) :: {:ok, float()} | :error
-  defp extract_time_from_progress_line(line) do
-    case Regex.run(~r/out_time=(\d{2}:\d{2}:\d{2}\.\d+)/, line) do
-      [_, time_str] ->
-        parse_time_string(time_str)
-
-      nil ->
-        :error
-    end
-  end
-
-  # Parse time string in format HH:MM:SS.mmm to seconds
-  @spec parse_time_string(String.t()) :: {:ok, float()} | :error
-  defp parse_time_string(time_str) do
-    try do
-      case String.split(time_str, ":") do
-        [hours_str, minutes_str, seconds_str] ->
-          hours = parse_numeric(hours_str)
-          minutes = parse_numeric(minutes_str)
-          seconds = parse_numeric(seconds_str)
-          total_seconds = hours * 3600 + minutes * 60 + seconds
-          {:ok, total_seconds}
-
-        _ ->
-          :error
-      end
-    rescue
-      _ ->
-        :error
-    end
-  end
-
-  # Helper to parse numeric strings that could be integers or floats
-  @spec parse_numeric(String.t()) :: float()
-  defp parse_numeric(str) do
-    case String.contains?(str, ".") do
-      true -> String.to_float(str)
-      false -> String.to_integer(str) / 1.0
-    end
-  end
-
-  # Extract keyframe offsets from video file
-  @spec extract_keyframe_offsets(String.t(), String.t()) :: [integer()]
-  defp extract_keyframe_offsets(video_path, operation_name) do
-    Logger.debug("#{operation_name}: Extracting keyframe offsets from #{video_path}")
-
-    try do
-      case System.cmd("ffprobe", [
-             "-v",
-             "quiet",
-             "-select_streams",
-             "v:0",
-             "-show_entries",
-             "frame=key_frame,pkt_pos",
-             "-print_format",
-             "json",
-             video_path
-           ]) do
-        {output, 0} ->
-          case Jason.decode(output) do
-            {:ok, %{"frames" => frames}} ->
-              offsets =
-                frames
-                |> Enum.filter(fn frame -> Map.get(frame, "key_frame") == 1 end)
-                |> Enum.map(fn frame ->
-                  case Map.get(frame, "pkt_pos") do
-                    pos when is_binary(pos) ->
-                      case Integer.parse(pos) do
-                        {int_pos, _} -> int_pos
-                        _ -> nil
-                      end
-
-                    _ ->
-                      nil
-                  end
-                end)
-                |> Enum.reject(&is_nil/1)
-                |> Enum.sort()
-
-              Logger.info("#{operation_name}: Extracted #{length(offsets)} keyframe offsets")
-              offsets
-
-            {:error, reason} ->
-              Logger.warning(
-                "#{operation_name}: Failed to parse keyframe JSON: #{inspect(reason)}"
-              )
-
-              []
-          end
-
-        {_output, exit_code} ->
-          Logger.warning("#{operation_name}: ffprobe failed with exit code #{exit_code}")
-          []
-      end
-    rescue
-      e ->
-        Logger.warning(
-          "#{operation_name}: Exception extracting keyframes: #{Exception.message(e)}"
-        )
-
-        []
-    end
-  end
-
-  # Handle output strategy (immediate upload vs temp cache)
-  @spec handle_output_strategy(map(), map(), map(), boolean(), String.t()) ::
-          {:ok, map()} | {:error, String.t()}
-  defp handle_output_strategy(
-         proxy_info,
-         master_info,
-         source_metadata,
-         use_temp_cache,
-         operation_name
-       ) do
-    if use_temp_cache do
-      handle_temp_cache_strategy(proxy_info, master_info, source_metadata, operation_name)
-    else
-      handle_immediate_upload_strategy(proxy_info, master_info, source_metadata, operation_name)
-    end
-  end
-
-  # Handle temp cache strategy
-  @spec handle_temp_cache_strategy(map(), map(), map(), String.t()) ::
-          {:ok, map()} | {:error, String.t()}
-  defp handle_temp_cache_strategy(proxy_info, master_info, source_metadata, operation_name) do
-    Logger.info("#{operation_name}: Using temp cache strategy - files will be uploaded later")
-
-    cache_dir = Path.join(System.tmp_dir(), "heaters_encode_cache")
-    File.mkdir_p(cache_dir)
-
-    # Cache proxy
-    proxy_cache_name = proxy_info.s3_path |> String.replace("/", "_")
-    proxy_cached_path = Path.join(cache_dir, proxy_cache_name)
-    File.cp!(proxy_info.local_path, proxy_cached_path)
-
-    result = %{
-      proxy_path: proxy_info.s3_path,
-      proxy_local_path: proxy_cached_path,
-      keyframe_offsets: proxy_info.keyframe_offsets,
-      metadata: source_metadata
-    }
-
-    # Cache master if created
-    result =
-      if master_info[:local_path] do
-        master_cache_name = master_info.s3_path |> String.replace("/", "_")
-        master_cached_path = Path.join(cache_dir, master_cache_name)
-        File.cp!(master_info.local_path, master_cached_path)
-
-        Map.merge(result, %{
-          master_path: master_info.s3_path,
-          master_local_path: master_cached_path
-        })
-      else
-        result
-      end
-
-    {:ok, result}
-  end
-
-  # Handle immediate upload strategy
-  @spec handle_immediate_upload_strategy(map(), map(), map(), String.t()) ::
-          {:ok, map()} | {:error, String.t()}
-  defp handle_immediate_upload_strategy(proxy_info, master_info, source_metadata, operation_name) do
-    Logger.info("#{operation_name}: Using immediate upload strategy")
-
-    # Upload proxy
-    case S3Core.upload_file(proxy_info.local_path, proxy_info.s3_path,
-           operation_name: operation_name,
-           storage_class: "STANDARD"
-         ) do
-      {:ok, _} ->
-        result = %{
-          proxy_path: proxy_info.s3_path,
-          keyframe_offsets: proxy_info.keyframe_offsets,
-          metadata: source_metadata
-        }
-
-        # Upload master if created
-        if master_info[:local_path] do
-          case S3Core.upload_file(master_info.local_path, master_info.s3_path,
-                 operation_name: operation_name,
-                 storage_class: "STANDARD"
-               ) do
-            {:ok, _} ->
-              result = Map.put(result, :master_path, master_info.s3_path)
-              {:ok, result}
-
-            {:error, reason} ->
-              {:error, "Failed to upload master: #{reason}"}
-          end
-        else
-          {:ok, result}
-        end
-
-      {:error, reason} ->
-        {:error, "Failed to upload proxy: #{reason}"}
-    end
+    VideoProcessing.create_master_file(
+      source_path,
+      output_s3_path,
+      metadata,
+      profile,
+      skip_creation,
+      work_dir,
+      operation_name
+    )
   end
 end
