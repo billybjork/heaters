@@ -4,7 +4,7 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
 
   This worker handles the critical "scene detection complete → cached files persisted"
   stage of the video processing pipeline. It ensures that all temporary cached files
-  created during the download and preprocessing stages are persisted to their final
+   created during the download and encoding stages are persisted to their final
   S3 destinations.
 
   ## Workflow
@@ -18,11 +18,11 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
 
   ## S3 Path Generation
 
-  **CRITICAL**: S3 paths must be consistent between Python preprocessing and Elixir persistence.
+  **CRITICAL**: S3 paths must be consistent between encoding and Elixir persistence.
 
   The title flow through the pipeline:
   1. **Download stage**: Updates source_video.title from extracted metadata
-  2. **Preprocess stage**: Python uses title to generate S3 paths:
+  2. **Encode stage**: Paths use title to generate S3 paths:
      `f"proxies/{sanitized_title}_{video_id}_proxy.mp4"`
   3. **Persist stage**: Elixir must use identical logic to resolve cache keys to S3 paths
 
@@ -143,7 +143,7 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
         )
 
         # Collect temp cache keys that might have cached files
-        # The PreprocessWorker caches files with keys like "temp_#{id}_proxy_path" and "temp_#{id}_master_path"
+        # The EncodeWorker caches files with keys like "temp_#{id}_proxy_path" and "temp_#{id}_master_path"
         # The DownloadWorker caches files with S3 keys directly
         temp_cache_keys = collect_temp_cache_keys(source_video)
         s3_keys = collect_s3_keys(source_video)
@@ -182,7 +182,7 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
   end
 
   defp collect_temp_cache_keys(source_video) do
-    # These are the keys used by PreprocessWorker when caching temp files
+    # These are the keys used by EncodeWorker when caching temp files
     [
       "temp_#{source_video.id}_proxy",
       "temp_#{source_video.id}_master"

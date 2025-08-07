@@ -2,7 +2,7 @@
 
 ## Overview
 
-Heaters processes videos through a **cuts-based pipeline**: download → proxy generation → scene detection → cuts → human review → clip export → embedding. The system emphasizes zero re-encoding during review, optimized export performance, and production reliability.
+Heaters processes videos through a **cuts-based pipeline**: download → encoding → scene detection → cuts → human review → clip export → embedding. The system emphasizes zero re-encoding during review, optimized export performance, and production reliability.
 
 **Core Innovation**: Cut points define video segments as data—clips are derived entities with no physical files until export. This enables instant review operations and 10x faster exports via stream copy.
 
@@ -35,7 +35,7 @@ Heaters processes videos through a **cuts-based pipeline**: download → proxy g
 ## Code Organization
 
 - **`Media`**: Domain entities (videos, clips, cuts, artifacts) and cut operations
-- **`Processing`**: Automated pipeline stages with structured results and native Elixir implementations (download, preprocess, scene detection, export, keyframes, embeddings)
+- **`Processing`**: Automated pipeline stages with structured results and native Elixir implementations (download, encode, scene detection, export, keyframes, embeddings)
 - **`Storage`**: All storage concerns (pipeline cache, playback cache with scheduled cleanup, archive, S3 operations)
 - **`Review`**: Human workflow (queue management, actions)
 - **`Pipeline`**: Declarative orchestration (config, dispatcher, queries)
@@ -52,7 +52,7 @@ Heaters processes videos through a **cuts-based pipeline**: download → proxy g
 ## Pipeline & State Flow
 
 ```
-Source Video: new → downloading → downloaded → preprocess → preprocessed → detect_scenes → cuts created
+Source Video: new → downloading → downloaded → encoding → encoded → detect_scenes → cuts created
 
 Clips: pending_review → review_approved → exporting → exported → keyframing → keyframed → embedding → embedded
            ↓                ↓              ↓            ↓              ↓           ↓           ↓
@@ -60,7 +60,7 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 ```
 
 **Direct Job Chaining** (FLAME optimized):
-- Download → Preprocess → Scene Detection → Cache Upload
+- Download → Encoding → Scene Detection → Cache Upload
 - Other stages use standard Oban scheduling
 
 ## Performance Features
@@ -98,7 +98,7 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 
 ### Media Processing
 - **FFmpeg**: Native Elixir/FFmpex with encoding profiles centralized in `Processing.Support.FFmpeg.Config`
-- **Video Processing**: Native Elixir implementations for preprocessing, export, and S3 operations with structured result types
+- **Video Processing**: Native Elixir implementations for encoding, export, and S3 operations with structured result types
 - **Specialized Python**: Selective integration for yt-dlp downloads, OpenCV scene detection, and ML embeddings
 - **S3 Operations**: Native ExAws integration with progress reporting, multipart uploads, exponential backoff retry logic
 - **Stream Copy Optimization**: Native FFmpex stream copy (`-c:v copy`) for lossless, instant clip export

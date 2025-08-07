@@ -8,7 +8,7 @@ defmodule Heaters.Processing.Support.ResultBuilder do
 
   alias Heaters.Processing.Support.Types.{
     DownloadResult,
-    PreprocessResult,
+    EncodeResult,
     SceneDetectionResult,
     ExportResult,
     CachePersistResult,
@@ -49,11 +49,11 @@ defmodule Heaters.Processing.Support.ResultBuilder do
   end
 
   @doc """
-  Builds a successful preprocessing result with encoding metrics.
+  Builds a successful encoding result with encoding metrics.
   """
-  @spec preprocess_success(integer(), String.t(), map()) :: {:ok, PreprocessResult.t()}
-  def preprocess_success(source_video_id, proxy_filepath, opts \\ %{}) do
-    result = %PreprocessResult{
+  @spec encode_success(integer(), String.t(), map()) :: {:ok, EncodeResult.t()}
+  def encode_success(source_video_id, proxy_filepath, opts \\ %{}) do
+    result = %EncodeResult{
       source_video_id: source_video_id,
       proxy_filepath: proxy_filepath,
       master_filepath: opts[:master_filepath],
@@ -66,6 +66,12 @@ defmodule Heaters.Processing.Support.ResultBuilder do
     }
 
     {:ok, result}
+  end
+
+  # DEPRECATED: Use encode_success/3 instead. Kept for backward compatibility during transition.
+  @spec preprocess_success(integer(), String.t(), map()) :: {:ok, EncodeResult.t()}
+  def preprocess_success(source_video_id, proxy_filepath, opts \\ %{}) do
+    encode_success(source_video_id, proxy_filepath, opts)
   end
 
   @doc """

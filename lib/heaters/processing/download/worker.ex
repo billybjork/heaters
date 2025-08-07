@@ -6,7 +6,7 @@ defmodule Heaters.Processing.Download.Worker do
   - Downloads videos from URLs using yt-dlp with quality-focused strategy
   - Applies conditional normalization for primary downloads (fixes merge issues)
   - Stores original files in S3 for downstream processing
-  - Chains to preprocessing stage for pipeline optimization
+  - Chains to encoding stage for pipeline optimization
 
   ## Architecture
 
@@ -267,7 +267,7 @@ defmodule Heaters.Processing.Download.Worker do
         {:ok, ^s3_key} ->
           Logger.info("DownloadWorker: Successfully uploaded to S3: #{s3_key}")
 
-          # Cache the downloaded file for preprocessing stage
+          # Cache the downloaded file for encoding stage
           case TempCache.put(s3_key, local_path) do
             {:ok, _cached_path} ->
               Logger.info("DownloadWorker: Cached download result for pipeline chaining")

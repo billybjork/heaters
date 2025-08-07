@@ -148,7 +148,7 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
       cond do
         # If we have a real proxy_filepath, try to use it (may be CloudFront URL)
         proxy_filepath != nil ->
-          {:ok, url} = HeatersWeb.VideoUrlHelper.generate_signed_cloudfront_url(proxy_filepath)
+          {:ok, url} = Heaters.Storage.S3.ClipUrlGenerator.generate_signed_cloudfront_url(proxy_filepath)
           {:ok, url}
 
         # No proxy_filepath available, use local test file
@@ -158,7 +158,7 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
       end
     else
       # Production: use CloudFront URL
-      {:ok, url} = HeatersWeb.VideoUrlHelper.generate_signed_cloudfront_url(proxy_filepath)
+      {:ok, url} = Heaters.Storage.S3.ClipUrlGenerator.generate_signed_cloudfront_url(proxy_filepath)
       {:ok, url}
     end
   end

@@ -38,7 +38,7 @@ defmodule Heaters.Processing.Support.FFmpeg.Config do
   the need for hardcoded FFmpeg settings in Python code.
 
       # In worker:
-      PyRunner.run_task("preprocess", %{
+      PyRunner.run_task("encode", %{
         master_args: FFmpegConfig.get_args(:master),
         proxy_args: FFmpegConfig.get_args(:proxy),
         ...

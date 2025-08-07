@@ -3,7 +3,7 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
   State management for the scene detection workflow.
 
   This module handles state transitions specific to the scene detection process.
-  Scene detection creates virtual clips from preprocessed videos using the proxy file.
+  Scene detection creates virtual clips from encoded videos using the proxy file.
 
   ## State Flow
   - videos with proxy_filepath and needs_splicing = true → :detecting_scenes
@@ -66,7 +66,7 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
   def complete_scene_detection(source_video_id) do
     with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
       update_source_video(source_video, %{
-        ingest_state: :preprocessed,
+        ingest_state: :encoded,
         needs_splicing: false,
         last_error: nil
       })
@@ -134,7 +134,7 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
   defp validate_scene_detection_prerequisites(source_video) do
     cond do
       is_nil(source_video.proxy_filepath) ->
-        {:error, "No proxy file available - preprocessing must be completed first"}
+        {:error, "No proxy file available - encoding must be completed first"}
 
       source_video.needs_splicing == false ->
         {:error, "Scene detection already complete (needs_splicing = false)"}

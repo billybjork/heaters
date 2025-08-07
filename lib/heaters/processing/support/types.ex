@@ -43,11 +43,11 @@ defmodule Heaters.Processing.Support.Types do
     ]
   end
 
-  defmodule PreprocessResult do
+  defmodule EncodeResult do
     @moduledoc """
-    Result structure for preprocessing operations.
+    Result structure for encoding operations.
 
-    Contains proxy generation results, encoding statistics,
+    Contains proxy/master generation results, encoding statistics,
     and optimization metrics from FFmpeg processing.
     """
     @enforce_keys [:source_video_id, :proxy_filepath]
@@ -76,7 +76,7 @@ defmodule Heaters.Processing.Support.Types do
     ]
 
     @doc """
-    Create a new PreprocessResult with computed fields.
+    Create a new EncodeResult with computed fields.
     """
     def new(opts) when is_list(opts) do
       %__MODULE__{

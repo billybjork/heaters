@@ -280,7 +280,7 @@ defmodule HeatersWeb.ReviewLive do
     # Check if this clip already has a temp file or generation in progress
     # by trying to generate the URL - if it fails or is loading, queue background generation.
     # Oban uniqueness constraints prevent duplicate jobs for the same clip.
-    case HeatersWeb.VideoUrlHelper.get_video_url(clip, clip.source_video || %{}) do
+    case Heaters.Storage.S3.ClipUrlGenerator.get_video_url(clip, clip.source_video || %{}) do
       {:error, _reason} ->
         # Queue background generation via Oban worker (with uniqueness constraints)
         job_result =

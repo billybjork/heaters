@@ -15,13 +15,13 @@ defmodule Heaters.Pipeline.Config do
   The `label` field provides human-readable descriptions for logging.
 
   Enhanced Virtual Clips Pipeline Flow:
-  download → preprocess → detect_scenes → persist_cache → rolling_export → keyframes → embeddings → archive
+  download → encode → detect_scenes → persist_cache → rolling_export → keyframes → embeddings → archive
 
   ## Resumable Processing
 
   The pipeline supports resumable processing of interrupted jobs across all stages:
   - **Download Stage**: Processes videos in "new", "downloading", or "download_failed" states
-  - **Preprocess Stage**: Processes videos in "downloaded", "preprocessing", or "preprocess_failed" states
+  - **Encode Stage**: Processes videos in "downloaded", "encoding", or "encoding_failed" states
   - **Scene Detection Stage**: Processes videos with proxy files needing virtual clip creation
   - **Cache Persistence Stage**: Processes videos needing S3 persistence and cache cleanup
   - **Export Stage**: Processes approved virtual clips for rolling export to physical clips
@@ -50,8 +50,8 @@ defmodule Heaters.Pipeline.Config do
   ## Job Chaining
 
   The pipeline supports direct job chaining for performance optimization:
-  - Download → Preprocess (when download completes successfully)
-  - Preprocess → Scene Detection (when preprocessing completes and splicing is needed)
+  - Download → Encode (when download completes successfully)
+  - Encode → Scene Detection (when encoding completes and splicing is needed)
   - Scene Detection → Cache Upload (when scene detection completes)
   - Other stages use standard Oban job scheduling
   """
@@ -59,7 +59,7 @@ defmodule Heaters.Pipeline.Config do
   alias Heaters.Media.Clips
   alias Heaters.Pipeline.Queries, as: PipelineQueries
   alias Heaters.Processing.Download.Worker, as: DownloadWorker
-  alias Heaters.Processing.Preprocess.Worker, as: PreprocessWorker
+  alias Heaters.Processing.Encode.Worker, as: EncodeWorker
   alias Heaters.Processing.DetectScenes.Worker, as: DetectScenesWorker
   alias Heaters.Storage.PipelineCache.PersistCache.Worker, as: PersistCacheWorker
   alias Heaters.Storage.Archive.Worker, as: ArchiveWorker
@@ -82,13 +82,13 @@ defmodule Heaters.Pipeline.Config do
   @spec stages() :: [map()]
   def stages do
     [
-      # Stage 1: Download (chains to preprocessing)
+      # Stage 1: Download (chains to encoding)
       %{
         label: "videos needing download",
         query: fn -> PipelineQueries.get_videos_needing_ingest() end,
         build: fn video -> DownloadWorker.new(%{source_video_id: video.id}) end,
         next_stage: %{
-          worker: PreprocessWorker,
+          worker: EncodeWorker,
           condition: fn source_video ->
             source_video.ingest_state == :downloaded and is_nil(source_video.proxy_filepath)
           end,
@@ -96,15 +96,15 @@ defmodule Heaters.Pipeline.Config do
         }
       },
 
-      # Stage 2: Preprocess (chains to scene detection)
+      # Stage 2: Encode (chains to scene detection)
       %{
-        label: "videos needing preprocessing → proxy generation",
-        query: fn -> PipelineQueries.get_videos_needing_preprocessing() end,
-        build: fn video -> PreprocessWorker.new(%{source_video_id: video.id}) end,
+        label: "videos needing encoding → proxy generation",
+        query: fn -> PipelineQueries.get_videos_needing_encoding() end,
+        build: fn video -> EncodeWorker.new(%{source_video_id: video.id}) end,
         next_stage: %{
           worker: DetectScenesWorker,
           condition: fn source_video ->
-            source_video.ingest_state == :preprocessed and
+            source_video.ingest_state == :encoded and
               not is_nil(source_video.proxy_filepath) and
               source_video.needs_splicing == true
           end,
@@ -139,7 +139,7 @@ defmodule Heaters.Pipeline.Config do
       },
 
       # ===== HUMAN REVIEW BOUNDARY =====
-      # End of automated video processing pipeline (download → preprocess → detect_scenes → persist_cache)
+      # End of automated video processing pipeline (download → encode → detect_scenes → persist_cache)
       # Human review occurs here: cut operations, approve/skip/archive actions
       # Beginning of clip export pipeline (export → keyframes → embeddings)
       # ===== HUMAN REVIEW BOUNDARY =====
@@ -191,7 +191,7 @@ defmodule Heaters.Pipeline.Config do
   ## Examples
 
       iex> PipelineConfig.stage_labels()
-      ["videos needing download", "videos needing preprocessing → proxy generation", ...]
+      ["videos needing download", "videos needing encoding → proxy generation", ...]
   """
   @spec stage_labels() :: [String.t()]
   def stage_labels do
@@ -214,7 +214,7 @@ defmodule Heaters.Pipeline.Config do
     # Create a mapping of workers to their stages for direct lookup
     worker_to_stage = %{
       Heaters.Processing.Download.Worker => "videos needing download",
-      Heaters.Processing.Preprocess.Worker => "videos needing preprocessing → proxy generation",
+      Heaters.Processing.Encode.Worker => "videos needing encoding → proxy generation",
       Heaters.Processing.DetectScenes.Worker => "videos needing scene detection → virtual clips",
       Heaters.Storage.PipelineCache.PersistCache.Worker =>
         "videos needing cache upload → S3 upload",

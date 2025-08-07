@@ -1,8 +1,8 @@
 defmodule Heaters.Processing.DetectScenes.Worker do
   @moduledoc """
-  Worker for creating virtual clips from preprocessed source videos using scene detection.
+  Worker for creating virtual clips from encoded source videos using scene detection.
 
-  This worker handles the "preprocessed → virtual clips created" stage of the video processing pipeline.
+  This worker handles the "encoded → virtual clips created" stage of the video processing pipeline.
   It runs scene detection on the proxy and creates virtual clip records with cut points,
   but does NOT create physical clip files.
 
@@ -114,7 +114,7 @@ defmodule Heaters.Processing.DetectScenes.Worker do
     cond do
       # Missing proxy file - cannot proceed
       is_nil(source_video.proxy_filepath) ->
-        {:error, "No proxy file available - preprocessing not complete"}
+        {:error, "No proxy file available - encoding not complete"}
 
       # Already marked as not needing splicing
       source_video.needs_splicing == false ->

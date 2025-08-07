@@ -8,13 +8,13 @@ defmodule Heaters.Repo.Migrations.UpdateSceneDetectionEnumConsistency do
 
     # Update the correct CHECK constraint (ingest_state_must_be_valid) to use consistent enum naming
     execute """
-    ALTER TABLE source_videos 
+    ALTER TABLE source_videos
     DROP CONSTRAINT IF EXISTS ingest_state_must_be_valid
     """
 
     execute """
-    ALTER TABLE source_videos 
-    ADD CONSTRAINT ingest_state_must_be_valid 
+    ALTER TABLE source_videos
+    ADD CONSTRAINT ingest_state_must_be_valid
     CHECK (ingest_state IN (
       'new', 'downloading', 'downloaded', 'download_failed',
       'preprocessing', 'preprocessed', 'preprocessing_failed',
@@ -26,13 +26,13 @@ defmodule Heaters.Repo.Migrations.UpdateSceneDetectionEnumConsistency do
   def down do
     # Revert constraint to old naming first
     execute """
-    ALTER TABLE source_videos 
+    ALTER TABLE source_videos
     DROP CONSTRAINT IF EXISTS ingest_state_must_be_valid
     """
 
     execute """
-    ALTER TABLE source_videos 
-    ADD CONSTRAINT ingest_state_must_be_valid 
+    ALTER TABLE source_videos
+    ADD CONSTRAINT ingest_state_must_be_valid
     CHECK (ingest_state IN (
       'new', 'downloading', 'downloaded', 'download_failed',
       'preprocessing', 'preprocessed', 'preprocessing_failed',

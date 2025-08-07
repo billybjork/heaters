@@ -1,18 +1,18 @@
-defmodule HeatersWeb.VideoUrlHelper do
+defmodule Heaters.Storage.S3.ClipUrlGenerator do
   @moduledoc """
-  Helper functions for generating video URLs for the tiny-file approach.
+  Generates URLs for clip playback using on-demand temp clip generation.
 
-  Provides URL generation for clips using the tiny-file approach (small MP4 files
-  generated on-demand) and direct URLs for exported clips.
+  Provides URL generation for clips using the playback cache system (small MP4 files
+  generated on-demand via FFmpeg stream copy) and direct URLs for exported clips.
 
-  The tiny-file approach replaces Media Fragments with actual small files that play
-  instantly with correct timeline duration.
+  The system uses temp clip generation to replace Media Fragments with actual small files
+  that play instantly with correct timeline duration and zero re-encoding.
   """
 
   @doc """
-  Generate video URL for clips using the tiny-file approach.
+  Generate video URL for clips using the playback cache system.
 
-  For clips without exported files (clip_filepath is nil), this triggers temp file generation in development 
+  For clips without exported files (clip_filepath is nil), this triggers temp clip generation in development 
   or checks for exported clips in production. For clips with exported files (clip_filepath is not nil), 
   returns direct S3 URLs.
 
@@ -22,7 +22,7 @@ defmodule HeatersWeb.VideoUrlHelper do
 
   ## Examples
 
-      # Clip without exported file (generated from cuts) - uses tiny-file approach
+      # Clip without exported file (generated from cuts) - uses temp clip generation
       {:ok, url, :direct_s3} = get_video_url(%{clip_filepath: nil, ...}, source_video)
 
       # Clip with exported file - uses direct file URL
@@ -50,7 +50,8 @@ defmodule HeatersWeb.VideoUrlHelper do
   @doc """
   Check if a clip supports video streaming.
 
-  Returns true if the clip has the necessary file available (proxy for temp clips, clip file for exported clips).
+  Returns true if the clip has the necessary file available (proxy for temp clip generation, 
+  clip file for exported clips).
   """
   @spec streamable?(map(), map()) :: boolean()
   def streamable?(%{clip_filepath: nil}, %{proxy_filepath: proxy_path})
@@ -105,14 +106,14 @@ defmodule HeatersWeb.VideoUrlHelper do
       nil ->
         # Development mode - use presigned URLs to avoid CORS
         Logger.debug(
-          "VideoUrlHelper: Using presigned URL for development (no CloudFront domain configured)"
+          "ClipUrlGenerator: Using presigned URL for development (no CloudFront domain configured)"
         )
 
         generate_presigned_url(s3_path)
 
       cloudfront_domain ->
         # Production mode - use CloudFront domain
-        Logger.debug("VideoUrlHelper: Using CloudFront domain: #{cloudfront_domain}")
+        Logger.debug("ClipUrlGenerator: Using CloudFront domain: #{cloudfront_domain}")
         s3_key = extract_s3_key(s3_path)
         "https://#{cloudfront_domain}/#{s3_key}"
     end
@@ -120,7 +121,7 @@ defmodule HeatersWeb.VideoUrlHelper do
 
   # Private functions
 
-  # Private function for temp clip URL generation
+  # Private function for playback cache URL generation
   defp build_temp_clip_url(clip, source_video) do
     if Application.get_env(:heaters, :app_env) == "development" do
       # Development: Check if temp file already exists, avoid blocking FFmpeg generation
@@ -211,7 +212,7 @@ defmodule HeatersWeb.VideoUrlHelper do
     s3_key = extract_s3_key(s3_path)
     bucket_name = get_bucket_name()
 
-    Logger.debug("VideoUrlHelper: Generating presigned URL for s3://#{bucket_name}/#{s3_key}")
+    Logger.debug("ClipUrlGenerator: Generating presigned URL for s3://#{bucket_name}/#{s3_key}")
 
     # 1 hour expiration for video streaming
     ExAws.S3.presigned_url(
@@ -223,12 +224,12 @@ defmodule HeatersWeb.VideoUrlHelper do
     )
     |> case do
       {:ok, url} ->
-        Logger.debug("VideoUrlHelper: Generated presigned URL successfully")
+        Logger.debug("ClipUrlGenerator: Generated presigned URL successfully")
         url
 
       {:error, reason} ->
         Logger.warning(
-          "VideoUrlHelper: Failed to generate presigned URL: #{inspect(reason)}, falling back to direct S3"
+          "ClipUrlGenerator: Failed to generate presigned URL: #{inspect(reason)}, falling back to direct S3"
         )
 
         # Fallback to direct S3 URL if presigned URL generation fails

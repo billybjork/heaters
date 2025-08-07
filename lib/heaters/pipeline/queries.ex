@@ -50,27 +50,27 @@ defmodule Heaters.Pipeline.Queries do
   end
 
   @doc """
-  Get all source videos that need preprocessing (downloaded without proxy_filepath).
+  Get all source videos that need encoding (downloaded without proxy_filepath).
 
-  This enables resumable processing of interrupted preprocessing jobs and is used by
-  the pipeline dispatcher to find videos ready for preprocessing.
+  This enables resumable processing of interrupted encoding jobs and is used by
+  the pipeline dispatcher to find videos ready for encoding.
 
   ## Pipeline Usage
-  Used by `Pipeline.Config` stage discovery for video preprocessing.
+  Used by `Pipeline.Config` stage discovery for video encoding.
   """
-  @spec get_videos_needing_preprocessing() :: [Video.t()]
-  def get_videos_needing_preprocessing() do
+  @spec get_videos_needing_encoding() :: [Video.t()]
+  def get_videos_needing_encoding() do
     from(s in Video,
       where:
-        (s.ingest_state == :downloaded or s.ingest_state == :preprocessing or
-           s.ingest_state == :preprocessing_failed) and
+        (s.ingest_state == :downloaded or s.ingest_state == :encoding or
+           s.ingest_state == :encoding_failed) and
           is_nil(s.proxy_filepath)
     )
     |> Repo.all()
   end
 
   @doc """
-  Get all source videos that need scene detection (preprocessed with needs_splicing = true).
+  Get all source videos that need scene detection (encoded with needs_splicing = true).
 
   This enables resumable processing of interrupted scene detection jobs and is used by
   the pipeline dispatcher to find videos ready for scene detection.

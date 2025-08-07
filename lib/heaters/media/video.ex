@@ -40,13 +40,13 @@ defmodule Heaters.Media.Video do
         :new,
         :downloading,
         :downloaded,
-        :preprocessing,
-        :preprocessed,
+        :encoding,
+        :encoded,
         :detect_scenes,
         :detecting_scenes,
         :detect_scenes_failed,
         :download_failed,
-        :preprocessing_failed
+        :encoding_failed
       ],
       default: :new
     )

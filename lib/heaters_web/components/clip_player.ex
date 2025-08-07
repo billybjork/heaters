@@ -50,7 +50,7 @@ defmodule HeatersWeb.ClipPlayer do
 
   use Phoenix.Component
   alias Phoenix.LiveView.ColocatedHook
-  alias HeatersWeb.VideoUrlHelper
+  alias Heaters.Storage.S3.ClipUrlGenerator
 
   @doc """
   Renders a clip player component.
@@ -541,7 +541,7 @@ defmodule HeatersWeb.ClipPlayer do
 
       _ ->
         # Fall back to normal video URL generation
-        case VideoUrlHelper.get_video_url(clip, source_video) do
+        case ClipUrlGenerator.get_video_url(clip, source_video) do
           {:ok, url, player_type} ->
             clip_info = build_clip_info(clip, player_type)
             {url, to_string(player_type), clip_info}

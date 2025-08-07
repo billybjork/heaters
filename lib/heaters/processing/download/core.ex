@@ -166,10 +166,10 @@ defmodule Heaters.Processing.Download.Core do
     valid_transitions = %{
       :new => [:downloading],
       :downloading => [:downloaded, :download_failed],
-      :downloaded => [:preprocess],
+      :downloaded => [:encode],
       :download_failed => [:downloading],
-      :preprocess => [:preprocessed, :preprocess_failed],
-      :preprocess_failed => [:preprocess]
+      :encode => [:encoded, :encode_failed],
+      :encode_failed => [:encode]
     }
 
     case Map.get(valid_transitions, current_state) do
