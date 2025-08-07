@@ -206,10 +206,6 @@ defmodule Heaters.Processing.Export.Worker do
     end)
   end
 
-
-
-
-
   defp mark_clips_export_failed(clips, reason) do
     Enum.each(clips, fn clip ->
       case StateManager.mark_export_failed(clip.id, reason) do
@@ -228,7 +224,10 @@ defmodule Heaters.Processing.Export.Worker do
 
   # Native Elixir result processing functions
 
-  defp process_native_export_results(clips, %Heaters.Processing.Support.Types.ExportResult{} = result) do
+  defp process_native_export_results(
+         clips,
+         %Heaters.Processing.Support.Types.ExportResult{} = result
+       ) do
     # Extract exported clips data from native Elixir result
     exported_clips = result.exported_clips
     metadata = result.metadata || %{}

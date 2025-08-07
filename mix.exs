@@ -91,6 +91,7 @@ defmodule Heaters.MixProject do
       "dev.setup": ["cmd --cd . docker-compose up -d --wait", "deps.get", "ecto.setup"],
       "dev.reset": ["cmd --cd . docker-compose up -d --wait", "ecto.reset"],
       "dev.server": ["cmd --cd . docker-compose up -d --wait", "phx.server"],
+
       # Check overall code quality
       check: [
         "compile --warnings-as-errors",

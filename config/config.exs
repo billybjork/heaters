@@ -70,7 +70,7 @@ config :logger, :console,
 config :phoenix, :json_library, Jason
 
 # Suppress spitfire warnings about private Elixir macros
-config :elixir, :warnings_as_errors, false
+# These warnings occur because spitfire uses private Elixir APIs that have changed
 config :elixir, :ansi_enabled, true
 
 # Configure database port

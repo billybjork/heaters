@@ -1,7 +1,7 @@
 defmodule HeatersWeb.Layouts do
   use HeatersWeb, :html
 
-  embed_templates "layouts/*"
+  embed_templates("layouts/*")
 
   attr(:flash, :map, required: true)
 

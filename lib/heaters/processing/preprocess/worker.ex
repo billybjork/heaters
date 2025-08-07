@@ -170,22 +170,22 @@ defmodule Heaters.Processing.Preprocess.Worker do
     )
 
     # Convert preprocessing_args to format expected by native Elixir Core
-    master_filepath = Map.get(preprocessing_args, :master_filepath)
-    proxy_filepath = Map.get(preprocessing_args, :proxy_filepath) 
+    master_filepath = Map.get(preprocessing_args, :master_output_path)
+    proxy_filepath = Map.get(preprocessing_args, :proxy_output_path)
     use_temp_cache = Map.get(preprocessing_args, :use_temp_cache, false)
-    
+
     case Heaters.Processing.Preprocess.Core.process_source_video(
-           source_video.id,
            Map.get(preprocessing_args, :source_video_path),
+           source_video.id,
+           source_video.title || "Video #{source_video.id}",
            master_filepath,
            proxy_filepath,
-           preprocessing_args,
            operation_name: "PreprocessWorker",
            use_temp_cache: use_temp_cache
          ) do
       {:ok, result} ->
         Logger.info("PreprocessWorker: Native Elixir preprocessing completed successfully")
-        
+
         # Handle both temp cache and traditional S3 results
         if use_temp_cache do
           process_native_temp_cache_results(source_video, result, preprocessing_args)
@@ -195,18 +195,17 @@ defmodule Heaters.Processing.Preprocess.Worker do
 
       {:error, reason} ->
         Logger.error("PreprocessWorker: Native preprocessing failed: #{reason}")
+
         case StateManager.mark_preprocessing_failed(source_video.id, reason) do
-          {:ok, _} -> {:error, reason}
-          {:error, db_error} -> 
+          {:ok, _} ->
+            {:error, reason}
+
+          {:error, db_error} ->
             Logger.error("PreprocessWorker: Failed to mark video as failed: #{inspect(db_error)}")
             {:error, reason}
         end
     end
   end
-
-
-
-
 
   # Check if normalized download output can be reused as proxy
   # This implements the "smart proxy reuse" optimization from the workflow report
@@ -290,7 +289,6 @@ defmodule Heaters.Processing.Preprocess.Worker do
       analysis.duration > 0
   end
 
-
   # S3 path generation moved to Heaters.Storage.S3.Paths module
   # to eliminate coupling between Python and Elixir path generation logic
 
@@ -304,7 +302,10 @@ defmodule Heaters.Processing.Preprocess.Worker do
     encoding_metrics = result.encoding_metrics
     metadata = result.metadata || %{}
 
-    Logger.info("PreprocessWorker: Processing native preprocessing results for #{source_video.id}")
+    Logger.info(
+      "PreprocessWorker: Processing native preprocessing results for #{source_video.id}"
+    )
+
     Logger.info("PreprocessWorker: Proxy: #{proxy_filepath}, Master: #{master_filepath}")
 
     # Update source video with new file paths and preprocessing metadata
@@ -312,7 +313,8 @@ defmodule Heaters.Processing.Preprocess.Worker do
       proxy_filepath: proxy_filepath,
       master_filepath: master_filepath,
       ingest_state: :preprocessed,
-      keyframe_offsets: [], # Will be updated by keyframes worker
+      # Will be updated by keyframes worker
+      keyframe_offsets: [],
       processing_metadata:
         Map.merge(source_video.processing_metadata || %{}, %{
           preprocessing_metadata: metadata,
@@ -326,7 +328,9 @@ defmodule Heaters.Processing.Preprocess.Worker do
 
     case StateManager.complete_preprocessing(source_video.id, update_attrs) do
       {:ok, updated_video} ->
-        Logger.info("PreprocessWorker: Native preprocessing completed for video #{updated_video.id}")
+        Logger.info(
+          "PreprocessWorker: Native preprocessing completed for video #{updated_video.id}"
+        )
 
         # Chain directly to next stage using centralized pipeline configuration
         :ok = Heaters.Pipeline.Config.maybe_chain_next_job(__MODULE__, updated_video)
@@ -344,54 +348,55 @@ defmodule Heaters.Processing.Preprocess.Worker do
         )
 
       {:error, reason} ->
-        Logger.error("PreprocessWorker: Failed to update video #{source_video.id}: #{inspect(reason)}")
+        Logger.error(
+          "PreprocessWorker: Failed to update video #{source_video.id}: #{inspect(reason)}"
+        )
+
         {:error, reason}
     end
   end
 
-  defp process_native_temp_cache_results(source_video, %PreprocessResult{} = result, _preprocessing_args) do
+  defp process_native_temp_cache_results(
+         source_video,
+         %PreprocessResult{} = result,
+         _preprocessing_args
+       ) do
     # For temp cache, we have local paths that need to be uploaded to S3 later
-    local_proxy_path = result.proxy_filepath
-    local_master_path = result.master_filepath
-    
-    Logger.info("PreprocessWorker: Processing native temp cache results for #{source_video.id}")
-    Logger.info("PreprocessWorker: Local proxy: #{local_proxy_path}, Local master: #{local_master_path}")
+    local_proxy_path = result.optimization_stats[:proxy_local_path]
+    local_master_path = result.optimization_stats[:master_local_path]
 
-    # Store temp cache files for later batch upload
-    temp_results = %{
-      "proxy_path" => local_proxy_path,
-      "master_path" => local_master_path,
-      "processing_metadata" => result.metadata
-    }
+    Logger.info("PreprocessWorker: Processing native temp cache results for #{source_video.id}")
+
+    Logger.info(
+      "PreprocessWorker: Local proxy: #{local_proxy_path}, Local master: #{local_master_path}"
+    )
+
+    # Store temp cache files for later batch upload - only include valid file paths
+    temp_results =
+      %{}
+      |> maybe_put_if_valid("proxy", local_proxy_path)
+      |> maybe_put_if_valid("master", local_master_path)
+
     case TempCache.put_processing_results(temp_results, source_video.id) do
-      :ok ->
+      {:ok, _cached_results} ->
         Logger.info("PreprocessWorker: Temp cache files stored for video #{source_video.id}")
 
-        # Use the same S3 paths that would be assigned by Python task
-        proxy_s3_key = "review_proxies/video_#{source_video.id}_proxy.mp4"
-        master_s3_key = "masters/video_#{source_video.id}_master.mp4"
+        # Use proper S3 paths from the Paths module that were generated earlier
+        paths = Heaters.Storage.S3.Paths.generate_video_paths(source_video.id, source_video.title)
 
         # Update source video to indicate preprocessing is complete but files are in temp cache
         update_attrs = %{
-          proxy_filepath: proxy_s3_key,
-          master_filepath: master_s3_key,
+          proxy_filepath: paths.proxy,
+          master_filepath: paths.master,
           ingest_state: :preprocessed,
-          processing_metadata:
-            Map.merge(source_video.processing_metadata || %{}, %{
-              preprocessing_metadata: result.metadata || %{},
-              encoding_metrics: result.encoding_metrics,
-              keyframe_count: result.keyframe_count,
-              temp_cache_used: true,
-              proxy_reused: false,
-              native_processing: true,
-              cache_proxy_path: local_proxy_path,
-              cache_master_path: local_master_path
-            })
+          keyframe_offsets: result.metadata[:keyframe_offsets] || []
         }
 
         case StateManager.complete_preprocessing(source_video.id, update_attrs) do
           {:ok, updated_video} ->
-            Logger.info("PreprocessWorker: Native temp cache preprocessing completed for video #{updated_video.id}")
+            Logger.info(
+              "PreprocessWorker: Native temp cache preprocessing completed for video #{updated_video.id}"
+            )
 
             # Chain directly to next stage using centralized pipeline configuration
             :ok = Heaters.Pipeline.Config.maybe_chain_next_job(__MODULE__, updated_video)
@@ -400,8 +405,8 @@ defmodule Heaters.Processing.Preprocess.Worker do
             # Return structured result for observability
             ResultBuilder.preprocess_success(
               source_video.id,
-              proxy_s3_key,
-              master_filepath: master_s3_key,
+              paths.proxy,
+              master_filepath: paths.master,
               keyframe_count: result.keyframe_count,
               encoding_metrics: result.encoding_metrics,
               metadata: result.metadata,
@@ -409,13 +414,30 @@ defmodule Heaters.Processing.Preprocess.Worker do
             )
 
           {:error, reason} ->
-            Logger.error("PreprocessWorker: Failed to update video #{source_video.id}: #{inspect(reason)}")
+            Logger.error(
+              "PreprocessWorker: Failed to update video #{source_video.id}: #{inspect(reason)}"
+            )
+
             {:error, reason}
         end
 
       {:error, reason} ->
-        Logger.error("PreprocessWorker: Failed to store temp cache files: #{reason}")
+        Logger.error("PreprocessWorker: Failed to store temp cache files: #{inspect(reason)}")
         {:error, reason}
     end
   end
+
+  # Helper function to only include valid file paths in temp cache results
+  defp maybe_put_if_valid(map, _key, nil), do: map
+  defp maybe_put_if_valid(map, _key, ""), do: map
+
+  defp maybe_put_if_valid(map, key, path) when is_binary(path) do
+    if File.exists?(path) do
+      Map.put(map, key, path)
+    else
+      map
+    end
+  end
+
+  defp maybe_put_if_valid(map, _key, _invalid), do: map
 end

@@ -122,9 +122,7 @@ defmodule Heaters.Media.Videos do
 
     case Oban.insert(job) do
       {:ok, job} ->
-        Logger.info(
-          "Successfully enqueued download job for source_video ID: #{source_video.id}"
-        )
+        Logger.info("Successfully enqueued download job for source_video ID: #{source_video.id}")
 
         {:ok, job}
 

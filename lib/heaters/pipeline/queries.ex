@@ -61,7 +61,10 @@ defmodule Heaters.Pipeline.Queries do
   @spec get_videos_needing_preprocessing() :: [Video.t()]
   def get_videos_needing_preprocessing() do
     from(s in Video,
-      where: s.ingest_state == :downloaded and is_nil(s.proxy_filepath)
+      where:
+        (s.ingest_state == :downloaded or s.ingest_state == :preprocessing or
+           s.ingest_state == :preprocessing_failed) and
+          is_nil(s.proxy_filepath)
     )
     |> Repo.all()
   end

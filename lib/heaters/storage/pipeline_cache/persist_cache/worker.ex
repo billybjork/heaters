@@ -143,7 +143,7 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
         )
 
         # Collect temp cache keys that might have cached files
-        # The PreprocessWorker caches files with keys like "temp_#{id}_proxy" and "temp_#{id}_master"
+        # The PreprocessWorker caches files with keys like "temp_#{id}_proxy_path" and "temp_#{id}_master_path"
         # The DownloadWorker caches files with S3 keys directly
         temp_cache_keys = collect_temp_cache_keys(source_video)
         s3_keys = collect_s3_keys(source_video)

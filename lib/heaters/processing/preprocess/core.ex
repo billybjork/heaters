@@ -56,8 +56,8 @@ defmodule Heaters.Processing.Preprocess.Core do
     - `:use_temp_cache`: If true, cache files locally instead of uploading immediately
     - `:skip_master`: Skip master file generation for cost optimization
     - `:reuse_as_proxy`: Try to reuse source as proxy if compatible
-    - `:master_profile`: FFmpeg profile for master encoding (defaults to :gold_master)
-    - `:proxy_profile`: FFmpeg profile for proxy encoding (defaults to :review_proxy)
+    - `:master_profile`: FFmpeg profile for master encoding (defaults to :master)
+    - `:proxy_profile`: FFmpeg profile for proxy encoding (defaults to :proxy)
 
   ## Returns
   - `{:ok, preprocess_result}` with processing results and metadata
@@ -104,8 +104,8 @@ defmodule Heaters.Processing.Preprocess.Core do
     use_temp_cache = Keyword.get(opts, :use_temp_cache, false)
     skip_master = Keyword.get(opts, :skip_master, false)
     reuse_as_proxy = Keyword.get(opts, :reuse_as_proxy, false)
-    master_profile = Keyword.get(opts, :master_profile, :gold_master)
-    proxy_profile = Keyword.get(opts, :proxy_profile, :review_proxy)
+    master_profile = Keyword.get(opts, :master_profile, :master)
+    proxy_profile = Keyword.get(opts, :proxy_profile, :proxy)
 
     Logger.info(
       "#{operation_name}: Starting native Elixir preprocessing for video #{source_video_id}: #{video_title}"
@@ -152,13 +152,15 @@ defmodule Heaters.Processing.Preprocess.Core do
       result =
         PreprocessResult.new(
           source_video_id: source_video_id,
-          proxy_filepath: proxy_output_path,
-          master_filepath: master_info[:s3_path],
+          proxy_filepath: final_result[:proxy_path] || proxy_output_path,
+          master_filepath: final_result[:master_path] || master_info[:s3_path],
           keyframe_count: length(proxy_info[:keyframe_offsets] || []),
           optimization_stats: %{
             reused_as_proxy: reuse_as_proxy,
             skipped_master: skip_master,
-            used_temp_cache: use_temp_cache
+            used_temp_cache: use_temp_cache,
+            proxy_local_path: final_result[:proxy_local_path],
+            master_local_path: final_result[:master_local_path]
           },
           encoding_metrics: %{
             master_profile: master_profile,
@@ -565,17 +567,192 @@ defmodule Heaters.Processing.Preprocess.Core do
   # Execute FFmpeg with progress reporting
   @spec execute_ffmpeg_with_progress(FFmpex.Command.t(), float(), String.t(), String.t()) ::
           {:ok, any()} | {:error, String.t()}
-  defp execute_ffmpeg_with_progress(command, _duration, task_name, operation_name) do
+  defp execute_ffmpeg_with_progress(command, duration, task_name, operation_name) do
     Logger.info("#{operation_name}: Starting #{task_name}")
 
-    case FFmpex.execute(command) do
-      {:ok, output} ->
-        Logger.info("#{operation_name}: #{task_name} completed successfully")
-        {:ok, output}
+    # Convert FFmpex command to raw arguments for progress monitoring
+    case ffmpeg_command_to_args(command) do
+      {:ok, args} ->
+        execute_ffmpeg_with_real_progress(args, duration, task_name, operation_name)
 
       {:error, reason} ->
-        Logger.error("#{operation_name}: #{task_name} failed: #{inspect(reason)}")
-        {:error, "#{task_name} failed: #{inspect(reason)}"}
+        Logger.error("#{operation_name}: Failed to build FFmpeg command: #{inspect(reason)}")
+        {:error, "Failed to build FFmpeg command: #{inspect(reason)}"}
+    end
+  end
+
+  # Convert FFmpex command to raw FFmpeg arguments
+  @spec ffmpeg_command_to_args(FFmpex.Command.t()) :: {:ok, [String.t()]} | {:error, String.t()}
+  defp ffmpeg_command_to_args(command) do
+    try do
+      # Use FFmpex's command building functionality to get the raw arguments
+      case FFmpex.prepare(command) do
+        {_executable, args} ->
+          # FFmpex.prepare returns {executable_path, args_list}
+          {:ok, args}
+
+        other ->
+          {:error, "FFmpex command preparation failed: no match of right hand side value: #{inspect(other)}"}
+      end
+    rescue
+      error ->
+        {:error, "FFmpex command preparation failed: #{Exception.message(error)}"}
+    end
+  end
+
+  # Execute FFmpeg with real-time progress reporting (similar to Python implementation)
+  @spec execute_ffmpeg_with_real_progress([String.t()], float(), String.t(), String.t()) ::
+          {:ok, any()} | {:error, String.t()}
+  defp execute_ffmpeg_with_real_progress(args, duration, task_name, operation_name) do
+    # Add progress reporting to stderr (similar to Python: -progress pipe:2)
+    args_with_progress = args ++ ["-progress", "pipe:2"]
+
+    Logger.info("#{operation_name}: #{task_name} with duration: #{duration}s")
+
+    # Use Port for real-time stderr processing
+    port_opts = [
+      :stderr_to_stdout,
+      :exit_status,
+      :binary,
+      :use_stdio,
+      args: args_with_progress
+    ]
+
+    port = Port.open({:spawn_executable, System.find_executable("ffmpeg")}, port_opts)
+
+    result = monitor_ffmpeg_progress(port, duration, task_name, operation_name, "")
+
+    case result do
+      {:ok, _} ->
+        Logger.info("#{operation_name}: #{task_name} completed successfully")
+        {:ok, nil}
+
+      {:error, reason} ->
+        Logger.error("#{operation_name}: #{task_name} failed: #{reason}")
+        {:error, "#{task_name} failed: #{reason}"}
+    end
+  rescue
+    error ->
+      Logger.error("#{operation_name}: #{task_name} exception: #{Exception.message(error)}")
+      {:error, "#{task_name} exception: #{Exception.message(error)}"}
+  end
+
+  # Monitor FFmpeg progress by parsing stderr output (entry point)
+  @spec monitor_ffmpeg_progress(port(), float(), String.t(), String.t(), String.t()) ::
+          {:ok, any()} | {:error, String.t()}
+  defp monitor_ffmpeg_progress(port, duration, task_name, operation_name, buffer) do
+    monitor_ffmpeg_progress_with_state(port, duration, task_name, operation_name, buffer, 0)
+  end
+
+  # Internal function with progress state tracking
+  @spec monitor_ffmpeg_progress_with_state(port(), float(), String.t(), String.t(), String.t(), integer()) ::
+          {:ok, any()} | {:error, String.t()}
+  defp monitor_ffmpeg_progress_with_state(port, duration, task_name, operation_name, buffer, last_progress) do
+    receive do
+      {^port, {:data, data}} ->
+        # Accumulate data and parse progress lines
+        new_buffer = buffer <> data
+        {processed_lines, remaining_buffer} = extract_complete_lines(new_buffer)
+
+        # Process each complete line for progress information
+        new_last_progress =
+          Enum.reduce(processed_lines, last_progress, fn line, acc_progress ->
+            parse_and_log_progress(line, duration, task_name, operation_name, acc_progress)
+          end)
+
+        monitor_ffmpeg_progress_with_state(port, duration, task_name, operation_name, remaining_buffer, new_last_progress)
+
+      {^port, {:exit_status, 0}} ->
+        Logger.info("#{operation_name}: #{task_name} (100% complete)")
+        {:ok, :success}
+
+      {^port, {:exit_status, exit_code}} ->
+        {:error, "FFmpeg exited with code #{exit_code}"}
+
+    after
+      # 30 minute timeout for encoding operations
+      30 * 60 * 1000 ->
+        Port.close(port)
+        {:error, "FFmpeg operation timed out after 30 minutes"}
+    end
+  end
+
+  # Extract complete lines from buffer
+  @spec extract_complete_lines(String.t()) :: {[String.t()], String.t()}
+  defp extract_complete_lines(buffer) do
+    lines = String.split(buffer, "\n")
+    
+    case List.pop_at(lines, -1) do
+      {remaining_buffer, complete_lines} ->
+        {complete_lines, remaining_buffer || ""}
+    end
+  end
+
+  # Parse progress lines and log percentage updates (similar to Python implementation)
+  @spec parse_and_log_progress(String.t(), float(), String.t(), String.t(), integer()) :: integer()
+  defp parse_and_log_progress(line, duration, task_name, operation_name, last_progress) do
+    if String.contains?(line, "out_time=") && duration > 0 do
+      case extract_time_from_progress_line(line) do
+        {:ok, current_seconds} ->
+          progress = min(100, trunc(current_seconds / duration * 100))
+
+          # Log every 10% (similar to Python implementation and other workers)
+          if progress > 0 && progress >= last_progress + 10 && rem(progress, 10) == 0 do
+            Logger.info("#{operation_name}: #{task_name} #{progress}% complete")
+            progress
+          else
+            last_progress
+          end
+
+        :error ->
+          last_progress
+      end
+    else
+      last_progress
+    end
+  end
+
+  # Extract time from FFmpeg progress line (out_time=00:01:23.45)
+  @spec extract_time_from_progress_line(String.t()) :: {:ok, float()} | :error
+  defp extract_time_from_progress_line(line) do
+    case Regex.run(~r/out_time=(\d{2}:\d{2}:\d{2}\.\d+)/, line) do
+      [_, time_str] ->
+        parse_time_string(time_str)
+
+      nil ->
+        :error
+    end
+  end
+
+  # Parse time string in format HH:MM:SS.mmm to seconds (same logic as Python)
+  @spec parse_time_string(String.t()) :: {:ok, float()} | :error
+  defp parse_time_string(time_str) do
+    try do
+      case String.split(time_str, ":") do
+        [hours_str, minutes_str, seconds_str] ->
+          # Parse each component, handling both integers and floats
+          hours = parse_numeric(hours_str) 
+          minutes = parse_numeric(minutes_str)
+          seconds = parse_numeric(seconds_str)
+          
+          total_seconds = hours * 3600 + minutes * 60 + seconds
+          {:ok, total_seconds}
+
+        _ ->
+          :error
+      end
+    rescue
+      _ ->
+        :error
+    end
+  end
+
+  # Helper to parse numeric strings that could be integers or floats
+  @spec parse_numeric(String.t()) :: float()
+  defp parse_numeric(str) do
+    case String.contains?(str, ".") do
+      true -> String.to_float(str)
+      false -> String.to_integer(str) / 1.0
     end
   end
 

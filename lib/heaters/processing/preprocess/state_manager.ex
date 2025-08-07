@@ -122,7 +122,7 @@ defmodule Heaters.Processing.Preprocess.StateManager do
   defp validate_preprocessing_state_transition(current_state, target_state) do
     valid_transitions = %{
       :downloaded => [:preprocessing],
-      :preprocessing => [:preprocessed, :preprocessing_failed],
+      :preprocessing => [:preprocessed, :preprocessing_failed, :preprocessing],
       :preprocessing_failed => [:preprocessing]
     }
 
