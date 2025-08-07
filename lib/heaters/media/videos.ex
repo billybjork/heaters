@@ -84,14 +84,15 @@ defmodule Heaters.Media.Videos do
   Submit a source video for processing.
 
   This function handles the initial submission of source videos, creating database records
-  for URLs or file paths that will later be processed by the ingestion pipeline.
+  for URLs or file paths and immediately triggering the ingestion pipeline.
 
   Note: "Submit" refers to accepting submissions, while "ingestion" refers to the
   actual downloading and processing done by the Python pipeline.
   """
   @spec submit(String.t()) :: :ok | {:error, String.t()}
   def submit(url) when is_binary(url) do
-    with {:ok, _source_video} <- create_source_video(url) do
+    with {:ok, source_video} <- create_source_video(url),
+         {:ok, _job} <- enqueue_download_job(source_video) do
       :ok
     else
       {:error, reason} -> {:error, reason}
@@ -114,6 +115,27 @@ defmodule Heaters.Media.Videos do
   # ---------------------------------------------------------------------------
   # Private Helper Functions
   # ---------------------------------------------------------------------------
+
+  @spec enqueue_download_job(Video.t()) :: {:ok, Oban.Job.t()} | {:error, String.t()}
+  defp enqueue_download_job(%Video{} = source_video) do
+    job = Heaters.Processing.Download.Worker.new(%{source_video_id: source_video.id})
+
+    case Oban.insert(job) do
+      {:ok, job} ->
+        Logger.info(
+          "Successfully enqueued download job for source_video ID: #{source_video.id}"
+        )
+
+        {:ok, job}
+
+      {:error, reason} ->
+        Logger.error(
+          "Failed to enqueue download job for source_video ID: #{source_video.id}. Error: #{inspect(reason)}"
+        )
+
+        {:error, "Failed to enqueue download job: #{inspect(reason)}"}
+    end
+  end
 
   @spec create_source_video(String.t()) :: {:ok, Video.t()} | {:error, String.t()}
   defp create_source_video(url) do
