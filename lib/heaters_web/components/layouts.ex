@@ -1,33 +1,8 @@
 defmodule HeatersWeb.Layouts do
   use HeatersWeb, :html
 
-  @doc """
-  Phoenix 1.8 app layout component with flash message handling.
+  embed_templates "layouts/*"
 
-  Usage in LiveView templates:
-    <Layouts.app flash={@flash}>
-      <!-- Your content here -->
-    </Layouts.app>
-  """
-  attr(:flash, :map, required: true)
-  attr(:full_width, :boolean, default: false)
-
-  slot(:inner_block, required: true)
-
-  def app(assigns) do
-    ~H"""
-    <% container_class = if @full_width, do: "full-width", else: "container" %>
-
-    <main class="main-content">
-      <div class={container_class}>
-        <.render_flash flash={@flash} />
-        {render_slot(@inner_block)}
-      </div>
-    </main>
-    """
-  end
-
-  # Renders flash messages consistently across the app.
   attr(:flash, :map, required: true)
 
   defp render_flash(assigns) do
