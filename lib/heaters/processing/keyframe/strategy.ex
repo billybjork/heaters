@@ -1,7 +1,7 @@
-defmodule Heaters.Processing.Keyframes.Strategy do
+defmodule Heaters.Processing.Keyframe.Strategy do
   @moduledoc """
   Strategy logic for keyframe operations.
-  Used by Processing.Keyframes.Core for business logic.
+  Used by Processing.Keyframe.Core for business logic.
   """
 
   @valid_strategies ~w[midpoint multi]

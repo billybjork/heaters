@@ -1,4 +1,4 @@
-defmodule Heaters.Processing.Embeddings.Types do
+defmodule Heaters.Processing.Embed.Types do
   @moduledoc """
   Shared type definitions for embedding operations.
 

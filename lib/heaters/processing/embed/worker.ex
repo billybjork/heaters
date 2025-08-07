@@ -1,10 +1,10 @@
-defmodule Heaters.Processing.Embeddings.Worker do
+defmodule Heaters.Processing.Embed.Worker do
   use Heaters.Pipeline.WorkerBehavior,
     queue: :default,
     # 10 minutes, prevent duplicate embedding jobs
     unique: [period: 600, fields: [:args]]
 
-  alias Heaters.Processing.Embeddings.Workflow
+  alias Heaters.Processing.Embed.Workflow
   alias Heaters.Processing.Support.PythonRunner, as: PyRunner
   alias Heaters.Pipeline.WorkerBehavior
   alias Heaters.Media.Clips

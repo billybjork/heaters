@@ -1,4 +1,4 @@
-defmodule Heaters.Processing.Embeddings.Search do
+defmodule Heaters.Processing.Embed.Search do
   @moduledoc """
   Similarity search and embedding lookup functions.
 
@@ -10,7 +10,7 @@ defmodule Heaters.Processing.Embeddings.Search do
   import Ecto.Query, warn: false
   alias Heaters.Repo
   alias Heaters.Media.Clip
-  alias Heaters.Processing.Embeddings.Embedding
+  alias Heaters.Processing.Embed.Embedding
 
   @doc "All available model names, generation strategies, and source videos for embedded clips"
   def embedded_filter_opts do

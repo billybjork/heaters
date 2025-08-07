@@ -1,7 +1,7 @@
-defmodule Heaters.Processing.Keyframes.Validation do
+defmodule Heaters.Processing.Keyframe.Validation do
   @moduledoc """
   Validation logic for keyframe operations.
-  Used by Processing.Keyframes.Core for business logic.
+  Used by Processing.Keyframe.Core for business logic.
   """
 
   alias Heaters.Media.Support.ClipValidation

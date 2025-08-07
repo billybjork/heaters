@@ -1,11 +1,11 @@
-defmodule Heaters.Processing.Keyframes.Worker do
+defmodule Heaters.Processing.Keyframe.Worker do
   use Heaters.Pipeline.WorkerBehavior,
     queue: :media_processing,
     # 15 minutes, prevent duplicate keyframe jobs
     unique: [period: 900, fields: [:args]]
 
   # TODO: Restore aliases when keyframes functionality is restored
-  # alias Heaters.Processing.Keyframes.Core
+  # alias Heaters.Processing.Keyframe.Core
   # alias Heaters.Media.Support.Types
   alias Heaters.Media.Clips
   alias Heaters.Pipeline.WorkerBehavior

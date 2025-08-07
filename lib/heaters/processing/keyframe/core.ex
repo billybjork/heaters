@@ -1,4 +1,4 @@
-defmodule Heaters.Processing.Keyframes.Core do
+defmodule Heaters.Processing.Keyframe.Core do
   @moduledoc """
   Keyframe extraction operations - I/O orchestration layer.
 
@@ -14,7 +14,7 @@ defmodule Heaters.Processing.Keyframes.Core do
   # TODO: Restore aliases when keyframes functionality is rewritten
   # alias Heaters.Media.Artifacts
   # alias Heaters.Media.Support.{Types, ErrorFormatting}
-  # alias Heaters.Processing.Keyframes.{Strategy, Validation}
+  # alias Heaters.Processing.Keyframe.{Strategy, Validation}
   # alias Heaters.Media.Clips
   # alias Heaters.Processing.Render.FFmpegAdapter
   # alias Heaters.Storage.S3

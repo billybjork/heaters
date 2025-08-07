@@ -1,4 +1,4 @@
-defmodule Heaters.Processing.Embeddings.Workflow do
+defmodule Heaters.Processing.Embed.Workflow do
   @moduledoc """
   Embedding workflow state management.
 
@@ -9,8 +9,8 @@ defmodule Heaters.Processing.Embeddings.Workflow do
   import Ecto.Query, warn: false
   alias Heaters.Repo
   alias Heaters.Media.Clip
-  alias Heaters.Processing.Embeddings.Embedding
-  alias Heaters.Processing.Embeddings.Types.EmbedResult
+  alias Heaters.Processing.Embed.Embedding
+  alias Heaters.Processing.Embed.Types.EmbedResult
   alias Heaters.Media.Clips
   require Logger
 

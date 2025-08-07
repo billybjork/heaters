@@ -1,4 +1,4 @@
-defmodule Heaters.Processing.Embeddings.Embedding do
+defmodule Heaters.Processing.Embed.Embedding do
   @moduledoc """
   Embedding schema for database operations.
 

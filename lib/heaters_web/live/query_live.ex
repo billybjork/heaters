@@ -1,7 +1,7 @@
 defmodule HeatersWeb.QueryLive do
   use HeatersWeb, :live_view
 
-  alias Heaters.Processing.Embeddings.Search, as: EmbeddingSearch
+  alias Heaters.Processing.Embed.Search, as: EmbeddingSearch
   alias Heaters.Media.Clips
   alias Heaters.Media.Clip
 

@@ -63,8 +63,8 @@ defmodule Heaters.Pipeline.Config do
   alias Heaters.Processing.DetectScenes.Worker, as: DetectScenesWorker
   alias Heaters.Storage.PipelineCache.PersistCache.Worker, as: PersistCacheWorker
   alias Heaters.Storage.Archive.Worker, as: ArchiveWorker
-  alias Heaters.Processing.Keyframes.Worker, as: KeyframeWorker
-  alias Heaters.Processing.Embeddings.Worker, as: EmbeddingWorker
+  alias Heaters.Processing.Keyframe.Worker, as: KeyframeWorker
+  alias Heaters.Processing.Embed.Worker, as: EmbeddingWorker
   alias Heaters.Storage.Archive.Worker, as: ArchiveWorker
   alias Heaters.Processing.Export.Worker, as: ExportWorker
   require Logger
@@ -219,8 +219,8 @@ defmodule Heaters.Pipeline.Config do
       Heaters.Storage.PipelineCache.PersistCache.Worker =>
         "videos needing cache upload → S3 upload",
       Heaters.Processing.Export.Worker => "approved virtual clips → rolling export",
-      Heaters.Processing.Keyframes.Worker => "exported clips needing keyframes",
-      Heaters.Processing.Embeddings.Worker => "keyframed clips needing embeddings",
+      Heaters.Processing.Keyframe.Worker => "exported clips needing keyframes",
+      Heaters.Processing.Embed.Worker => "keyframed clips needing embeddings",
       Heaters.Storage.Archive.Worker => "review_archived clips → archive"
     }
 
