@@ -54,7 +54,6 @@ defmodule Heaters.Processing.Support.ResultBuilder do
   @spec preprocess_success(integer(), String.t(), map()) :: {:ok, PreprocessResult.t()}
   def preprocess_success(source_video_id, proxy_filepath, opts \\ %{}) do
     result = %PreprocessResult{
-      status: :success,
       source_video_id: source_video_id,
       proxy_filepath: proxy_filepath,
       master_filepath: opts[:master_filepath],
@@ -92,19 +91,16 @@ defmodule Heaters.Processing.Support.ResultBuilder do
   @doc """
   Builds a successful export result with batch statistics.
   """
-  @spec export_success(integer(), integer(), map()) :: {:ok, ExportResult.t()}
-  def export_success(source_video_id, clips_processed, opts \\ %{}) do
-    result = %ExportResult{
-      status: :success,
-      source_video_id: source_video_id,
-      clips_processed: clips_processed,
-      successful_exports: opts[:successful_exports],
-      failed_exports: opts[:failed_exports],
-      total_duration_exported: opts[:total_duration_exported],
-      metadata: opts[:metadata],
-      duration_ms: opts[:duration_ms],
-      processed_at: DateTime.utc_now()
-    }
+  @spec export_success(integer(), [map()], map()) :: {:ok, ExportResult.t()}
+  def export_success(source_video_id, exported_clips, opts \\ %{}) do
+    result =
+      ExportResult.new(
+        source_video_id: source_video_id,
+        exported_clips: exported_clips,
+        proxy_metadata: opts[:proxy_metadata],
+        export_method: opts[:export_method] || "legacy_result_builder",
+        metadata: opts[:metadata]
+      )
 
     {:ok, result}
   end

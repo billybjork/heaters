@@ -50,9 +50,8 @@ defmodule Heaters.Processing.Support.Types do
     Contains proxy generation results, encoding statistics,
     and optimization metrics from FFmpeg processing.
     """
-    @enforce_keys [:status, :source_video_id, :proxy_filepath]
+    @enforce_keys [:source_video_id, :proxy_filepath]
     @type t :: %__MODULE__{
-            status: :success | :failed,
             source_video_id: integer(),
             proxy_filepath: String.t(),
             master_filepath: String.t() | nil,
@@ -65,7 +64,6 @@ defmodule Heaters.Processing.Support.Types do
           }
 
     defstruct [
-      :status,
       :source_video_id,
       :proxy_filepath,
       :master_filepath,
@@ -76,6 +74,23 @@ defmodule Heaters.Processing.Support.Types do
       :duration_ms,
       :processed_at
     ]
+
+    @doc """
+    Create a new PreprocessResult with computed fields.
+    """
+    def new(opts) when is_list(opts) do
+      %__MODULE__{
+        source_video_id: Keyword.fetch!(opts, :source_video_id),
+        proxy_filepath: Keyword.fetch!(opts, :proxy_filepath),
+        master_filepath: Keyword.get(opts, :master_filepath),
+        keyframe_count: Keyword.get(opts, :keyframe_count),
+        optimization_stats: Keyword.get(opts, :optimization_stats),
+        encoding_metrics: Keyword.get(opts, :encoding_metrics),
+        metadata: Keyword.get(opts, :metadata),
+        duration_ms: Keyword.get(opts, :duration_ms),
+        processed_at: DateTime.utc_now()
+      }
+    end
   end
 
   defmodule SceneDetectionResult do
@@ -115,33 +130,46 @@ defmodule Heaters.Processing.Support.Types do
     @moduledoc """
     Result structure for export operations.
 
-    Contains batch export statistics and individual clip
-    processing outcomes.
+    Contains batch export statistics, individual clip processing outcomes,
+    and detailed export information including proxy metadata.
     """
-    @enforce_keys [:status, :source_video_id, :clips_processed]
+    @enforce_keys [:source_video_id, :exported_clips, :export_method]
     @type t :: %__MODULE__{
-            status: :success | :failed,
             source_video_id: integer(),
-            clips_processed: integer(),
-            successful_exports: integer() | nil,
-            failed_exports: integer() | nil,
-            total_duration_exported: float() | nil,
+            exported_clips: [map()],
+            proxy_metadata: map() | nil,
+            export_method: String.t(),
+            total_clips_exported: integer() | nil,
             metadata: map() | nil,
-            duration_ms: integer() | nil,
             processed_at: DateTime.t()
           }
 
     defstruct [
-      :status,
       :source_video_id,
-      :clips_processed,
-      :successful_exports,
-      :failed_exports,
-      :total_duration_exported,
+      :exported_clips,
+      :proxy_metadata,
+      :export_method,
+      :total_clips_exported,
       :metadata,
-      :duration_ms,
       :processed_at
     ]
+
+    @doc """
+    Create a new ExportResult with computed fields.
+    """
+    def new(opts) when is_list(opts) do
+      exported_clips = Keyword.get(opts, :exported_clips, [])
+
+      %__MODULE__{
+        source_video_id: Keyword.fetch!(opts, :source_video_id),
+        exported_clips: exported_clips,
+        proxy_metadata: Keyword.get(opts, :proxy_metadata),
+        export_method: Keyword.fetch!(opts, :export_method),
+        total_clips_exported: length(exported_clips),
+        metadata: Keyword.get(opts, :metadata),
+        processed_at: DateTime.utc_now()
+      }
+    end
   end
 
   defmodule CachePersistResult do

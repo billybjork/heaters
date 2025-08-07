@@ -63,7 +63,6 @@ defmodule Heaters.Processing.Export.Worker do
   alias Heaters.Media.Clip
   alias Heaters.Processing.Export.StateManager
   alias Heaters.Pipeline.WorkerBehavior
-  alias Heaters.Processing.Support.PythonRunner, as: PyRunner
   alias Heaters.Processing.Support.ResultBuilder
   require Logger
 
@@ -76,11 +75,11 @@ defmodule Heaters.Processing.Export.Worker do
              [
                handle_export_work: 1,
                run_export_task: 3,
-               process_export_results: 2,
-               validate_export_results: 2,
-               update_clips_to_physical: 3,
-               update_single_clip_to_physical: 3,
-               calculate_total_duration: 1
+               process_native_export_results: 2,
+               validate_native_export_results: 2,
+               update_clips_to_physical_native: 3,
+               update_single_clip_to_physical_native: 3,
+               calculate_total_duration_native: 1
              ]}
 
   @impl WorkerBehavior
@@ -166,23 +165,23 @@ defmodule Heaters.Processing.Export.Worker do
   end
 
   defp run_export_task(clips, source_video, proxy_path) do
-    # Prepare export arguments for Python task (no FFmpeg args needed for stream copy)
-    export_args = %{
-      source_video_id: source_video.id,
-      proxy_path: proxy_path,
-      clips_data: prepare_clips_data(clips, source_video.title),
-      video_title: source_video.title
-    }
+    clips_data = prepare_clips_data(clips, source_video.title)
 
-    Logger.info("ExportWorker: Running Python export with #{length(clips)} clips")
+    Logger.info("ExportWorker: Running native Elixir export with #{length(clips)} clips")
 
-    case PyRunner.run_python_task("export_clips", export_args, timeout: :timer.minutes(45)) do
+    case Heaters.Processing.Export.Core.export_clips_from_proxy(
+           proxy_path,
+           clips_data,
+           source_video.id,
+           source_video.title,
+           operation_name: "ExportWorker"
+         ) do
       {:ok, result} ->
-        Logger.info("ExportWorker: Python export completed successfully")
-        process_export_results(clips, result)
+        Logger.info("ExportWorker: Native Elixir export completed successfully")
+        process_native_export_results(clips, result)
 
       {:error, reason} ->
-        Logger.error("ExportWorker: PyRunner failed: #{reason}")
+        Logger.error("ExportWorker: Native export failed: #{reason}")
         mark_clips_export_failed(clips, reason)
     end
   end
@@ -207,14 +206,36 @@ defmodule Heaters.Processing.Export.Worker do
     end)
   end
 
-  defp process_export_results(clips, results) do
-    # Extract exported clips data from Python task
-    exported_clips = Map.get(results, "exported_clips", [])
-    metadata = Map.get(results, "metadata", %{})
 
-    case validate_export_results(clips, exported_clips) do
+
+
+
+  defp mark_clips_export_failed(clips, reason) do
+    Enum.each(clips, fn clip ->
+      case StateManager.mark_export_failed(clip.id, reason) do
+        {:ok, _} ->
+          Logger.debug("ExportWorker: Marked clip #{clip.id} as export_failed")
+
+        {:error, db_error} ->
+          Logger.error(
+            "ExportWorker: Failed to mark clip #{clip.id} as failed: #{inspect(db_error)}"
+          )
+      end
+    end)
+
+    {:error, reason}
+  end
+
+  # Native Elixir result processing functions
+
+  defp process_native_export_results(clips, %Heaters.Processing.Support.Types.ExportResult{} = result) do
+    # Extract exported clips data from native Elixir result
+    exported_clips = result.exported_clips
+    metadata = result.metadata || %{}
+
+    case validate_native_export_results(clips, exported_clips) do
       :ok ->
-        update_clips_to_physical(clips, exported_clips, metadata)
+        update_clips_to_physical_native(clips, exported_clips, metadata)
 
       {:error, reason} ->
         Logger.error("ExportWorker: Export results validation failed: #{reason}")
@@ -222,14 +243,14 @@ defmodule Heaters.Processing.Export.Worker do
     end
   end
 
-  defp validate_export_results(clips, exported_clips) do
+  defp validate_native_export_results(clips, exported_clips) do
     expected_count = length(clips)
     actual_count = length(exported_clips)
 
     if expected_count == actual_count do
-      # Verify all clip IDs are present
+      # Verify all clip IDs are present - native results use atom keys
       expected_ids = MapSet.new(clips, & &1.id)
-      actual_ids = MapSet.new(exported_clips, &Map.get(&1, "clip_id"))
+      actual_ids = MapSet.new(exported_clips, &Map.get(&1, :clip_id))
 
       if MapSet.equal?(expected_ids, actual_ids) do
         :ok
@@ -242,53 +263,59 @@ defmodule Heaters.Processing.Export.Worker do
     end
   end
 
-  defp update_clips_to_physical(clips, exported_clips, metadata) do
-    # Create a map for quick lookup
+  defp update_clips_to_physical_native(clips, exported_clips, metadata) do
+    # Create a map for quick lookup - native results use atom keys
     exported_map =
       Map.new(exported_clips, fn clip_data ->
-        {Map.get(clip_data, "clip_id"), clip_data}
+        {Map.get(clip_data, :clip_id), clip_data}
       end)
 
-    # Update each clip to physical state
+    # Update each clip with its export data
     results =
       Enum.map(clips, fn clip ->
         case Map.get(exported_map, clip.id) do
           nil ->
-            {:error, "No export data for clip #{clip.id}"}
+            {:error, "No export data found for clip #{clip.id}"}
 
           export_data ->
-            update_single_clip_to_physical(clip, export_data, metadata)
+            update_single_clip_to_physical_native(clip, export_data, metadata)
         end
       end)
 
-    case Enum.find(results, &match?({:error, _}, &1)) do
-      nil ->
-        Logger.info("ExportWorker: Successfully updated #{length(clips)} clips to physical")
+    # Check if all updates succeeded
+    case Enum.split_with(results, &match?({:ok, _}, &1)) do
+      {successes, []} ->
+        updated_clips = Enum.map(successes, fn {:ok, clip} -> clip end)
+        total_duration = calculate_total_duration_native(exported_clips)
+
+        Logger.info(
+          "ExportWorker: Successfully updated #{length(updated_clips)} clips to physical (total: #{total_duration}s)"
+        )
 
         # Build structured result with export statistics
         source_video_id = List.first(clips).source_video_id
 
         export_result =
-          ResultBuilder.export_success(source_video_id, length(clips), %{
+          ResultBuilder.export_success(source_video_id, exported_clips, %{
             successful_exports: length(clips),
             failed_exports: 0,
-            total_duration_exported: calculate_total_duration(exported_clips),
-            metadata: metadata
+            total_duration_exported: total_duration,
+            proxy_metadata: metadata,
+            export_method: "stream_copy_native_elixir"
           })
 
-        # Log structured result for observability
-        ResultBuilder.log_result(__MODULE__, export_result)
+        # Return the result tuple directly 
         export_result
 
-      {:error, reason} ->
-        Logger.error("ExportWorker: Failed to update clips: #{reason}")
-        {:error, reason}
+      {_, failures} ->
+        failure_reasons = Enum.map(failures, fn {:error, reason} -> reason end)
+        {:error, "Failed to update clips: #{inspect(failure_reasons)}"}
     end
   end
 
-  defp update_single_clip_to_physical(clip, export_data, metadata) do
-    clip_filepath = Map.get(export_data, "output_path")
-    duration = Map.get(export_data, "duration")
+  defp update_single_clip_to_physical_native(clip, export_data, metadata) do
+    clip_filepath = Map.get(export_data, :output_path)
+    duration = Map.get(export_data, :duration)
 
     update_attrs = %{
       clip_filepath: clip_filepath,
@@ -311,29 +338,13 @@ defmodule Heaters.Processing.Export.Worker do
     end
   end
 
-  defp mark_clips_export_failed(clips, reason) do
-    Enum.each(clips, fn clip ->
-      case StateManager.mark_export_failed(clip.id, reason) do
-        {:ok, _} ->
-          Logger.debug("ExportWorker: Marked clip #{clip.id} as export_failed")
-
-        {:error, db_error} ->
-          Logger.error(
-            "ExportWorker: Failed to mark clip #{clip.id} as failed: #{inspect(db_error)}"
-          )
-      end
-    end)
-
-    {:error, reason}
-  end
-
-  # Helper function to calculate total duration from exported clips
-  defp calculate_total_duration(exported_clips) when is_list(exported_clips) do
+  # Helper function to calculate total duration from native exported clips
+  defp calculate_total_duration_native(exported_clips) when is_list(exported_clips) do
     exported_clips
-    |> Enum.map(&(Map.get(&1, "duration") || 0))
+    |> Enum.map(&(Map.get(&1, :duration) || 0))
     |> Enum.sum()
     |> Float.round(2)
   end
 
-  defp calculate_total_duration(_), do: 0.0
+  defp calculate_total_duration_native(_), do: 0.0
 end

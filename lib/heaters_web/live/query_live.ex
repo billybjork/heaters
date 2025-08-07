@@ -90,7 +90,8 @@ defmodule HeatersWeb.QueryLive do
     page = String.to_integer(page_str)
     %{main_clip: mc, filters: f, sort_asc?: sa} = socket.assigns
     similars = EmbeddingSearch.similar_clips(mc.id, f, sa, page, @per_page)
-    {:noreply, 
+
+    {:noreply,
      socket
      |> assign(page: page, similars_count: length(similars))
      |> stream(:similars, similars, reset: true)}
@@ -100,7 +101,8 @@ defmodule HeatersWeb.QueryLive do
   def handle_event("toggle_sort", _params, socket) do
     %{main_clip: mc, filters: f, sort_asc?: sa, page: page} = socket.assigns
     similars = EmbeddingSearch.similar_clips(mc.id, f, !sa, page, @per_page)
-    {:noreply, 
+
+    {:noreply,
      socket
      |> assign(sort_asc?: !sa, similars_count: length(similars))
      |> stream(:similars, similars, reset: true)}
@@ -114,7 +116,7 @@ defmodule HeatersWeb.QueryLive do
     similars =
       if main_clip, do: EmbeddingSearch.similar_clips(main_clip.id, f, sa, 1, @per_page), else: []
 
-    {:noreply, 
+    {:noreply,
      socket
      |> assign(main_clip: main_clip, page: 1, similars_count: length(similars))
      |> stream(:similars, similars, reset: true)}

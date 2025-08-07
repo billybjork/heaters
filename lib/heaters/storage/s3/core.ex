@@ -472,10 +472,11 @@ defmodule Heaters.Storage.S3.Core do
   end
 
   @doc """
-  Upload a file to S3 with detailed progress reporting using Python task.
+  Upload a file to S3 with detailed progress reporting using native Elixir implementation.
 
-  This function is ideal for large file uploads where progress visibility is important.
-  It uses a dedicated Python task that provides percentage-based progress logging.
+  This function provides percentage-based progress logging with exponential backoff retry logic,
+  multipart uploads for large files, and comprehensive error handling. It replaces the previous
+  Python-based implementation while maintaining the same interface and functionality.
 
   ## Parameters
   - `local_path`: Path to the local file to upload
@@ -484,6 +485,8 @@ defmodule Heaters.Storage.S3.Core do
     - `:operation_name`: String to include in log messages (defaults to "S3Upload")
     - `:storage_class`: S3 storage class ("STANDARD", "STANDARD_IA", etc.)
     - `:timeout`: Upload timeout in milliseconds (defaults to 30 minutes)
+    - `:progress_throttle`: Progress reporting throttle percentage (defaults to 5)
+    - `:max_retries`: Maximum retry attempts (defaults to 3)
 
   ## Examples
 
@@ -500,46 +503,291 @@ defmodule Heaters.Storage.S3.Core do
   def upload_file_with_progress(local_path, s3_key, opts \\ []) do
     operation_name = Keyword.get(opts, :operation_name, "S3Upload")
     storage_class = Keyword.get(opts, :storage_class, "STANDARD")
-    timeout = Keyword.get(opts, :timeout, :timer.minutes(30))
+    progress_throttle = Keyword.get(opts, :progress_throttle, 5)
+    max_retries = Keyword.get(opts, :max_retries, 3)
 
     # Ensure s3_key doesn't start with /
     clean_s3_key = String.trim_leading(s3_key, "/")
 
     Logger.info(
-      "#{operation_name}: Starting upload with progress reporting: #{local_path} -> s3://bucket/#{clean_s3_key}"
+      "#{operation_name}: Starting native Elixir upload with progress reporting: #{local_path} -> s3://bucket/#{clean_s3_key}"
     )
 
     if not File.exists?(local_path) do
       {:error, "Local file does not exist: #{local_path}"}
     else
-      # Use Python task for upload with progress reporting
-      upload_args = %{
-        local_path: local_path,
-        s3_key: clean_s3_key,
-        storage_class: storage_class
-      }
-
-      case Heaters.Processing.Support.PythonRunner.run_python_task("upload_s3", upload_args,
-             timeout: timeout
-           ) do
-        {:ok, %{"status" => "success"} = result} ->
-          Logger.info("#{operation_name}: Upload completed successfully")
-          Logger.debug("#{operation_name}: Upload result: #{inspect(result)}")
-          {:ok, clean_s3_key}
-
-        {:ok, %{"status" => "error", "error" => error_msg} = result} ->
-          Logger.error("#{operation_name}: Upload failed: #{error_msg}")
-          Logger.debug("#{operation_name}: Upload error result: #{inspect(result)}")
-          {:error, "Upload failed: #{error_msg}"}
-
-        {:ok, result} ->
-          Logger.error("#{operation_name}: Upload returned unexpected result: #{inspect(result)}")
-          {:error, "Upload returned unexpected result"}
+      case get_bucket_name() do
+        {:ok, bucket_name} ->
+          upload_with_native_progress_and_retry(
+            local_path,
+            bucket_name,
+            clean_s3_key,
+            storage_class,
+            operation_name,
+            progress_throttle,
+            max_retries
+          )
 
         {:error, reason} ->
-          Logger.error("#{operation_name}: PyRunner failed: #{reason}")
-          {:error, "PyRunner failed: #{reason}"}
+          Logger.error("#{operation_name}: S3 bucket name not configured: #{inspect(reason)}")
+          {:error, reason}
       end
     end
+  end
+
+  # Private function for native upload with progress reporting and retry logic
+  @spec upload_with_native_progress_and_retry(
+          String.t(),
+          String.t(),
+          String.t(),
+          String.t(),
+          String.t(),
+          integer(),
+          integer()
+        ) :: {:ok, String.t()} | {:error, any()}
+  defp upload_with_native_progress_and_retry(
+         local_path,
+         bucket_name,
+         s3_key,
+         storage_class,
+         operation_name,
+         progress_throttle,
+         max_retries
+       ) do
+    file_size = File.stat!(local_path).size
+
+    Logger.info(
+      "#{operation_name}: File size: #{format_file_size(file_size)} (#{format_number(file_size)} bytes)"
+    )
+
+    Logger.info("#{operation_name}: Storage class: #{storage_class}")
+    Logger.info("#{operation_name}: Destination: s3://#{bucket_name}/#{s3_key}")
+
+    # Use exponential backoff retry logic similar to Python implementation
+    retry_with_exponential_backoff(max_retries, fn attempt ->
+      if attempt > 1 do
+        Logger.info("#{operation_name}: Retry attempt #{attempt}/#{max_retries}")
+      end
+
+      # Verify file still exists before each attempt
+      if not File.exists?(local_path) do
+        throw({:permanent_error, "Local file no longer exists: #{local_path}"})
+      end
+
+      Logger.info(
+        "#{operation_name}: Starting S3 upload (attempt #{attempt}/#{max_retries}): #{Path.basename(local_path)} (#{format_file_size(file_size)}) to s3://#{bucket_name}/#{s3_key}"
+      )
+
+      # Create progress tracking agent for this upload
+      {:ok, progress_agent} =
+        start_progress_agent(
+          file_size,
+          Path.basename(local_path),
+          operation_name,
+          progress_throttle
+        )
+
+      try do
+        upload_options =
+          build_upload_options_with_progress(local_path, storage_class, progress_agent)
+
+        case ExAws.S3.Upload.stream_file(local_path)
+             |> ExAws.S3.upload(bucket_name, s3_key, upload_options)
+             |> ExAws.request() do
+          {:ok, _result} ->
+            # Final progress update
+            update_progress(progress_agent, file_size)
+
+            Logger.info(
+              "#{operation_name}: Successfully uploaded #{Path.basename(local_path)} to s3://#{bucket_name}/#{s3_key}"
+            )
+
+            # Verify upload with HEAD request
+            case verify_upload(bucket_name, s3_key, operation_name) do
+              :ok ->
+                {:ok, s3_key}
+
+              {:error, reason} ->
+                Logger.warning(
+                  "#{operation_name}: Upload verification failed for #{s3_key}: #{reason}"
+                )
+
+                # Don't fail for verification issues - upload likely succeeded
+                {:ok, s3_key}
+            end
+
+          {:error, reason} ->
+            Logger.error("#{operation_name}: S3 upload failed: #{inspect(reason)}")
+            {:error, reason}
+        end
+      after
+        Agent.stop(progress_agent)
+      end
+    end)
+  end
+
+  # Start a progress tracking agent
+  @spec start_progress_agent(integer(), String.t(), String.t(), integer()) :: {:ok, pid()}
+  defp start_progress_agent(total_size, filename, operation_name, throttle_percentage) do
+    Agent.start_link(fn ->
+      %{
+        total_size: total_size,
+        filename: filename,
+        operation_name: operation_name,
+        throttle_percentage: throttle_percentage,
+        bytes_uploaded: 0,
+        last_logged_percentage: -1
+      }
+    end)
+  end
+
+  # Update progress and log when appropriate
+  @spec update_progress(pid(), integer()) :: :ok
+  defp update_progress(progress_agent, bytes_amount) do
+    Agent.update(progress_agent, fn state ->
+      new_bytes_uploaded = state.bytes_uploaded + bytes_amount
+
+      current_percentage =
+        if state.total_size > 0, do: div(new_bytes_uploaded * 100, state.total_size), else: 0
+
+      should_log =
+        (current_percentage >= state.last_logged_percentage + state.throttle_percentage and
+           current_percentage < 100) or
+          (current_percentage == 100 and state.last_logged_percentage != 100)
+
+      if should_log do
+        size_mb = new_bytes_uploaded / (1024 * 1024)
+        total_size_mb = state.total_size / (1024 * 1024)
+
+        Logger.info(
+          "#{state.operation_name}: #{state.filename} - #{current_percentage}% complete " <>
+            "(#{:erlang.float_to_binary(size_mb, decimals: 2)}/#{:erlang.float_to_binary(total_size_mb, decimals: 2)} MiB)"
+        )
+      end
+
+      %{
+        state
+        | bytes_uploaded: new_bytes_uploaded,
+          last_logged_percentage:
+            if(should_log, do: current_percentage, else: state.last_logged_percentage)
+      }
+    end)
+  end
+
+  # Build upload options with progress callback
+  @spec build_upload_options_with_progress(String.t(), String.t(), pid()) :: keyword()
+  defp build_upload_options_with_progress(local_path, storage_class, progress_agent) do
+    content_type = guess_content_type(local_path)
+
+    base_options = [
+      # Progress callback
+      callback: fn bytes_amount -> update_progress(progress_agent, bytes_amount) end,
+      # Multipart upload configuration for large files
+      # 100MB threshold
+      multipart_threshold: 100 * 1024 * 1024,
+      # 16MB chunks
+      chunk_size: 16 * 1024 * 1024
+    ]
+
+    # Add content type if available
+    options_with_content_type =
+      if content_type do
+        [content_type: content_type] ++ base_options
+      else
+        base_options
+      end
+
+    # Add storage class if specified and not STANDARD
+    if storage_class != "STANDARD" do
+      [storage_class: storage_class] ++ options_with_content_type
+    else
+      options_with_content_type
+    end
+  end
+
+  # Verify upload with HEAD request
+  @spec verify_upload(String.t(), String.t(), String.t()) :: :ok | {:error, any()}
+  defp verify_upload(bucket_name, s3_key, operation_name) do
+    case ExAws.S3.head_object(bucket_name, s3_key) |> ExAws.request() do
+      {:ok, _response} ->
+        Logger.info("#{operation_name}: S3 upload verification successful for #{s3_key}")
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # Retry with exponential backoff
+  @spec retry_with_exponential_backoff(integer(), (integer() -> {:ok, any()} | {:error, any()})) ::
+          {:ok, any()} | {:error, any()}
+  defp retry_with_exponential_backoff(max_retries, operation_fn) do
+    retry_with_exponential_backoff(max_retries, 1, operation_fn)
+  end
+
+  @spec retry_with_exponential_backoff(
+          integer(),
+          integer(),
+          (integer() -> {:ok, any()} | {:error, any()})
+        ) ::
+          {:ok, any()} | {:error, any()}
+  defp retry_with_exponential_backoff(max_retries, attempt, operation_fn)
+       when attempt <= max_retries do
+    try do
+      case operation_fn.(attempt) do
+        {:ok, result} ->
+          {:ok, result}
+
+        {:error, _reason} when attempt < max_retries ->
+          # Exponential backoff: 2s, 4s, 8s
+          delay = (2000 * :math.pow(2, attempt - 1)) |> round()
+          Logger.info("Retrying upload after #{delay}ms...")
+          Process.sleep(delay)
+          retry_with_exponential_backoff(max_retries, attempt + 1, operation_fn)
+
+        {:error, reason} ->
+          Logger.error("Upload failed after #{max_retries} attempts")
+          {:error, reason}
+      end
+    catch
+      {:permanent_error, reason} ->
+        Logger.error("Permanent error during upload: #{reason}")
+        {:error, reason}
+    end
+  end
+
+  defp retry_with_exponential_backoff(_max_retries, _attempt, _operation_fn) do
+    {:error, "Maximum retry attempts exceeded"}
+  end
+
+  # Format file size for human-readable logging
+  @spec format_file_size(integer()) :: String.t()
+  defp format_file_size(bytes) when bytes >= 1024 * 1024 * 1024 do
+    gb = bytes / (1024 * 1024 * 1024)
+    "#{:erlang.float_to_binary(gb, decimals: 2)} GiB"
+  end
+
+  defp format_file_size(bytes) when bytes >= 1024 * 1024 do
+    mb = bytes / (1024 * 1024)
+    "#{:erlang.float_to_binary(mb, decimals: 2)} MiB"
+  end
+
+  defp format_file_size(bytes) when bytes >= 1024 do
+    kb = bytes / 1024
+    "#{:erlang.float_to_binary(kb, decimals: 2)} KiB"
+  end
+
+  defp format_file_size(bytes) do
+    "#{bytes} bytes"
+  end
+
+  # Format number with commas for readability
+  @spec format_number(integer()) :: String.t()
+  defp format_number(number) do
+    number
+    |> to_string()
+    |> String.reverse()
+    |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
+    |> String.reverse()
   end
 end

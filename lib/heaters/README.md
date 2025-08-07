@@ -10,8 +10,8 @@ Heaters processes videos through a **cuts-based pipeline**: download → proxy g
 
 - **Backend**: Elixir/Phoenix 1.8+ with LiveView 1.1
 - **Database**: PostgreSQL with pgvector  
-- **Media Processing**: Python (yt-dlp, FFmpeg, OpenCV, PyTorch)
-- **Storage**: AWS S3 with intelligent caching
+- **Media Processing**: Native Elixir/FFmpex with selective Python integration for specialized tasks
+- **Storage**: AWS S3 with intelligent caching and native ExAws integration
 - **Frontend**: Phoenix LiveView 1.1 with colocated hooks and single-file components
 
 ## Architecture
@@ -35,7 +35,7 @@ Heaters processes videos through a **cuts-based pipeline**: download → proxy g
 ## Code Organization
 
 - **`Media`**: Domain entities (videos, clips, cuts, artifacts) and cut operations
-- **`Processing`**: Automated pipeline stages with structured results (download, preprocess, scene detection, render, keyframes, embeddings)
+- **`Processing`**: Automated pipeline stages with structured results and native Elixir implementations (download, preprocess, scene detection, export, keyframes, embeddings)
 - **`Storage`**: All storage concerns (pipeline cache, playback cache with scheduled cleanup, archive, S3 operations)
 - **`Review`**: Human workflow (queue management, actions)
 - **`Pipeline`**: Declarative orchestration (config, dispatcher, queries)
@@ -97,12 +97,12 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 ## Configuration
 
 ### Media Processing
-- **FFmpeg**: All encoding profiles centralized in `Processing.Render.FFmpegConfig`
-- **yt-dlp**: Quality-first download strategy in `Processing.Download.YtDlpConfig` with validation
-- **S3 Path Management**: All S3 directory structure centralized in `Storage.S3Paths` module
-- **"Dumb Python"**: Python tasks receive complete configuration and S3 paths from Elixir
-- **Temp Clip Audio**: FFmpeg `-an` flag removes audio streams to prevent browser decode issues
-- **Stream Copy Optimization**: Video stream copy (`-c:v copy`) with web optimization (`+faststart`)
+- **FFmpeg**: Native Elixir/FFmpex with encoding profiles centralized in `Processing.Support.FFmpeg.Config`
+- **Video Processing**: Native Elixir implementations for preprocessing, export, and S3 operations with structured result types
+- **Specialized Python**: Selective integration for yt-dlp downloads, OpenCV scene detection, and ML embeddings
+- **S3 Operations**: Native ExAws integration with progress reporting, multipart uploads, exponential backoff retry logic
+- **Stream Copy Optimization**: Native FFmpex stream copy (`-c:v copy`) for lossless, instant clip export
+- **Temp Cache System**: Smart file caching with LRU eviction to minimize S3 operations and improve pipeline performance
 
 ⚠️ **CRITICAL**: All configuration centralized (download, encoding, S3 paths) with built-in validation to prevent quality-reducing mistakes (4K→360p) and path inconsistencies. Review module documentation before modifying.
 

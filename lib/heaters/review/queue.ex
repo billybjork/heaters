@@ -94,7 +94,7 @@ defmodule Heaters.Review.Queue do
 
   @doc """
   Get a specific clip if it's in pending_review state.
-  
+
   Returns nil if the clip doesn't exist or isn't eligible for review.
   Used for URL-based navigation to specific clips.
   """
@@ -109,7 +109,7 @@ defmodule Heaters.Review.Queue do
 
   @doc """
   Get clips before a specific clip ID in review order.
-  
+
   Used for building history when navigating to a specific clip via URL.
   """
   @spec clips_before(integer(), integer()) :: list(Clip.t())
@@ -125,7 +125,7 @@ defmodule Heaters.Review.Queue do
 
   @doc """
   Get clips after a specific clip ID in review order.
-  
+
   Used for building future queue when navigating to a specific clip via URL.
   """
   @spec clips_after(integer(), integer()) :: list(Clip.t())

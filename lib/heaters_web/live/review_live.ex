@@ -107,8 +107,10 @@ defmodule HeatersWeb.ReviewLive do
 
       target_clip ->
         # Load clips around the target clip (before and after)
-        before_count = div(prefetch_size, 3)  # ~1/3 for history
-        after_count = prefetch_size - before_count - 1  # rest for future
+        # ~1/3 for history
+        before_count = div(prefetch_size, 3)
+        # rest for future
+        after_count = prefetch_size - before_count - 1
 
         history_clips = ClipReview.clips_before(target_clip_id, before_count)
         future_clips = ClipReview.clips_after(target_clip_id, after_count)
@@ -145,7 +147,7 @@ defmodule HeatersWeb.ReviewLive do
   def handle_event("select", %{"action" => action}, %{assigns: %{current: clip}} = socket) do
     # First, persist any pending actions from previous clips
     socket = persist_all_pending_actions(socket)
-    
+
     socket =
       socket
       |> assign(flash_action: action)
@@ -184,7 +186,8 @@ defmodule HeatersWeb.ReviewLive do
         page_state: :reviewing,
         temp_clip: %{}
       )
-      |> clear_pending_action(prev.id)  # Clear any pending action for the clip we're returning to
+      # Clear any pending action for the clip we're returning to
+      |> clear_pending_action(prev.id)
       |> refill_future()
       |> clear_flash()
       |> put_flash(:info, "Undone - showing clip #{prev.id}")
@@ -199,7 +202,6 @@ defmodule HeatersWeb.ReviewLive do
   # -------------------------------------------------------------------------
   # Async persistence helpers
   # -------------------------------------------------------------------------
-
 
   # -------------------------------------------------------------------------
   # Queue helpers
@@ -404,19 +406,23 @@ defmodule HeatersWeb.ReviewLive do
 
   # Background persistence handlers (for pending actions)
   @impl true
-  def handle_async({:persist_background, _}, {:ok, {_next_clip, _metadata}}, socket), do: {:noreply, socket}
+  def handle_async({:persist_background, _}, {:ok, {_next_clip, _metadata}}, socket),
+    do: {:noreply, socket}
+
   @impl true
   def handle_async({:persist_background, clip_id}, {:error, reason}, socket) do
     require Logger
     Logger.error("Background persist for clip #{clip_id} failed: #{inspect(reason)}")
-    {:noreply, socket}  # Don't show error flashes for background operations
+    # Don't show error flashes for background operations
+    {:noreply, socket}
   end
 
   @impl true
   def handle_async({:persist_background, clip_id}, {:exit, reason}, socket) do
     require Logger
     Logger.error("Background persist for clip #{clip_id} crashed: #{inspect(reason)}")
-    {:noreply, socket}  # Don't show error flashes for background operations
+    # Don't show error flashes for background operations
+    {:noreply, socket}
   end
 
   # -------------------------------------------------------------------------
@@ -520,7 +526,8 @@ defmodule HeatersWeb.ReviewLive do
   # -------------------------------------------------------------------------
 
   @impl true
-  def terminate(_reason, %{assigns: %{pending_actions: pending_actions}}) when map_size(pending_actions) > 0 do
+  def terminate(_reason, %{assigns: %{pending_actions: pending_actions}})
+      when map_size(pending_actions) > 0 do
     # Persist any remaining pending actions when the LiveView shuts down
     # This prevents actions from being lost due to browser close, crash, navigation, etc.
     Task.start(fn ->
@@ -530,7 +537,10 @@ defmodule HeatersWeb.ReviewLive do
         rescue
           error ->
             require Logger
-            Logger.warning("Failed to persist pending action for clip #{clip_id} during terminate: #{inspect(error)}")
+
+            Logger.warning(
+              "Failed to persist pending action for clip #{clip_id} during terminate: #{inspect(error)}"
+            )
         end
       end)
     end)
@@ -541,17 +551,17 @@ defmodule HeatersWeb.ReviewLive do
   # -------------------------------------------------------------------------
   # Colocated Hook - Review Hotkeys
   # -------------------------------------------------------------------------
-  
+
   @doc """
   Renders the colocated ReviewHotkeys JavaScript hook.
-  
+
   This hook provides keyboard shortcuts for the review workflow:
   - A: Approve
   - S: Skip  
   - D: Archive
   - G: Group
   - Ctrl/Cmd+Z: Undo
-  
+
   The hook is embedded directly in this LiveView module to keep
   all review-related functionality together.
   """
