@@ -20,7 +20,7 @@ defmodule Heaters.Storage.S3.Paths do
   ├── originals/          # Downloaded source videos
   ├── masters/            # High-quality H.264 archival videos
   ├── proxies/            # Review-optimized videos (720p, CRF 28)
-  ├── final_clips/        # Exported clips ready for delivery
+  ├── clips/             # Exported clips ready for delivery
   └── artifacts/          # Keyframes, thumbnails, and other assets
       ├── keyframes/
       └── thumbnails/
@@ -48,7 +48,7 @@ defmodule Heaters.Storage.S3.Paths do
   @originals_folder "originals"
   @masters_folder "masters"
   @proxies_folder "proxies"
-  @final_clips_folder "final_clips"
+  @clips_folder "clips"
   @artifacts_folder "artifacts"
   @keyframes_subfolder "keyframes"
   @thumbnails_subfolder "thumbnails"
@@ -160,13 +160,13 @@ defmodule Heaters.Storage.S3.Paths do
   ## Examples
 
       iex> S3.Paths.generate_clip_path(456, "My Video", "clip_001")
-      "final_clips/My_Video_clip_001.mp4"
+      "clips/My_Video_clip_001.mp4"
   """
   @spec generate_clip_path(integer(), String.t(), String.t()) :: String.t()
   def generate_clip_path(_clip_id, title, identifier) do
     sanitized_title = sanitize_title(title)
     sanitized_identifier = sanitize_filename(identifier)
-    "#{@final_clips_folder}/#{sanitized_title}_#{sanitized_identifier}.mp4"
+    "#{@clips_folder}/#{sanitized_title}_#{sanitized_identifier}.mp4"
   end
 
   @doc """

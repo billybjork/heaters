@@ -68,12 +68,12 @@ defmodule Heaters.Processing.Export.StateManager do
   ## Examples
 
       attrs = %{
-        clip_filepath: "final_clips/video_123_clip_001.mp4",
+        clip_filepath: "clips/video_123_clip_001.mp4",
         ingest_state: :exported
       }
       {:ok, clip} = StateManager.complete_export(456, attrs)
-      clip.clip_filepath  # "final_clips/video_123_clip_001.mp4"
-      clip.clip_filepath  # "final_clips/video_123_clip_001.mp4"
+      clip.clip_filepath  # "clips/video_123_clip_001.mp4"
+      clip.clip_filepath  # "clips/video_123_clip_001.mp4"
   """
   @spec complete_export(integer(), map()) :: {:ok, Clip.t()} | {:error, any()}
   def complete_export(clip_id, update_attrs) do
@@ -137,8 +137,14 @@ defmodule Heaters.Processing.Export.StateManager do
       clip.ingest_state != :review_approved ->
         {:error, "Clip #{clip.id} is not in review_approved state: #{clip.ingest_state}"}
 
-      is_nil(clip.cut_points) ->
-        {:error, "Clip #{clip.id} has no cut points"}
+      is_nil(clip.start_time_seconds) or is_nil(clip.end_time_seconds) ->
+        {:error, "Clip #{clip.id} is missing start/end times"}
+
+      clip.start_time_seconds < 0 or clip.end_time_seconds <= 0 ->
+        {:error, "Clip #{clip.id} has invalid non-positive times"}
+
+      clip.start_time_seconds >= clip.end_time_seconds ->
+        {:error, "Clip #{clip.id} has invalid time range (start >= end)"}
 
       true ->
         nil

@@ -295,6 +295,46 @@ defmodule Heaters.Processing.Support.FFmpeg.Config do
         },
         # Image output
         container: "image2"
+      },
+
+      # Temporary clip generation for instant playback using stream copy
+      temp_playback: %{
+        purpose: "Temporary clip generation for instant playback in browser",
+        optimization: "Ultra-fast stream copy with browser compatibility",
+        video: %{
+          # Stream copy for maximum speed (no re-encoding)
+          codec: "copy"
+        },
+        # No audio for temp clips to avoid decode issues
+        no_audio: true,
+        container: "mp4",
+        web_optimization: %{
+          # Optimize for instant playback
+          movflags: "+faststart",
+          # Clean timestamps for browser compatibility
+          avoid_negative_ts: "make_zero"
+        }
+      },
+
+      # Final export for permanent clips using stream copy with audio preservation
+      final_export: %{
+        purpose: "Final export for permanent clips using stream copy",
+        optimization: "Fast stream copy preserving original quality and audio",
+        video: %{
+          # Stream copy for maximum speed and zero quality loss
+          codec: "copy"
+        },
+        audio: %{
+          # Stream copy audio to preserve original quality
+          codec: "copy"
+        },
+        container: "mp4",
+        web_optimization: %{
+          # Optimize for streaming/download
+          movflags: "+faststart",
+          # Clean timestamps
+          avoid_negative_ts: "make_zero"
+        }
       }
     }
   end

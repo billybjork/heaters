@@ -1,9 +1,10 @@
 defmodule Heaters.Processing.Export.Worker do
   @moduledoc """
-  Worker for exporting virtual clips to physical clips using the proxy.
+  Worker for exporting virtual clips to physical clips using efficient stream copy.
 
   This worker handles the final stage of the virtual clip pipeline by clipping
-  approved virtual clips into physical MP4 files using the high-quality proxy.
+  approved virtual clips into physical MP4 files using the efficient unified 
+  stream copy architecture.
 
   ## Storage Strategy & Quality Decision
 
@@ -11,20 +12,19 @@ defmodule Heaters.Processing.Export.Worker do
   - **Optimized for Review**: Proxy uses CRF 28, 720p optimized for internal review UI
   - **Instant Access**: Both proxy and master in S3 Standard for instant access
   - **Stream Copy**: No re-encoding = zero quality loss + 10x faster
-  - **File Size**: Proxy much smaller than master for efficient temp clips
-  - **Perfect for Review**: CRF 28 all-I-frame is ideal for review workflow
+  - **File Size**: Proxy much smaller than master for efficient processing
+  - **Perfect for Export**: CRF 28 all-I-frame is ideal for stream copy operations
 
   **Master**: High-quality H.264 archival stored in S3 Standard
   **Proxy**: Dual-purpose for review AND final export source
 
-  ## Workflow
+  ## Efficient Workflow (V2)
 
   1. Group virtual clips by source_video for batch processing
-  2. Download proxy file (S3 Standard, instant access)
-  3. Extract individual clips using FFmpeg stream copy (no re-encoding)
+  2. Process directly from CloudFront URLs (no downloads)
+  3. Extract individual clips using FFmpeg stream copy via unified abstraction
   4. Upload physical clips to S3 Standard
   5. Update clip records: is_virtual = false, add clip_filepath
-  6. Clean up temporary files
 
   ## State Management
 
@@ -36,22 +36,22 @@ defmodule Heaters.Processing.Export.Worker do
   ## Batch Processing
 
   For efficiency, this worker processes all approved virtual clips from the same
-  source video together in a single job. This minimizes proxy downloads
-  and temporary file operations.
+  source video together in a single job. This eliminates proxy downloads entirely
+  and minimizes temporary file operations.
 
   ## Performance Benefits
 
-  - **10x Faster**: Stream copy vs re-encoding significantly reduces processing time
+  - **10x Faster**: Stream copy vs re-encoding + no local downloads
   - **Zero Quality Loss**: No transcoding artifacts or generational loss
-  - **Resource Efficient**: Minimal CPU usage compared to encoding operations
-  - **Instant Availability**: Both proxy and master in S3 Standard for consistent access
+  - **Resource Efficient**: Minimal CPU and I/O usage
+  - **Unified Architecture**: Same foundations as playback cache system
 
-  ## Architecture
+  ## Architecture (V2)
 
-  - **Export**: Python task via PyRunner for FFmpeg stream copy operations
-  - **State Management**: Elixir state transitions and database operations
-  - **Storage**: S3 Standard for physical clip files (ready for CDN/streaming)
-  - **Cleanup**: Temporary file management
+  - **Export**: Unified StreamClip abstraction with profile-based configuration
+  - **State Management**: Elixir state transitions and database operations  
+  - **Storage**: Direct CloudFront → S3 processing, no local downloads
+  - **Profiles**: Uses :final_export profile for audio preservation
   """
 
   use Heaters.Pipeline.WorkerBehavior,
@@ -101,7 +101,7 @@ defmodule Heaters.Processing.Export.Worker do
 
         # Return structured result for no clips to process
         export_result =
-          ResultBuilder.export_success(source_video_id, 0, %{
+          ResultBuilder.export_success(source_video_id, [], %{
             successful_exports: 0,
             failed_exports: 0,
             no_clips_to_process: true
@@ -164,24 +164,23 @@ defmodule Heaters.Processing.Export.Worker do
     end
   end
 
-  defp run_export_task(clips, source_video, proxy_path) do
+  defp run_export_task(clips, source_video, _proxy_path) do
     clips_data = prepare_clips_data(clips, source_video.title)
 
-    Logger.info("ExportWorker: Running native Elixir export with #{length(clips)} clips")
+    Logger.info("ExportWorker: Running efficient stream copy export with #{length(clips)} clips")
 
-    case Heaters.Processing.Export.Core.export_clips_from_proxy(
-           proxy_path,
+    case Heaters.Processing.Export.Core.export_clips_efficient(
            clips_data,
-           source_video.id,
-           source_video.title,
-           operation_name: "ExportWorker"
+           source_video,
+           operation_name: "ExportWorker",
+           profile: :final_export
          ) do
       {:ok, result} ->
-        Logger.info("ExportWorker: Native Elixir export completed successfully")
+        Logger.info("ExportWorker: Efficient stream copy export completed successfully")
         process_native_export_results(clips, result)
 
       {:error, reason} ->
-        Logger.error("ExportWorker: Native export failed: #{reason}")
+        Logger.error("ExportWorker: Efficient export failed: #{reason}")
         mark_clips_export_failed(clips, reason)
     end
   end
@@ -199,7 +198,10 @@ defmodule Heaters.Processing.Export.Worker do
       %{
         clip_id: clip.id,
         clip_identifier: clip.clip_identifier,
-        cut_points: clip.cut_points,
+        cut_points: %{
+          start_time_seconds: clip.start_time_seconds,
+          end_time_seconds: clip.end_time_seconds
+        },
         # S3 path generated by Elixir (eliminates Python path generation coupling)
         s3_output_path: s3_output_path
       }

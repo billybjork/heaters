@@ -1,9 +1,26 @@
 defmodule Heaters.Storage.PlaybackCache.TempClip do
   @moduledoc """
-  Micro-proof-of-concept for generating temporary clip files using FFmpeg stream copy.
+  Efficient temporary clip generation using unified FFmpeg stream copy abstraction.
 
-  This generates small MP4 files (2-5MB typically) that play instantly with correct
-  timeline duration, replacing the Media Fragments approach for development.
+  This module leverages the unified `StreamClip` module for consistent, maintainable 
+  clip generation with profile-based configuration and optimal browser compatibility.
+
+  ## Key Features
+
+  - **Unified Architecture**: Uses `StreamClip` for consistent clip generation
+  - **Profile-Based**: Uses `:temp_playback` profile for optimal temp clip settings  
+  - **Browser Optimized**: Audio removal and fast start for instant playback
+  - **Minimal Files**: Typically 2-5MB for quick transfer and playback
+  - **Stream Copy**: Zero re-encoding for 10x faster generation
+
+  ## Architecture
+
+  Built on the unified FFmpeg abstraction that provides:
+  - Direct CloudFront URL processing (no downloads)
+  - Profile-based configuration from `FFmpeg.Config`
+  - Consistent error handling and logging
+
+  ## Cleanup
 
   Cleanup is handled by the scheduled CleanupWorker rather than per-file timers
   for more efficient batch processing.
@@ -11,22 +28,26 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
 
   require Logger
 
+  alias Heaters.Processing.Support.FFmpeg.StreamClip
   alias Heaters.Repo
-  @tmp_dir System.tmp_dir!()
-  @ffmpeg_bin Application.compile_env(:heaters, :ffmpeg_bin, "/usr/bin/ffmpeg")
 
   @doc """
-  Build a temporary clip file from a clip without exported file.
+  Build a temporary clip file using the unified StreamClip abstraction.
 
-  Uses FFmpeg with `-c copy` for ultra-fast stream copying without re-encoding.
-  The resulting file is tiny (2-5MB) and starts playing immediately.
+  Uses the `:temp_playback` FFmpeg profile which provides ultra-fast stream copying
+  without re-encoding. The resulting file is tiny (2-5MB) and starts playing immediately.
 
   ## Parameters
   - `clip`: Clip struct with timing and source video information
 
   ## Returns
-  - `{:ok, file_url}` - file:// URL for direct browser access
+  - `{:ok, file_url}` - HTTP URL for direct browser access
   - `{:error, reason}` - FFmpeg error or missing data
+
+  ## Examples
+
+      {:ok, url} = TempClip.build(clip)
+      # Returns: {:ok, "/temp/clip_123_456789.mp4?t=123456"}
   """
   @spec build(map()) :: {:ok, String.t()} | {:error, String.t()}
   def build(%{
@@ -35,138 +56,68 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
         end_time_seconds: end_seconds,
         source_video: source_video
       }) do
-    # Calculate duration
-    duration_seconds = end_seconds - start_seconds
+    Logger.info("TempClip: Building temp clip #{id} using unified StreamClip abstraction")
 
-    # Get input URL (proxy file for temp clips)
-    {:ok, proxy_url} = get_proxy_url(source_video.proxy_filepath)
-
-    # Generate temp file path with timestamp to ensure uniqueness (use milliseconds for better precision)
-    timestamp = System.system_time(:millisecond)
-    tmp_file = Path.join(@tmp_dir, "clip_#{id}_#{timestamp}.mp4")
-
-    Logger.info(
-      "TempClip: Generating clip #{id} (#{start_seconds}s-#{end_seconds}s, #{Float.round(duration_seconds, 2)}s duration) from proxy: #{proxy_url}"
+    # Use the unified StreamClip module with temp_playback profile
+    StreamClip.generate_clip(
+      %{
+        id: id,
+        start_time_seconds: start_seconds,
+        end_time_seconds: end_seconds,
+        source_video: source_video
+      },
+      :temp_playback,
+      operation_name: "TempClip",
+      cache_buster: true
     )
-
-    generate_clip_file(tmp_file, proxy_url, start_seconds, duration_seconds, timestamp)
   end
 
   # Handle clip without preloaded source_video
   def build(%{id: id} = _clip) do
+    Logger.debug("TempClip: Loading source_video for clip #{id}")
+    
     case Repo.get(Heaters.Media.Clip, id) do
-      {:ok, clip} ->
-        case Repo.preload(clip, :source_video) do
-          loaded_clip -> build(loaded_clip)
-        end
-
-      {:error, :not_found} ->
+      nil ->
         {:error, "Clip not found"}
+      
+      clip ->
+        loaded_clip = Repo.preload(clip, :source_video)
+        build(loaded_clip)
     end
   end
 
-  # Generate the actual clip file
-  defp generate_clip_file(tmp_file, proxy_url, start_seconds, duration_seconds, timestamp) do
-    # FFmpeg command optimized for browser compatibility
-    #
-    # Audio Removal (-an flag):
-    # Removes audio streams entirely to prevent browser PIPELINE_ERROR_DECODE issues.
-    # Some source videos have problematic audio codecs that cause playback failures.
-    # Since temp clips are for visual review only, audio removal improves compatibility
-    # without impacting the review workflow.
-    cmd_args = [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      # Overwrite output files without asking
-      "-y",
-      # Seek to start time (before input for better accuracy)
-      "-ss",
-      "#{start_seconds}",
-      # Input URL (proxy file)
-      "-i",
-      proxy_url,
-      # Duration to copy
-      "-t",
-      "#{duration_seconds}",
-      # Copy video stream only
-      "-c:v",
-      "copy",
-      # Remove audio entirely for temp clips (fixes decode issues)
-      "-an",
-      # Optimize for web playback
-      "-movflags",
-      "+faststart",
-      # Ensure clean timestamps
-      "-avoid_negative_ts",
-      "make_zero",
-      tmp_file
-    ]
+  @doc """
+  Build multiple temporary clips efficiently.
 
-    Logger.debug("TempClip: Running FFmpeg command: #{@ffmpeg_bin} #{Enum.join(cmd_args, " ")}")
+  Processes multiple clips in sequence using the unified abstraction.
+  This can be more efficient than individual builds when processing
+  clips from the same source video.
 
-    try do
-      case System.cmd(@ffmpeg_bin, cmd_args, stderr_to_stdout: true) do
-        {output, 0} ->
-          # Check file exists and has reasonable size
-          if File.exists?(tmp_file) do
-            file_size = File.stat!(tmp_file).size
-            Logger.info("TempClip: Generated file: #{tmp_file} (#{file_size} bytes)")
+  ## Parameters
+  - `clips`: List of clip structs
 
-            if file_size < 10_000 do
-              Logger.warning(
-                "TempClip: Generated file is suspiciously small (#{file_size} bytes), FFmpeg output: #{output}"
-              )
-            end
+  ## Returns
+  - `{:ok, results}` - List of {:ok, url} or {:error, reason} tuples
+  - `{:error, reason}` - Fatal error preventing batch processing
+  """
+  @spec build_batch([map()]) :: {:ok, [map()]} | {:error, String.t()}
+  def build_batch(clips) when is_list(clips) do
+    Logger.info("TempClip: Building #{length(clips)} temp clips in batch")
 
-            Logger.debug("TempClip: Generated #{tmp_file} successfully")
-
-            # Return HTTP URL for browser access via static serving with cache busting
-            filename = Path.basename(tmp_file)
-            # Use seconds for URL parameter to keep it shorter
-            url_timestamp = div(timestamp, 1000)
-            {:ok, "/temp/#{filename}?t=#{url_timestamp}"}
-          else
-            Logger.error("TempClip: FFmpeg reported success but file doesn't exist: #{tmp_file}")
-            {:error, "FFmpeg completed but no output file created"}
-          end
-
-        {error_output, exit_code} ->
-          Logger.error("TempClip: FFmpeg failed (exit #{exit_code}): #{error_output}")
-          {:error, "FFmpeg failed: #{error_output}"}
+    results = Enum.map(clips, fn clip ->
+      case build(clip) do
+        {:ok, url} -> %{clip_id: clip.id, url: url, status: :success}
+        {:error, reason} -> %{clip_id: clip.id, error: reason, status: :error}
       end
-    catch
-      :exit, {:timeout, _} ->
-        Logger.error("TempClip: FFmpeg timeout - network or processing issue")
-        {:error, "FFmpeg timeout - network or processing issue"}
-    end
+    end)
+
+    successful = Enum.count(results, fn result -> result.status == :success end)
+    failed = length(results) - successful
+
+    Logger.info("TempClip: Batch complete - #{successful} successful, #{failed} failed")
+
+    {:ok, results}
   end
 
-  # Get proxy URL - use actual proxy file in dev when available, fallback to test file
-  defp get_proxy_url(proxy_filepath) do
-    if Application.get_env(:heaters, :app_env) == "development" do
-      cond do
-        # If we have a real proxy_filepath, try to use it (may be CloudFront URL)
-        proxy_filepath != nil ->
-          {:ok, url} = Heaters.Storage.S3.ClipUrlGenerator.generate_signed_cloudfront_url(proxy_filepath)
-          {:ok, url}
-
-        # No proxy_filepath available, use local test file
-        true ->
-          Logger.warning("TempClip: No proxy_filepath available, using local test proxy")
-          get_local_test_proxy()
-      end
-    else
-      # Production: use CloudFront URL
-      {:ok, url} = Heaters.Storage.S3.ClipUrlGenerator.generate_signed_cloudfront_url(proxy_filepath)
-      {:ok, url}
-    end
-  end
-
-  # Get the local test proxy file path
-  defp get_local_test_proxy do
-    priv_path = Application.app_dir(:heaters, "priv")
-    local_file = Path.join([priv_path, "fixtures", "proxy_local.mp4"])
-    {:ok, local_file}
-  end
+  def build_batch(_), do: {:error, "Invalid clips data - expected list"}
 end
