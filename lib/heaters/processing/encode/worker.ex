@@ -269,16 +269,7 @@ defmodule Heaters.Processing.Encode.Worker do
       proxy_filepath: proxy_filepath,
       master_filepath: master_filepath,
       ingest_state: :encoded,
-      keyframe_offsets: [],
-      processing_metadata:
-        Map.merge(source_video.processing_metadata || %{}, %{
-          encoding_metadata: metadata,
-          encoding_metrics: encoding_metrics,
-          keyframe_count: keyframe_count,
-          temp_cache_used: false,
-          proxy_reused: false,
-          native_processing: true
-        })
+      keyframe_offsets: []
     }
 
     case StateManager.complete_encoding(source_video.id, update_attrs) do

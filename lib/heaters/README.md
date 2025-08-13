@@ -57,6 +57,7 @@ Source Video: new → downloading → downloaded → encoding → encoded → de
 Clips: pending_review → review_approved → exporting → exported → keyframing → keyframed → embedding → embedded
            ↓                ↓              ↓            ↓              ↓           ↓           ↓
    review_skipped    review_archived   export_failed  (resumable)  keyframe_failed  (resumable) embedding_failed
+                     (terminal)                                                                  (resumable)
 ```
 
 **Direct Job Chaining** (FLAME optimized):
@@ -117,8 +118,9 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 
 ### Review Actions
 - **Instant Execution**: `approve`, `skip`, `archive`, `group` execute immediately
-- **Cut Operations**: `add_cut`, `remove_cut`, `move_cut` with declarative validation
+- **Cut Operations**: `add_cut`, `remove_cut`, `move_cut` with declarative validation  
 - **Simple Undo**: UI-level undo (Ctrl+Z) for most recent action only
+- **Archive Behavior**: `review_archived` clips are terminal state, cleaned by playback cache maintenance
 
 ### Maintenance & Monitoring
 - **Scheduled Cleanup**: Playback cache maintenance every 4 hours via Oban cron

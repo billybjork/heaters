@@ -15,7 +15,7 @@ defmodule Heaters.Pipeline.Config do
   The `label` field provides human-readable descriptions for logging.
 
   Enhanced Virtual Clips Pipeline Flow:
-  download → encode → detect_scenes → persist_cache → rolling_export → keyframes → embeddings → archive
+  download → encode → detect_scenes → persist_cache → rolling_export → keyframes → embeddings
 
   ## Resumable Processing
 
@@ -35,8 +35,8 @@ defmodule Heaters.Pipeline.Config do
 
   Review actions are handled directly in the UI with instant cut point operations:
   - review_approved → rolling export (continues through pipeline)
-  - review_skipped → terminal state
-  - review_archived → archive (cleanup)
+  - review_skipped → terminal state (no further processing)
+  - review_archived → terminal state (marked for archival, cleaned by playback cache)
   - cut point operations → instant database updates (add/remove/move cuts)
   - group actions → both clips advance to review_approved
 
@@ -56,16 +56,13 @@ defmodule Heaters.Pipeline.Config do
   - Other stages use standard Oban job scheduling
   """
 
-  alias Heaters.Media.Clips
   alias Heaters.Pipeline.Queries, as: PipelineQueries
   alias Heaters.Processing.Download.Worker, as: DownloadWorker
   alias Heaters.Processing.Encode.Worker, as: EncodeWorker
   alias Heaters.Processing.DetectScenes.Worker, as: DetectScenesWorker
   alias Heaters.Storage.PipelineCache.PersistCache.Worker, as: PersistCacheWorker
-  alias Heaters.Storage.Archive.Worker, as: ArchiveWorker
   alias Heaters.Processing.Keyframe.Worker, as: KeyframeWorker
   alias Heaters.Processing.Embed.Worker, as: EmbeddingWorker
-  alias Heaters.Storage.Archive.Worker, as: ArchiveWorker
   alias Heaters.Processing.Export.Worker, as: ExportWorker
   require Logger
 
@@ -176,12 +173,6 @@ defmodule Heaters.Pipeline.Config do
         end
       },
 
-      # Stage 8: Archive (cleanup archived clips)
-      %{
-        label: "review_archived clips → archive",
-        query: fn -> Clips.get_clips_by_state(:review_archived) end,
-        build: fn clip -> ArchiveWorker.new(%{clip_id: clip.id}) end
-      }
     ]
   end
 
@@ -220,8 +211,7 @@ defmodule Heaters.Pipeline.Config do
         "videos needing cache upload → S3 upload",
       Heaters.Processing.Export.Worker => "approved virtual clips → rolling export",
       Heaters.Processing.Keyframe.Worker => "exported clips needing keyframes",
-      Heaters.Processing.Embed.Worker => "keyframed clips needing embeddings",
-      Heaters.Storage.Archive.Worker => "review_archived clips → archive"
+      Heaters.Processing.Embed.Worker => "keyframed clips needing embeddings"
     }
 
     target_stage_label = Map.get(worker_to_stage, worker_module)
