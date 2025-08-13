@@ -62,6 +62,7 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 
 **Direct Job Chaining** (FLAME optimized):
 - Download → Encoding → Scene Detection → Cache Upload
+- Export → Keyframes → Embeddings (post-review)
 - Other stages use standard Oban scheduling
 
 ## Performance Features
@@ -109,6 +110,30 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 - **Temp Cache System**: Smart file caching with LRU eviction to minimize S3 operations and improve pipeline performance
 
 ⚠️ **CRITICAL**: All configuration centralized (download, encoding, S3 paths) with built-in validation to prevent quality-reducing mistakes (4K→360p) and path inconsistencies. Review module documentation before modifying.
+
+### Keyframe & Embedding Configuration
+
+- Defaults for post-review stages are centralized in `Heaters.Pipeline.Config` and can be overridden via application config.
+- Default keys:
+  - `default_keyframe_strategy` (e.g., "multi", "midpoint")
+  - `default_embedding_model` (e.g., "openai/clip-vit-base-patch32", "dino-v2")
+  - `default_embedding_generation_strategy` (e.g., "keyframe_multi_avg", "keyframe_single")
+
+Override in `config/dev.exs` (or `prod.exs`):
+
+```elixir
+config :heaters,
+  default_keyframe_strategy: "multi",
+  default_embedding_model: "openai/clip-vit-base-patch32",
+  default_embedding_generation_strategy: "keyframe_multi_avg"
+```
+
+- If `default_embedding_generation_strategy` is not set, a sensible default is chosen from the keyframe strategy:
+  - "multi" → "keyframe_multi_avg"
+  - "midpoint" → "keyframe_single"
+
+- The pipeline stages (Export → Keyframes → Embeddings) read these defaults when building job args, so A/B or 2×2 experiments can be run by setting different values per environment.
+- For per-item experimentation, you can adjust the arg builders in `Pipeline.Config` to read strategy/model from the database per clip or source video.
 
 ### Development Environment
 - **LiveView 1.1**: Phoenix 1.8+ with colocated hooks compilation support

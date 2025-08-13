@@ -153,7 +153,7 @@ defmodule Heaters.Pipeline.Queries do
   # ---------------------------------------------------------------------------
 
   @doc """
-  Get all clips that need keyframe extraction (review_approved, keyframing, or keyframe_failed).
+  Get all clips that need keyframe extraction (exported, keyframing, or keyframe_failed).
 
   This enables resumable processing of interrupted keyframe jobs and is used by
   the pipeline dispatcher to find clips ready for keyframe extraction.
@@ -163,7 +163,7 @@ defmodule Heaters.Pipeline.Queries do
   """
   @spec get_clips_needing_keyframes() :: [Clip.t()]
   def get_clips_needing_keyframes() do
-    states = ["review_approved", "keyframing", "keyframe_failed"]
+    states = ["exported", "keyframing", "keyframe_failed"]
 
     from(c in Clip, where: c.ingest_state in ^states)
     |> Repo.all()

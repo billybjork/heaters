@@ -7,7 +7,7 @@ defmodule Heaters.Media.Support.ClipValidation do
   No side effects or I/O operations.
   """
 
-  @valid_keyframe_states [:review_approved, :keyframe_failed]
+  @valid_keyframe_states [:exported, :keyframe_failed]
 
   @doc """
   Validate that a clip is in the correct state for keyframe extraction.

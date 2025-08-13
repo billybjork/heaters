@@ -3,7 +3,7 @@ defmodule Heaters.Processing.Export.Worker do
   Worker for exporting virtual clips to physical clips using efficient stream copy.
 
   This worker handles the final stage of the virtual clip pipeline by clipping
-  approved virtual clips into physical MP4 files using the efficient unified 
+  approved virtual clips into physical MP4 files using the efficient unified
   stream copy architecture.
 
   ## Storage Strategy & Quality Decision
@@ -49,7 +49,7 @@ defmodule Heaters.Processing.Export.Worker do
   ## Architecture (V2)
 
   - **Export**: Unified StreamClip abstraction with profile-based configuration
-  - **State Management**: Elixir state transitions and database operations  
+  - **State Management**: Elixir state transitions and database operations
   - **Storage**: Direct CloudFront → S3 processing, no local downloads
   - **Profiles**: Uses :final_export profile for audio preservation
   """
@@ -64,6 +64,7 @@ defmodule Heaters.Processing.Export.Worker do
   alias Heaters.Processing.Export.StateManager
   alias Heaters.Pipeline.WorkerBehavior
   alias Heaters.Processing.Support.ResultBuilder
+  alias Heaters.Pipeline.Config, as: PipelineConfig
   require Logger
 
   # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
@@ -305,7 +306,7 @@ defmodule Heaters.Processing.Export.Worker do
             export_method: "stream_copy_native_elixir"
           })
 
-        # Return the result tuple directly 
+        # Return the result tuple directly
         export_result
 
       {_, failures} ->
@@ -331,6 +332,8 @@ defmodule Heaters.Processing.Export.Worker do
     case StateManager.complete_export(clip.id, update_attrs) do
       {:ok, updated_clip} ->
         Logger.debug("ExportWorker: Updated clip #{clip.id} to physical: #{clip_filepath}")
+        # Chain next stage (Keyframe) if configured
+        :ok = PipelineConfig.maybe_chain_next_job(__MODULE__, updated_clip)
         {:ok, updated_clip}
 
       {:error, reason} ->

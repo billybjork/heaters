@@ -47,12 +47,18 @@ defmodule Heaters.Pipeline.Config do
   - Resource sharing optimizes master downloads
   - Clips become available immediately after export (no waiting for full batch)
 
-  ## Job Chaining
+  ## Job Chaining (Centralized in this module)
+
+  Chaining is configured in this module via `next_stage` entries and executed by
+  `maybe_chain_next_job/2`. All workers call `maybe_chain_next_job/2` to trigger
+  their next stage when the configured `condition` evaluates to true.
 
   The pipeline supports direct job chaining for performance optimization:
   - Download → Encode (when download completes successfully)
   - Encode → Scene Detection (when encoding completes and splicing is needed)
   - Scene Detection → Cache Upload (when scene detection completes)
+  - Export → Keyframes (post-review: when physical clip is created)
+  - Keyframes → Embeddings (post-review: when keyframe artifacts are created)
   - Other stages use standard Oban job scheduling
   """
 
@@ -65,6 +71,41 @@ defmodule Heaters.Pipeline.Config do
   alias Heaters.Processing.Embed.Worker, as: EmbeddingWorker
   alias Heaters.Processing.Export.Worker, as: ExportWorker
   require Logger
+
+  # Centralized defaults for post-review stages
+  @default_keyframe_strategy "multi"
+  @default_embedding_model "openai/clip-vit-base-patch32"
+  @default_embedding_generation_strategy "keyframe_multi_avg"
+
+  # Defaults may be overridden via application config:
+  #   config :heaters,
+  #     default_keyframe_strategy: "multi",
+  #     default_embedding_model: "openai/clip-vit-base-patch32",
+  #     default_embedding_generation_strategy: "keyframe_multi_avg"
+
+  # Resolve defaults with environment overrides
+  defp default_keyframe_strategy do
+    Application.get_env(:heaters, :default_keyframe_strategy, @default_keyframe_strategy)
+  end
+
+  defp default_embedding_model do
+    Application.get_env(:heaters, :default_embedding_model, @default_embedding_model)
+  end
+
+  defp default_embedding_generation_strategy(keyframe_strategy) do
+    # If explicitly configured, prefer that; otherwise choose sensible default from keyframe strategy
+    case Application.get_env(:heaters, :default_embedding_generation_strategy) do
+      nil ->
+        case keyframe_strategy do
+          "multi" -> "keyframe_multi_avg"
+          "midpoint" -> "keyframe_single"
+          _ -> @default_embedding_generation_strategy
+        end
+
+      gen ->
+        gen
+    end
+  end
 
   @doc """
   Returns the complete pipeline stage configuration.
@@ -79,7 +120,8 @@ defmodule Heaters.Pipeline.Config do
   @spec stages() :: [map()]
   def stages do
     [
-      # Stage 1: Download (chains to encoding)
+      # Stage 1: Download
+      # Chaining: Download → Encode
       %{
         label: "videos needing download",
         query: fn -> PipelineQueries.get_videos_needing_ingest() end,
@@ -93,7 +135,8 @@ defmodule Heaters.Pipeline.Config do
         }
       },
 
-      # Stage 2: Encode (chains to scene detection)
+      # Stage 2: Encode
+      # Chaining: Encode → Scene detection
       %{
         label: "videos needing encoding → proxy generation",
         query: fn -> PipelineQueries.get_videos_needing_encoding() end,
@@ -109,7 +152,8 @@ defmodule Heaters.Pipeline.Config do
         }
       },
 
-      # Stage 3: Scene detection (chains to cache persistence)
+      # Stage 3: Scene detection
+      # Chaining: Scene detection → Cache persistence
       %{
         label: "videos needing scene detection → virtual clips",
         query: fn -> PipelineQueries.get_videos_needing_scene_detection() end,
@@ -127,7 +171,8 @@ defmodule Heaters.Pipeline.Config do
         }
       },
 
-      # Stage 4: Cache persistence (no chaining - end of video processing)
+      # Stage 4: Cache persistence
+      # Chaining: none (end of video processing)
       %{
         label: "videos needing cache persistence → S3 persistence",
         query: fn -> PipelineQueries.get_videos_needing_cache_persistence() end,
@@ -142,6 +187,7 @@ defmodule Heaters.Pipeline.Config do
       # ===== HUMAN REVIEW BOUNDARY =====
 
       # Stage 5: Rolling Export (virtual clips → physical clips)
+      # Chaining: Export → Keyframes
       %{
         label: "approved virtual clips → rolling export",
         query: fn -> PipelineQueries.get_virtual_clips_ready_for_export() end,
@@ -150,14 +196,38 @@ defmodule Heaters.Pipeline.Config do
             clip_id: clip.id,
             source_video_id: clip.source_video_id
           })
-        end
+        end,
+        next_stage: %{
+          worker: KeyframeWorker,
+          condition: fn clip ->
+            # After export completes, clip should be in :exported state
+            clip.ingest_state == :exported and is_binary(clip.clip_filepath)
+          end,
+          args: fn clip -> %{clip_id: clip.id, strategy: default_keyframe_strategy()} end
+        }
       },
 
       # Stage 6: Keyframes (operates on exported physical clips)
+      # Chaining: Keyframes → Embeddings
       %{
         label: "exported clips needing keyframes",
         query: fn -> PipelineQueries.get_clips_needing_keyframes() end,
-        build: fn clip -> KeyframeWorker.new(%{clip_id: clip.id, strategy: :multi}) end
+        build: fn clip ->
+          KeyframeWorker.new(%{clip_id: clip.id, strategy: default_keyframe_strategy()})
+        end,
+        next_stage: %{
+          worker: EmbeddingWorker,
+          condition: fn clip -> clip.ingest_state == :keyframed end,
+          args: fn clip ->
+            kf = default_keyframe_strategy()
+
+            %{
+              clip_id: clip.id,
+              model_name: default_embedding_model(),
+              generation_strategy: default_embedding_generation_strategy(kf)
+            }
+          end
+        }
       },
 
       # Stage 7: Embeddings (operates on keyframed clips)
@@ -165,14 +235,15 @@ defmodule Heaters.Pipeline.Config do
         label: "keyframed clips needing embeddings",
         query: fn -> PipelineQueries.get_clips_needing_embeddings() end,
         build: fn clip ->
+          kf = default_keyframe_strategy()
+
           EmbeddingWorker.new(%{
             clip_id: clip.id,
-            model_name: "openai/clip-vit-base-patch32",
-            generation_strategy: "keyframe_multi_avg"
+            model_name: default_embedding_model(),
+            generation_strategy: default_embedding_generation_strategy(kf)
           })
         end
-      },
-
+      }
     ]
   end
 

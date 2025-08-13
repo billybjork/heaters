@@ -136,10 +136,12 @@ defmodule Heaters.Pipeline.WorkerBehavior do
   @doc """
   Helper for checking if clip has artifacts of a specific type.
   """
-  def check_artifact_exists(clip, artifact_type) when is_binary(artifact_type) do
+  def check_artifact_exists(clip, artifact_type) do
+    normalized_target = to_string(artifact_type)
+
     has_artifact? =
       clip.clip_artifacts
-      |> Enum.any?(&(&1.artifact_type == artifact_type))
+      |> Enum.any?(fn a -> to_string(a.artifact_type) == normalized_target end)
 
     if has_artifact? do
       {:error, :already_processed}
