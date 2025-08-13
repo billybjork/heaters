@@ -142,17 +142,26 @@ defmodule HeatersWeb.ReviewLive do
 
   # ─────────────────────────────────────────────────────────────────────────
   # Generic SELECT (approve, skip, archive, …)
+  # 
+  # Immediate Persistence Pattern:
+  # Actions are persisted to database immediately via async operations.
+  # This ensures archived clips are excluded from review queue right away,
+  # and all state changes are durable for reliable undo functionality.
   # ─────────────────────────────────────────────────────────────────────────
   @impl true
   def handle_event("select", %{"action" => action}, %{assigns: %{current: clip}} = socket) do
     # First, persist any pending actions from previous clips
     socket = persist_all_pending_actions(socket)
 
+    # Immediately persist the current action to database
+    Phoenix.LiveView.start_async(socket, {:persist, clip.id}, fn ->
+      ClipActions.select_clip_and_fetch_next(%Clip{id: clip.id}, action)
+    end)
+
     socket =
       socket
       |> assign(flash_action: action)
       |> push_history(clip)
-      |> track_pending_action(clip.id, action)
       |> advance_queue()
       |> refill_future()
       |> put_flash(:info, "#{flash_verb(action)} clip #{clip.id}")
@@ -164,7 +173,12 @@ defmodule HeatersWeb.ReviewLive do
   end
 
   # ─────────────────────────────────────────────────────────────────────────
-  # Undo
+  # Undo - Enhanced Database-Level Reversion
+  # 
+  # Performs both UI navigation and database-level undo:
+  # 1. Calls ClipActions.select_clip_and_fetch_next(clip, "undo") to reset database state
+  # 2. Navigates UI back to previous clip in history
+  # 3. Reverted clips return to pending_review state and reappear in queue
   # ─────────────────────────────────────────────────────────────────────────
   @impl true
   def handle_event("undo", _params, %{assigns: %{history: []}} = socket),
@@ -176,6 +190,12 @@ defmodule HeatersWeb.ReviewLive do
         _params,
         %{assigns: %{history: [prev | rest], current: cur, future: fut}} = socket
       ) do
+    # Database-level undo: revert the last action in the database
+    # This calls the database undo action which resets the clip to pending_review
+    Phoenix.LiveView.start_async(socket, {:undo, cur.id}, fn ->
+      ClipActions.select_clip_and_fetch_next(%Clip{id: cur.id}, "undo")
+    end)
+
     socket =
       socket
       |> assign(
@@ -186,14 +206,10 @@ defmodule HeatersWeb.ReviewLive do
         page_state: :reviewing,
         temp_clip: %{}
       )
-      # Clear any pending action for the clip we're returning to
-      |> clear_pending_action(prev.id)
       |> refill_future()
       |> clear_flash()
-      |> put_flash(:info, "Undone - showing clip #{prev.id}")
+      |> put_flash(:info, "Undone - clip #{cur.id} reverted to pending review")
 
-    # Undo is a pure UI operation - no database persistence
-    # The previous action is effectively "cancelled" until user takes a new action
     # Don't update URL to preserve in-memory history state
 
     {:noreply, socket}
@@ -404,6 +420,23 @@ defmodule HeatersWeb.ReviewLive do
     {:noreply, put_flash(socket, :error, "Action crashed: #{inspect(reason)}")}
   end
 
+  # Undo async handlers
+  @impl true
+  def handle_async({:undo, _}, {:ok, {_next_clip, _metadata}}, socket), do: {:noreply, socket}
+  @impl true
+  def handle_async({:undo, clip_id}, {:error, reason}, socket) do
+    require Logger
+    Logger.error("Undo for clip #{clip_id} failed: #{inspect(reason)}")
+    {:noreply, put_flash(socket, :error, "Undo failed: #{inspect(reason)}")}
+  end
+
+  @impl true
+  def handle_async({:undo, clip_id}, {:exit, reason}, socket) do
+    require Logger
+    Logger.error("Undo for clip #{clip_id} crashed: #{inspect(reason)}")
+    {:noreply, put_flash(socket, :error, "Undo crashed: #{inspect(reason)}")}
+  end
+
   # Background persistence handlers (for pending actions)
   @impl true
   def handle_async({:persist_background, _}, {:ok, {_next_clip, _metadata}}, socket),
@@ -479,13 +512,6 @@ defmodule HeatersWeb.ReviewLive do
   # Pending actions management
   # -------------------------------------------------------------------------
 
-  defp track_pending_action(socket, clip_id, action) do
-    update(socket, :pending_actions, &Map.put(&1, clip_id, action))
-  end
-
-  defp clear_pending_action(socket, clip_id) do
-    update(socket, :pending_actions, &Map.delete(&1, clip_id))
-  end
 
   defp persist_all_pending_actions(%{assigns: %{pending_actions: pending}} = socket) do
     # Persist all pending actions to database

@@ -117,10 +117,11 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 - **Enum Safety**: All state fields use Ecto enums with database constraints for compile-time and runtime validation
 
 ### Review Actions
-- **Instant Execution**: `approve`, `skip`, `archive`, `group` execute immediately
+- **Immediate Persistence**: All actions (`approve`, `skip`, `archive`, `group`) persist to database immediately via async operations
 - **Cut Operations**: `add_cut`, `remove_cut`, `move_cut` with declarative validation  
-- **Simple Undo**: UI-level undo (Ctrl+Z) for most recent action only
-- **Archive Behavior**: `review_archived` clips are terminal state, cleaned by playback cache maintenance
+- **Enhanced Undo**: Database-level reversion (Ctrl+Z) restores clips to `pending_review` state and UI navigation
+- **Archive Behavior**: `review_archived` clips excluded from review queue; reappear only after undo
+- **Temp File Cleanup**: Archived clip temp files cleaned automatically by playback cache maintenance
 
 ### Maintenance & Monitoring
 - **Scheduled Cleanup**: Playback cache maintenance every 4 hours via Oban cron
