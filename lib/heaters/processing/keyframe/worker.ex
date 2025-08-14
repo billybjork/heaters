@@ -146,6 +146,9 @@ defmodule Heaters.Processing.Keyframe.Worker do
         s3_key = S3Paths.generate_artifact_path(clip.id, :keyframe, filename)
 
         with {:ok, ^s3_key} <- S3Core.upload_file(local_path, s3_key, operation_name: "Keyframe") do
+          # Store in temp cache to allow next stage (embeddings) to read locally without S3
+          _ = TempCache.put(s3_key, local_path)
+
           %{
             s3_key: s3_key,
             metadata: %{timestamp: ts, index: idx, strategy: strategy_config.strategy}

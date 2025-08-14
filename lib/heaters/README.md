@@ -65,12 +65,27 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 - Export → Keyframes → Embeddings (post-review)
 - Other stages use standard Oban scheduling
 
+### Embedding Backfill (Defaults Enforcement)
+
+- The pipeline includes a stage that finds embedded clips missing the configured default embedding (by `model_name` + `generation_strategy`) and enqueues jobs only for those clips.
+- This keeps defaults in `Pipeline.Config` authoritative and prevents flooding the queue when defaults change.
+- Embeddings are treated as derived data stored in Postgres (`pgvector`) and are upserted using a unique key on `(clip_id, model_name, generation_strategy)` to stay in sync with the underlying content.
+
 ## Performance Features
 
 ### Temp Cache System
 - **78% S3 Reduction**: Eliminates PUT→GET→PUT round trips between pipeline stages
 - **Smart Proxy Reuse**: H.264 ≤1080p content reused directly when suitable
 - **Batch Upload**: All cached files uploaded to S3 only once at pipeline completion
+
+#### On-demand asset retrieval & retries
+
+- All media stages use a cache-first, S3-fallback pattern via `TempCache.get_or_download/2` to ensure dependent assets exist at execution time.
+- Encode: fetches source video locally or re-downloads if missing.
+- Detect Scenes: fetches proxy locally or re-downloads if missing.
+- Keyframes: fetches exported clip locally or re-downloads if missing; also writes generated keyframe images into the temp cache for the next stage.
+- Embeddings: consumes local keyframe image paths and will re-download keyframes on-demand if the cache has been cleared.
+- This makes retries resilient even after cache eviction and preserves idempotency across stages.
 
 ### Clip Player (LiveView 1.1 Colocated Hooks)
 - **Single-File Architecture**: JavaScript and Elixir colocated in one component file
@@ -134,6 +149,12 @@ config :heaters,
 
 - The pipeline stages (Export → Keyframes → Embeddings) read these defaults when building job args, so A/B or 2×2 experiments can be run by setting different values per environment.
 - For per-item experimentation, you can adjust the arg builders in `Pipeline.Config` to read strategy/model from the database per clip or source video.
+
+#### Defaults Enforcement & Idempotency
+
+- A dedicated backfill stage ensures clips in `embedded` state also have the default embedding variant present. Only missing variants are queued.
+- Idempotency for embeddings is based on the tuple `(clip_id, model_name, generation_strategy)`. Attempts to create the same variant will upsert and replace `embedding`, `embedding_dim`, and `model_version`.
+- When keyframe artifacts or strategies change, re-running the embedding job updates the stored vector via upsert to maintain consistency.
 
 ### Development Environment
 - **LiveView 1.1**: Phoenix 1.8+ with colocated hooks compilation support

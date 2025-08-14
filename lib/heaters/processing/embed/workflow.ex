@@ -144,14 +144,21 @@ defmodule Heaters.Processing.Embed.Workflow do
     attrs = %{
       clip_id: clip_id,
       model_name: Map.fetch!(embedding_data, "model_name"),
+      model_version: Map.get(embedding_data, "model_version"),
       generation_strategy: Map.fetch!(embedding_data, "generation_strategy"),
-      embedding: Map.fetch!(embedding_data, :embedding),
-      metadata: Map.get(embedding_data, "metadata", %{})
+      embedding: Map.fetch!(embedding_data, "embedding"),
+      embedding_dim:
+        Map.get(embedding_data, "vector_dimensions") ||
+          get_in(embedding_data, ["metadata", "embedding_dimension"])
     }
 
-    %Embedding{}
-    |> Embedding.changeset(attrs)
-    |> Repo.insert()
+    changeset = Embedding.changeset(%Embedding{}, attrs)
+
+    Repo.insert(
+      changeset,
+      on_conflict: {:replace, [:embedding, :embedding_dim, :model_version, :updated_at]},
+      conflict_target: [:clip_id, :model_name, :generation_strategy]
+    )
     |> case do
       {:ok, embedding} ->
         Logger.info("Successfully created embedding for clip_id: #{clip_id}")

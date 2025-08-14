@@ -2,10 +2,10 @@
 Refactored Embed Task - "Dumber" Python focused on embedding generation only.
 
 This version:
-- Receives explicit S3 paths to keyframe images from Elixir
+- Receives explicit LOCAL image paths to keyframe images from Elixir (via temp cache)
 - Focuses only on embedding generation using ML models (CLIP, DINOv2)
 - Returns structured data about embeddings instead of managing database state
-- No database connections or state management
+- No database connections or S3 access
 """
 
 import argparse
@@ -13,15 +13,11 @@ import json
 import logging
 import os
 import re
-import tempfile
-import threading
 from pathlib import Path
 
-import boto3
 import numpy as np
 import torch
 from PIL import Image
-from botocore.exceptions import ClientError, NoCredentialsError
 
 # Model Loading Imports
 try:
@@ -35,41 +31,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class S3TransferProgress:
-    """Callback for boto3 reporting progress via logger"""
-    
-    def __init__(self, total_size, filename, logger_instance, throttle_percentage=50):
-        self._filename = filename
-        self._total_size = total_size
-        self._seen_so_far = 0
-        self._lock = threading.Lock()
-        self._logger = logger_instance
-        self._throttle_percentage = max(1, min(int(throttle_percentage), 100))
-        self._last_logged_percentage = -1
-
-    def __call__(self, bytes_amount):
-        try:
-            with self._lock:
-                self._seen_so_far += bytes_amount
-                current_percentage = 0
-                if self._total_size > 0:
-                    current_percentage = int((self._seen_so_far / self._total_size) * 100)
-                
-                should_log = (
-                    current_percentage >= self._last_logged_percentage + self._throttle_percentage
-                    and current_percentage < 100
-                ) or (current_percentage == 100 and self._last_logged_percentage != 100)
-
-                if should_log:
-                    size_mb = self._seen_so_far / (1024 * 1024)
-                    total_size_mb = self._total_size / (1024 * 1024)
-                    self._logger.info(
-                        f"S3 Download: {self._filename} - {current_percentage}% complete "
-                        f"({size_mb:.2f}/{total_size_mb:.2f} MiB)"
-                    )
-                    self._last_logged_percentage = current_percentage
-        except Exception as e:
-            self._logger.error(f"S3 Progress error: {e}")
 
 # --- Global Model Cache ---
 _model_cache = {}
@@ -189,7 +150,7 @@ def aggregate_embeddings(embeddings: list, aggregation_method: str = None) -> np
 
 def run_embed(
     clip_id: int,
-    keyframe_s3_keys: list,
+    image_paths: list,
     model_name: str,
     generation_strategy: str,
     device: str = "cpu",
@@ -211,7 +172,7 @@ def run_embed(
     """
     logger.info(f"RUNNING EMBED for clip_id: {clip_id}")
     logger.info(f"Model: {model_name}, Strategy: {generation_strategy}, Device: {device}")
-    logger.info(f"Processing {len(keyframe_s3_keys)} keyframe(s)")
+    logger.info(f"Processing {len(image_paths)} keyframe(s)")
     
     # Parse generation strategy
     match = re.match(r"keyframe_([a-zA-Z0-9]+)(?:_(avg))?$", generation_strategy)
@@ -222,97 +183,78 @@ def run_embed(
     aggregation_method = match.group(2)
     logger.info(f"Parsed strategy: keyframe_type='{keyframe_strategy_name}', aggregation='{aggregation_method}'")
     
-    # Get S3 resources from environment (provided by Elixir)
-    s3_bucket_name = os.getenv("S3_BUCKET_NAME")
-    if not s3_bucket_name:
-        raise ValueError("S3_BUCKET_NAME environment variable not set")
-
-    try:
-        s3_client = boto3.client("s3")
-    except NoCredentialsError:
-        logger.error("S3 credentials not found")
-        raise
-
     # Load model
     model, processor, model_type, embedding_dim = get_cached_model_and_processor(model_name, device)
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_dir_path = Path(temp_dir)
-        
-        try:
-            # Step 1: Download keyframe images
-            local_image_paths = []
-            for i, s3_key in enumerate(keyframe_s3_keys):
-                local_filename = f"keyframe_{i}_{Path(s3_key).name}"
-                local_path = temp_dir_path / local_filename
-                
-                logger.info(f"Downloading keyframe {i+1}/{len(keyframe_s3_keys)}: s3://{s3_bucket_name}/{s3_key}")
-                s3_client.download_file(s3_bucket_name, s3_key, str(local_path))
-                local_image_paths.append(str(local_path))
-            
-            # Step 2: Generate embeddings for each keyframe
-            embeddings = []
-            total_keyframes = len(local_image_paths)
-            for i, image_path in enumerate(local_image_paths):
-                progress_percentage = int(((i + 1) / total_keyframes) * 100)
-                logger.info(f"Embedding generation: {progress_percentage}% complete ({i+1}/{total_keyframes} keyframes)")
-                embedding = generate_image_embedding(image_path, model, processor, model_type, device)
-                embeddings.append(embedding)
-            
-            # Step 3: Aggregate embeddings if needed
-            logger.info("Embedding generation: Aggregating embeddings")
-            final_embedding = aggregate_embeddings(embeddings, aggregation_method)
-            
-            # Convert to list for JSON serialization
-            embedding_vector = final_embedding.tolist()
-            
-            logger.info("Embedding generation: 100% complete")
-            
-            # Return structured data for Elixir to process
-            return {
-                "status": "success",
-                "model_name": model_name,
-                "generation_strategy": generation_strategy,
-                "embedding": embedding_vector,
-                "metadata": {
-                    "clip_id": clip_id,
-                    "model_type": model_type,
-                    "embedding_dimension": embedding_dim,
-                    "keyframes_processed": len(keyframe_s3_keys),
-                    "aggregation_method": aggregation_method,
-                    "device_used": device
-                }
-            }
+    try:
+        # Step 1: Validate local image paths exist
+        missing = [p for p in image_paths if not Path(p).exists()]
+        if missing:
+            raise FileNotFoundError(f"Missing image paths: {missing}")
 
-        except Exception as e:
-            logger.error(f"Error processing embeddings: {e}")
-            raise
+        # Step 2: Generate embeddings for each keyframe
+        embeddings = []
+        total_keyframes = len(image_paths)
+        for i, image_path in enumerate(image_paths):
+            progress_percentage = int(((i + 1) / total_keyframes) * 100)
+            logger.info(f"Embedding generation: {progress_percentage}% complete ({i+1}/{total_keyframes} keyframes)")
+            embedding = generate_image_embedding(image_path, model, processor, model_type, device)
+            embeddings.append(embedding)
+
+        # Step 3: Aggregate embeddings if needed
+        logger.info("Embedding generation: Aggregating embeddings")
+        final_embedding = aggregate_embeddings(embeddings, aggregation_method)
+
+        # Convert to list for JSON serialization
+        embedding_vector = final_embedding.tolist()
+
+        logger.info("Embedding generation: 100% complete")
+
+        # Return structured data for Elixir to process
+        return {
+            "status": "success",
+            "model_name": model_name,
+            "generation_strategy": generation_strategy,
+            "embedding": embedding_vector,
+            "metadata": {
+                "clip_id": clip_id,
+                "model_type": model_type,
+                "embedding_dimension": embedding_dim,
+                "keyframes_processed": len(image_paths),
+                "aggregation_method": aggregation_method,
+                "device_used": device
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error processing embeddings: {e}")
+        raise
 
 def main():
     """Main entry point for standalone execution"""
     parser = argparse.ArgumentParser(description="Embedding generation task")
     parser.add_argument("--clip-id", type=int, required=True)
-    parser.add_argument("--keyframe-s3-keys", required=True, 
-                       help="JSON array of S3 keys to keyframe images")
+    parser.add_argument("--image-paths", required=True, 
+                       help="JSON array of local image paths")
     parser.add_argument("--model-name", required=True)
     parser.add_argument("--generation-strategy", required=True)
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     
     args = parser.parse_args()
     
-    # Parse keyframe S3 keys from JSON
+    # Parse image paths from JSON
     try:
-        keyframe_s3_keys = json.loads(args.keyframe_s3_keys)
-        if not isinstance(keyframe_s3_keys, list):
-            raise ValueError("keyframe-s3-keys must be a JSON array")
+        image_paths = json.loads(args.image_paths)
+        if not isinstance(image_paths, list):
+            raise ValueError("image-paths must be a JSON array")
     except json.JSONDecodeError as e:
-        print(f"Error parsing keyframe-s3-keys JSON: {e}")
+        print(f"Error parsing image-paths JSON: {e}")
         exit(1)
     
     try:
         result = run_embed(
             args.clip_id,
-            keyframe_s3_keys,
+            image_paths,
             args.model_name,
             args.generation_strategy,
             args.device

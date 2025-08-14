@@ -27,6 +27,7 @@ defmodule Heaters.Pipeline.Queries do
   alias Heaters.Repo
   alias Heaters.Media.Clip
   alias Heaters.Media.Video
+  alias Heaters.Processing.Embed.Embedding
 
   # ---------------------------------------------------------------------------
   # Video Processing Pipeline Queries
@@ -187,6 +188,25 @@ defmodule Heaters.Pipeline.Queries do
     states = ["keyframed", "embedding", "embedding_failed"]
 
     from(c in Clip, where: c.ingest_state in ^states)
+    |> Repo.all()
+  end
+
+  @doc """
+  Get embedded clips that are missing the default embedding for a given model and generation strategy.
+
+  This enables backfilling embeddings when defaults change, without reprocessing
+  clips that already have the specific embedding variant present.
+  """
+  @spec get_embedded_clips_missing_embedding(String.t(), String.t()) :: [Clip.t()]
+  def get_embedded_clips_missing_embedding(model_name, generation_strategy) do
+    from(c in Clip,
+      where: c.ingest_state == :embedded,
+      left_join: e in Embedding,
+      on:
+        e.clip_id == c.id and e.model_name == ^model_name and
+          e.generation_strategy == ^generation_strategy,
+      where: is_nil(e.id)
+    )
     |> Repo.all()
   end
 end

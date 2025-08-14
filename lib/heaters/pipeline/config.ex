@@ -243,6 +243,28 @@ defmodule Heaters.Pipeline.Config do
             generation_strategy: default_embedding_generation_strategy(kf)
           })
         end
+      },
+
+      # Stage 8: Missing default embeddings backfill (operates on embedded clips)
+      %{
+        label: "embedded clips missing default embeddings",
+        query: fn ->
+          kf = default_keyframe_strategy()
+
+          PipelineQueries.get_embedded_clips_missing_embedding(
+            default_embedding_model(),
+            default_embedding_generation_strategy(kf)
+          )
+        end,
+        build: fn clip ->
+          kf = default_keyframe_strategy()
+
+          EmbeddingWorker.new(%{
+            clip_id: clip.id,
+            model_name: default_embedding_model(),
+            generation_strategy: default_embedding_generation_strategy(kf)
+          })
+        end
       }
     ]
   end
