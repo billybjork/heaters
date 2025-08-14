@@ -11,6 +11,7 @@
     --skip: #a0aec0;
     --archive: #f56565;
     --group: #ed8936;
+    --merge: #4299e1;
 }
 
 /* ------------- Dark mode ---------------------------------------------- */
@@ -80,6 +81,11 @@ html {
     color: #000;
 }
 
+.btn.merge:hover {
+    background: var(--merge);
+    color: #fff;
+}
+
 /* ------------- Flash messages ----------------------------------------- */
 .flash {
     margin-top: var(--space-3);
@@ -106,6 +112,11 @@ html {
 .flash--group {
     background: var(--group);
     color: #000;
+}
+
+.flash--merge {
+    background: var(--merge);
+    color: #fff;
 }
 
 /* ------------- Clip & actions wrapper --------------------------------- */

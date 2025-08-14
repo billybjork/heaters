@@ -545,7 +545,49 @@ defmodule HeatersWeb.ReviewLive do
   defp flash_verb("approve"), do: "Approved"
   defp flash_verb("skip"), do: "Skipped"
   defp flash_verb("archive"), do: "Archived"
+  defp flash_verb("merge"), do: "Merged"
   defp flash_verb(other), do: String.capitalize(other)
+
+  # -------------------------------------------------------------------------
+  # Merge availability helper
+  # -------------------------------------------------------------------------
+
+  # Check if merge action is available for the current clip.
+  # 
+  # Merge is only possible when:
+  # 1. Current clip doesn't start at frame 0 (has a preceding clip)
+  # 2. There's a cut point at the start of the current clip
+  # 3. There's a preceding clip that ends where current clip starts
+  defp merge_available?(%{current: nil}), do: false
+  defp merge_available?(%{current: %Clip{start_frame: 0}}), do: false
+  defp merge_available?(%{current: %Clip{} = clip}) do
+    import Ecto.Query
+    alias Heaters.Repo
+    
+    # Check if there's a preceding clip that ends where this clip starts
+    preceding_clip_exists = 
+      from(c in Clip,
+        where: c.source_video_id == ^clip.source_video_id and
+               c.ingest_state != :archived and
+               c.end_frame == ^clip.start_frame
+      )
+      |> Repo.one()
+      |> case do
+        %Clip{} -> true
+        nil -> false
+      end
+    
+    # Check if there's a cut at the start of this clip
+    cut_exists =
+      case Heaters.Media.Cuts.find_cut_at_frame(clip.source_video_id, clip.start_frame) do
+        {:ok, _cut} -> true
+        {:error, :not_found} -> false
+      end
+    
+    preceding_clip_exists and cut_exists
+  rescue
+    _ -> false
+  end
 
   # -------------------------------------------------------------------------
   # Process cleanup - persist any pending actions on exit
@@ -586,6 +628,7 @@ defmodule HeatersWeb.ReviewLive do
   - S: Skip  
   - D: Archive
   - G: Group
+  - F: Merge
   - Ctrl/Cmd+Z: Undo
 
   The hook is embedded directly in this LiveView module to keep
@@ -606,6 +649,7 @@ defmodule HeatersWeb.ReviewLive do
        *   │  S          │ skip   │
        *   │  D          │ archive│
        *   │  G          │ group  │
+       *   │  F          │ merge  │
        *   └─────────────┴────────┘
        *
        * Usage:
@@ -616,7 +660,7 @@ defmodule HeatersWeb.ReviewLive do
       export default {
         mounted() {
           // Map single-letter keys to their respective actions
-          this.keyMap    = { a: "approve", s: "skip", d: "archive", g: "group" };
+          this.keyMap    = { a: "approve", s: "skip", d: "archive", g: "group", f: "merge" };
           this.armed     = null;             // currently-armed key, e.g. "a"
           this.btn       = null;             // highlighted button element
 
@@ -638,11 +682,19 @@ defmodule HeatersWeb.ReviewLive do
               return;
             }
 
-            // 1) First press of A/S/D/G → arm and highlight
+            // 1) First press of A/S/D/G/F → arm and highlight (if button is not disabled)
             if (this.keyMap[k] && !this.armed) {
               if (e.repeat) { e.preventDefault(); return; }
+              const targetBtn = document.getElementById(`btn-${this.keyMap[k]}`);
+              
+              // Don't arm if button is disabled
+              if (targetBtn?.disabled) {
+                e.preventDefault();
+                return;
+              }
+              
               this.armed = k;
-              this.btn   = document.getElementById(`btn-${this.keyMap[k]}`);
+              this.btn   = targetBtn;
               this.btn?.classList.add("is-armed");
               e.preventDefault();
               return;

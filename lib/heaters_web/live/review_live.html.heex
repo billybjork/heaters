@@ -20,27 +20,38 @@
 
         <article class="stack-center gap-4">
           <%!-- Clip player component --%>
+          <%= if @current do %>
             <.clip_player clip={@current} temp_clip={@temp_clip} id={"video-player-#{@current.id}"} />
+          <% end %>
 
             <!-- Action buttons ------------------------------------------------ -->
-            <nav role="group" aria-label="Review actions" class="actions">
-              <!-- Undo -->
-              <button phx-click="undo" class="btn-ghost" disabled={@history==[]} aria-label="Undo" title={if(@history==[],
-                do: "Nothing to undo" , else: "Undo last action" )}>
-                ⬅️
-              </button>
+            <%= if @current do %>
+              <nav role="group" aria-label="Review actions" class="actions">
+                <!-- Undo -->
+                <button phx-click="undo" class="btn-ghost" disabled={@history==[]} aria-label="Undo" title={if(@history==[],
+                  do: "Nothing to undo" , else: "Undo last action" )}>
+                  ⬅️
+                </button>
 
-              <!-- Approve / Skip / Archive -->
-              <button id="btn-approve" class="btn approve" phx-click="select" phx-value-action="approve">
-                ✅ Approve
-              </button>
-              <button id="btn-skip" class="btn skip" phx-click="select" phx-value-action="skip">
-                ➡️ Skip
-              </button>
-              <button id="btn-archive" class="btn archive" phx-click="select" phx-value-action="archive">
-                🗑️ Archive
-              </button>
-            </nav>
+                <!-- Approve / Skip / Archive -->
+                <button id="btn-approve" class="btn approve" phx-click="select" phx-value-action="approve">
+                  ✅ Approve
+                </button>
+                <button id="btn-skip" class="btn skip" phx-click="select" phx-value-action="skip">
+                  ➡️ Skip
+                </button>
+                <button id="btn-archive" class="btn archive" phx-click="select" phx-value-action="archive">
+                  🗑️ Archive
+                </button>
+
+                <!-- Merge -->
+                <button id="btn-merge" class="btn merge" phx-click="select" phx-value-action="merge" 
+                  disabled={not merge_available?(assigns)} 
+                  title={if(merge_available?(assigns), do: "Merge with preceding clip (F + Enter)", else: "No preceding clip to merge with")}>
+                  🔗 Merge
+                </button>
+              </nav>
+            <% end %>
         </article>
         <% end %>
   </main>

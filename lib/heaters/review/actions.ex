@@ -22,7 +22,8 @@ defmodule Heaters.Review.Actions do
     "skip" => "selected_skip",
     "archive" => "selected_archive",
     "undo" => "selected_undo",
-    "group" => "selected_group_source"
+    "group" => "selected_group_source",
+    "merge" => "selected_merge"
   }
 
   # -------------------------------------------------------------------------
@@ -35,20 +36,29 @@ defmodule Heaters.Review.Actions do
 
     # Update clip state and fetch next in a single transaction
     Repo.transaction(fn ->
-      # Handle undo action specially - cancel pending jobs and reset states
-      if db_action == "selected_undo" do
-        # Cancel any pending merge/split jobs for this clip
-        cancel_pending_jobs_for_clip(clip_id)
+      # Handle special actions before main SQL query
+      cond do
+        db_action == "selected_undo" ->
+          # Cancel any pending merge/split jobs for this clip
+          cancel_pending_jobs_for_clip(clip_id)
 
-        # Reset clip to pending_review state and clear grouping
-        Repo.update_all(
-          from(c in Clip, where: c.id == ^clip_id),
-          set: [
-            reviewed_at: nil,
-            ingest_state: :pending_review,
-            grouped_with_clip_id: nil
-          ]
-        )
+          # Reset clip to pending_review state and clear grouping
+          Repo.update_all(
+            from(c in Clip, where: c.id == ^clip_id),
+            set: [
+              reviewed_at: nil,
+              ingest_state: :pending_review,
+              grouped_with_clip_id: nil
+            ]
+          )
+
+        db_action == "selected_merge" ->
+          # Handle merge action - find and remove cut between current clip and previous clip
+          handle_merge_action(clip_id)
+
+        true ->
+          # No special handling needed
+          :ok
       end
 
       {:ok, %{rows: rows}} =
@@ -68,6 +78,8 @@ defmodule Heaters.Review.Actions do
                                        THEN 'review_skipped'
                                        WHEN $1 = 'selected_undo'
                                        THEN 'pending_review'
+                                       WHEN $1 = 'selected_merge'
+                                       THEN 'review_archived'
                                        ELSE ingest_state
                                   END
             WHERE  id = $2
@@ -172,6 +184,64 @@ defmodule Heaters.Review.Actions do
         # Physical clip operations - cancel pending Oban jobs
         cancel_physical_clip_jobs(clip_id)
     end
+  end
+
+  @doc """
+  Handle a **merge** request for the current clip with the immediately preceding clip.
+
+  This action removes the cut point between the current clip and the previous clip,
+  effectively merging them into a single clip. The original clips are archived
+  and a new merged clip is created in their place.
+
+  ## Parameters
+  - `clip_id`: ID of the current clip to merge
+
+  ## Returns
+  - `:ok` if merge operation succeeded
+  - `{:error, reason}` if merge operation failed
+
+  ## Behavior
+  - Finds the cut point at the start of the current clip
+  - Uses the cuts-based `remove_cut` operation to merge clips
+  - Archives both original clips and creates a new merged clip
+  - New merged clip will be in `pending_review` state
+  """
+  def handle_merge_action(clip_id) do
+    # Get the current clip to find the cut point at its start
+    case Repo.get(Clip, clip_id) do
+      %Clip{} = clip ->
+        # Find the cut at the start of this clip (which would be removed to merge with previous clip)
+        case Heaters.Media.Cuts.Operations.remove_cut(
+               clip.source_video_id,
+               clip.start_frame,
+               # user_id - nil for system operations triggered by review
+               nil,
+               metadata: %{
+                 "triggered_by" => "review_merge",
+                 "merged_clip_id" => clip_id,
+                 "action_timestamp" => DateTime.utc_now()
+               }
+             ) do
+          {:ok, merged_clip} ->
+            Logger.info(
+              "Review: Successfully merged clip #{clip_id} with preceding clip, created merged clip #{merged_clip.id}"
+            )
+
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Review: Failed to merge clip #{clip_id}: #{reason}")
+            {:error, reason}
+        end
+
+      nil ->
+        Logger.warning("Review: Cannot merge - clip #{clip_id} not found")
+        {:error, "Clip not found"}
+    end
+  rescue
+    error ->
+      Logger.error("Review: Merge operation failed for clip #{clip_id}: #{inspect(error)}")
+      {:error, "Merge operation failed"}
   end
 
   # -------------------------------------------------------------------------
