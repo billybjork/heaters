@@ -549,7 +549,7 @@ defmodule HeatersWeb.ReviewLive do
   defp flash_verb(other), do: String.capitalize(other)
 
   # -------------------------------------------------------------------------
-  # Merge availability helper
+  # Action availability helpers
   # -------------------------------------------------------------------------
 
   # Check if merge action is available for the current clip.
@@ -585,6 +585,32 @@ defmodule HeatersWeb.ReviewLive do
       end
     
     preceding_clip_exists and cut_exists
+  rescue
+    _ -> false
+  end
+
+  # Check if group action is available for the current clip.
+  # 
+  # Group is only possible when:
+  # 1. Current clip doesn't start at frame 0 (has a preceding clip)
+  # 2. There's a preceding clip that ends where current clip starts
+  defp group_available?(%{current: nil}), do: false
+  defp group_available?(%{current: %Clip{start_frame: 0}}), do: false
+  defp group_available?(%{current: %Clip{} = clip}) do
+    import Ecto.Query
+    alias Heaters.Repo
+    
+    # Check if there's a preceding clip that ends where this clip starts
+    from(c in Clip,
+      where: c.source_video_id == ^clip.source_video_id and
+             c.ingest_state != :archived and
+             c.end_frame == ^clip.start_frame
+    )
+    |> Repo.one()
+    |> case do
+      %Clip{} -> true
+      nil -> false
+    end
   rescue
     _ -> false
   end
@@ -627,8 +653,8 @@ defmodule HeatersWeb.ReviewLive do
   - A: Approve
   - S: Skip  
   - D: Archive
-  - G: Group
   - F: Merge
+  - G: Group
   - Ctrl/Cmd+Z: Undo
 
   The hook is embedded directly in this LiveView module to keep
@@ -648,8 +674,8 @@ defmodule HeatersWeb.ReviewLive do
        *   │  A          │ approve│
        *   │  S          │ skip   │
        *   │  D          │ archive│
-       *   │  G          │ group  │
        *   │  F          │ merge  │
+       *   │  G          │ group  │
        *   └─────────────┴────────┘
        *
        * Usage:
@@ -660,7 +686,7 @@ defmodule HeatersWeb.ReviewLive do
       export default {
         mounted() {
           // Map single-letter keys to their respective actions
-          this.keyMap    = { a: "approve", s: "skip", d: "archive", g: "group", f: "merge" };
+          this.keyMap    = { a: "approve", s: "skip", d: "archive", f: "merge", g: "group" };
           this.armed     = null;             // currently-armed key, e.g. "a"
           this.btn       = null;             // highlighted button element
 

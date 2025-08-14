@@ -166,7 +166,15 @@ config :heaters,
 - **Enum Safety**: All state fields use Ecto enums with database constraints for compile-time and runtime validation
 
 ### Review Actions
-- **Immediate Persistence**: All actions (`approve`, `skip`, `archive`, `group`) persist to database immediately via async operations
+- **Immediate Persistence**: All actions (`approve`, `skip`, `archive`, `merge`, `group`) persist to database immediately via async operations
+- **Action Availability**: Smart button disabling prevents ineffective operations:
+  - `merge`: Disabled when no preceding clip exists or clip starts at frame 0 (requires cut point)
+  - `group`: Disabled when no preceding clip exists or clip starts at frame 0 (requires adjacent clips)
+  - Actions validate clip relationships and prevent database operations that would have no effect
+- **Special Action Handling**: 
+  - `merge`: Uses cuts-based `remove_cut` operation to merge clips by eliminating cut points
+  - `group`: Requires two-clip coordination; finds preceding clip and uses `request_group_and_fetch_next/2`
+  - Single-clip actions (`approve`, `skip`, `archive`) use standard SQL state transitions
 - **Cut Operations**: `add_cut`, `remove_cut`, `move_cut` with declarative validation  
 - **Enhanced Undo**: Database-level reversion (Ctrl+Z) restores clips to `pending_review` state and UI navigation
 - **Archive Behavior**: `review_archived` clips excluded from review queue; reappear only after undo
@@ -197,6 +205,12 @@ config :heaters,
 - Review Oban worker logs for failed attempts
 - Check for duplicate job execution patterns
 - Verify PubSub message delivery for LiveView updates
+
+**Review Action Issues**
+- Check button disabled state for actions that require preceding clips (`merge`, `group`)
+- Verify database changes when actions complete (check `grouped_with_clip_id`, `ingest_state`, `reviewed_at`)
+- Review `handle_group_action` and `handle_merge_action` logs for special action debugging
+- Confirm UI and database state consistency for two-clip operations
 
 See module documentation and inline comments for specific implementation details and solutions.
 

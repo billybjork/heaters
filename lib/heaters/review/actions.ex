@@ -56,44 +56,68 @@ defmodule Heaters.Review.Actions do
           # Handle merge action - find and remove cut between current clip and previous clip
           handle_merge_action(clip_id)
 
+        db_action == "selected_group_source" ->
+          # Handle group action - delegate to the two-clip grouping function
+          handle_group_action(clip_id)
+
         true ->
           # No special handling needed
           :ok
       end
 
-      {:ok, %{rows: rows}} =
-        Repo.query(
-          """
-          WITH upd AS (
-            UPDATE clips
-            SET    reviewed_at = CASE WHEN $1 = 'selected_undo'
-                                      THEN NULL
-                                      ELSE NOW()
-                                 END,
-                   ingest_state = CASE WHEN $1 = 'selected_approve'
-                                       THEN 'review_approved'
-                                       WHEN $1 = 'selected_archive'
-                                       THEN 'review_archived'
-                                       WHEN $1 = 'selected_skip'
-                                       THEN 'review_skipped'
-                                       WHEN $1 = 'selected_undo'
-                                       THEN 'pending_review'
-                                       WHEN $1 = 'selected_merge'
-                                       THEN 'review_archived'
-                                       ELSE ingest_state
-                                  END
-            WHERE  id = $2
+      # For group actions, skip the SQL update since it's handled by handle_group_action
+      {rows, _} = 
+        if db_action == "selected_group_source" do
+          # Group actions are handled entirely by handle_group_action, just fetch next clip
+          {:ok, %{rows: rows}} = Repo.query(
+            """
+            SELECT id
+            FROM   clips
+            WHERE  ingest_state = 'pending_review'
+              AND  reviewed_at IS NULL
+            ORDER  BY id
+            LIMIT  1
+            FOR UPDATE SKIP LOCKED;
+            """,
+            []
           )
-          SELECT id
-          FROM   clips
-          WHERE  ingest_state = 'pending_review'
-            AND  reviewed_at IS NULL
-          ORDER  BY id
-          LIMIT  1
-          FOR UPDATE SKIP LOCKED;
-          """,
-          [db_action, clip_id]
-        )
+          {rows, nil}
+        else
+          # Normal actions go through the SQL update
+          {:ok, %{rows: rows}} = Repo.query(
+            """
+            WITH upd AS (
+              UPDATE clips
+              SET    reviewed_at = CASE WHEN $1 = 'selected_undo'
+                                        THEN NULL
+                                        ELSE NOW()
+                                   END,
+                     ingest_state = CASE WHEN $1 = 'selected_approve'
+                                         THEN 'review_approved'
+                                         WHEN $1 = 'selected_archive'
+                                         THEN 'review_archived'
+                                         WHEN $1 = 'selected_skip'
+                                         THEN 'review_skipped'
+                                         WHEN $1 = 'selected_undo'
+                                         THEN 'pending_review'
+                                         WHEN $1 = 'selected_merge'
+                                         THEN 'review_archived'
+                                         ELSE ingest_state
+                                    END
+              WHERE  id = $2
+            )
+            SELECT id
+            FROM   clips
+            WHERE  ingest_state = 'pending_review'
+              AND  reviewed_at IS NULL
+            ORDER  BY id
+            LIMIT  1
+            FOR UPDATE SKIP LOCKED;
+            """,
+            [db_action, clip_id]
+          )
+          {rows, nil}
+        end
 
       next_clip =
         case rows do
@@ -184,6 +208,69 @@ defmodule Heaters.Review.Actions do
         # Physical clip operations - cancel pending Oban jobs
         cancel_physical_clip_jobs(clip_id)
     end
+  end
+
+  @doc """
+  Handle a **group** request for the current clip with the immediately preceding clip.
+
+  This action finds the preceding clip and groups them together using the existing
+  `request_group_and_fetch_next/2` function. Both clips are marked as reviewed
+  and advanced to review_approved state.
+
+  ## Parameters
+  - `clip_id`: ID of the current clip to group
+
+  ## Returns
+  - `:ok` if group operation succeeded
+  - `{:error, reason}` if group operation failed
+
+  ## Behavior
+  - Finds the preceding clip that ends where the current clip starts
+  - Uses the existing two-clip grouping logic
+  - Both clips are marked as reviewed and approved
+  - Sets mutual grouped_with_clip_id references
+  """
+  def handle_group_action(clip_id) do
+    # Get the current clip to find the preceding clip
+    case Repo.get(Clip, clip_id) do
+      %Clip{} = current_clip ->
+        # Find the preceding clip that ends where this clip starts
+        preceding_clip = 
+          from(c in Clip,
+            where: c.source_video_id == ^current_clip.source_video_id and
+                   c.ingest_state != :archived and
+                   c.end_frame == ^current_clip.start_frame
+          )
+          |> Repo.one()
+
+        case preceding_clip do
+          %Clip{} = prev_clip ->
+            # Use the existing grouping logic
+            case request_group_and_fetch_next(prev_clip, current_clip) do
+              {:ok, {_next_clip, _metadata}} ->
+                Logger.info(
+                  "Review: Successfully grouped clip #{clip_id} with preceding clip #{prev_clip.id}"
+                )
+                :ok
+
+              {:error, reason} ->
+                Logger.warning("Review: Failed to group clip #{clip_id}: #{reason}")
+                {:error, reason}
+            end
+
+          nil ->
+            Logger.warning("Review: Cannot group - no preceding clip found for clip #{clip_id}")
+            {:error, "No preceding clip found"}
+        end
+
+      nil ->
+        Logger.warning("Review: Cannot group - clip #{clip_id} not found")
+        {:error, "Clip not found"}
+    end
+  rescue
+    error ->
+      Logger.error("Review: Group operation failed for clip #{clip_id}: #{inspect(error)}")
+      {:error, "Group operation failed"}
   end
 
   @doc """

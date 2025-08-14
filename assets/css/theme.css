@@ -76,14 +76,14 @@ html {
     color: #fff;
 }
 
-.btn.group:hover {
-    background: var(--group);
-    color: #000;
-}
-
 .btn.merge:hover {
     background: var(--merge);
     color: #fff;
+}
+
+.btn.group:hover {
+    background: var(--group);
+    color: #000;
 }
 
 /* ------------- Flash messages ----------------------------------------- */
@@ -109,14 +109,14 @@ html {
     color: #fff;
 }
 
-.flash--group {
-    background: var(--group);
-    color: #000;
-}
-
 .flash--merge {
     background: var(--merge);
     color: #fff;
+}
+
+.flash--group {
+    background: var(--group);
+    color: #000;
 }
 
 /* ------------- Clip & actions wrapper --------------------------------- */

@@ -33,7 +33,7 @@
                   ⬅️
                 </button>
 
-                <!-- Approve / Skip / Archive -->
+                <!-- Approve / Skip / Archive / Merge / Group -->
                 <button id="btn-approve" class="btn approve" phx-click="select" phx-value-action="approve">
                   ✅ Approve
                 </button>
@@ -43,12 +43,15 @@
                 <button id="btn-archive" class="btn archive" phx-click="select" phx-value-action="archive">
                   🗑️ Archive
                 </button>
-
-                <!-- Merge -->
                 <button id="btn-merge" class="btn merge" phx-click="select" phx-value-action="merge" 
                   disabled={not merge_available?(assigns)} 
                   title={if(merge_available?(assigns), do: "Merge with preceding clip (F + Enter)", else: "No preceding clip to merge with")}>
                   🔗 Merge
+                </button>
+                <button id="btn-group" class="btn group" phx-click="select" phx-value-action="group"
+                  disabled={not group_available?(assigns)}
+                  title={if(group_available?(assigns), do: "Group with preceding clip (G + Enter)", else: "No preceding clip to group with")}>
+                  📎 Group
                 </button>
               </nav>
             <% end %>
