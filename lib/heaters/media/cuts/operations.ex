@@ -722,11 +722,22 @@ defmodule Heaters.Media.Cuts.Operations do
       }
     }
 
-    case %Clip{}
-         |> Clip.changeset(attrs)
-         |> Repo.insert() do
-      {:ok, clip} ->
+    changeset = Clip.changeset(%Clip{}, attrs)
+
+    case Repo.insert(changeset,
+           on_conflict: :nothing,
+           conflict_target: :clip_identifier,
+           returning: true
+         ) do
+      {:ok, %Clip{id: id} = clip} when not is_nil(id) ->
         {:ok, clip}
+
+      # Nothing inserted due to conflict; fetch existing row for idempotency
+      {:ok, %Clip{id: nil}} ->
+        case from(c in Clip, where: c.clip_identifier == ^clip_identifier) |> Repo.one() do
+          %Clip{} = clip -> {:ok, clip}
+          nil -> {:error, "Clip already exists but could not be fetched: #{clip_identifier}"}
+        end
 
       {:error, changeset} ->
         {:error, "Failed to create clip from segment: #{inspect(changeset.errors)}"}
@@ -769,4 +780,6 @@ defmodule Heaters.Media.Cuts.Operations do
   defp collect_clip_results([{:error, error} | rest], clips, errors) do
     collect_clip_results(rest, clips, [error | errors])
   end
+
+  # (no-op helper removed)
 end

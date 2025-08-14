@@ -308,6 +308,13 @@ defmodule Heaters.Processing.Support.FFmpeg.StreamClip do
 
     if upload_to_s3 do
       s3_output_path = Keyword.get(opts, :output_path)
+      # Cache locally for downstream stages (e.g., Keyframe) to avoid immediate re-download
+      # Best-effort: ignore caching errors to not block export
+      try do
+        Heaters.Storage.PipelineCache.TempCache.put(s3_output_path, file_path)
+      rescue
+        _ -> :ok
+      end
 
       case Heaters.Storage.S3.Core.upload_file(file_path, s3_output_path,
              operation_name: operation_name

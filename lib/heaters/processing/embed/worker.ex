@@ -78,13 +78,15 @@ defmodule Heaters.Processing.Embed.Worker do
     end
   end
 
-  defp run_embedding_task(clip, _args) do
+  defp run_embedding_task(clip, args) do
     Logger.info("EmbeddingWorker: Running Python embedding task for clip #{clip.id}")
 
     py_args = %{
       clip_id: clip.id,
       clip_filepath: clip.clip_filepath,
-      keyframe_artifacts: extract_keyframe_artifacts(clip)
+      keyframe_artifacts: extract_keyframe_artifacts(clip),
+      model_name: Map.get(args, "model_name"),
+      generation_strategy: Map.get(args, "generation_strategy")
     }
 
     case PyRunner.run_python_task(:embedding, py_args, timeout: :timer.minutes(5)) do
@@ -137,8 +139,7 @@ defmodule Heaters.Processing.Embed.Worker do
         |> Enum.map(fn artifact ->
           %{
             id: artifact.id,
-            s3_key: artifact.s3_key,
-            s3_url: artifact.s3_url
+            s3_key: artifact.s3_key
           }
         end)
     end

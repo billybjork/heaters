@@ -96,17 +96,33 @@ defmodule Heaters.Media.Artifacts do
 
       {:ok, artifacts} = Artifacts.create_artifacts(clip_id, "keyframe", artifacts_data)
   """
-  @spec create_artifacts(integer(), String.t(), list(map())) ::
+  @spec create_artifacts(integer(), String.t() | atom(), list(map())) ::
           {:ok, list(Artifact.t())} | {:error, any()}
   def create_artifacts(clip_id, artifact_type, artifacts_data) when is_list(artifacts_data) do
     Logger.info(
       "Artifacts: Creating #{length(artifacts_data)} #{artifact_type} artifacts for clip_id: #{clip_id}"
     )
 
+    normalized_type =
+      cond do
+        is_atom(artifact_type) ->
+          artifact_type
+
+        is_binary(artifact_type) ->
+          try do
+            String.to_existing_atom(artifact_type)
+          rescue
+            _ -> :keyframe
+          end
+
+        true ->
+          :keyframe
+      end
+
     artifacts_attrs =
       artifacts_data
       |> Enum.map(fn artifact_data ->
-        build_artifact_attrs(clip_id, artifact_type, artifact_data)
+        build_artifact_attrs(clip_id, normalized_type, artifact_data)
       end)
 
     # Validate all artifacts before bulk insert
@@ -177,7 +193,7 @@ defmodule Heaters.Media.Artifacts do
     |> Enum.join("; ")
   end
 
-  @spec build_artifact_attrs(integer(), String.t(), map()) :: map()
+  @spec build_artifact_attrs(integer(), atom(), map()) :: map()
   defp build_artifact_attrs(clip_id, artifact_type, artifact_data) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 

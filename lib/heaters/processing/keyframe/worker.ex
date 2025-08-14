@@ -9,6 +9,7 @@ defmodule Heaters.Processing.Keyframe.Worker do
   alias Heaters.Processing.Support.FFmpeg.Runner, as: FFmpegRunner
   alias Heaters.Storage.S3.Paths, as: S3Paths
   alias Heaters.Storage.S3.Core, as: S3Core
+  alias Heaters.Storage.PipelineCache.TempCache
   alias Heaters.Media.{Clips, Artifacts}
   alias Heaters.Pipeline.WorkerBehavior
   alias Heaters.Pipeline.Config, as: PipelineConfig
@@ -103,12 +104,9 @@ defmodule Heaters.Processing.Keyframe.Worker do
   end
 
   defp download_clip_if_needed(%{clip_filepath: s3_key} = _clip) do
-    filename = Path.basename(s3_key) |> String.replace_suffix(".mp4", "")
-    tmp_dir = System.tmp_dir!()
-    local_path = Path.join(tmp_dir, filename <> ".mp4")
-
-    case S3Core.download_file(s3_key, local_path, operation_name: "Keyframe") do
-      {:ok, ^local_path} -> {:ok, local_path}
+    # Prefer local temp cache (written by export) to avoid immediate S3 re-download
+    case TempCache.get_or_download(s3_key, operation_name: "Keyframe") do
+      {:ok, cached_path, _origin} -> {:ok, cached_path}
       {:error, reason} -> {:error, reason}
     end
   end
