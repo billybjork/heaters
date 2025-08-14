@@ -150,12 +150,16 @@ defmodule Heaters.Processing.Support.ResultBuilder do
   def log_result(worker_module, {:ok, %{status: :success} = result}) do
     require Logger
 
-    Logger.info(
-      "#{worker_module}: Success",
-      source_video_id: result.source_video_id,
-      duration_ms: result.duration_ms,
-      metadata: result.metadata
-    )
+    # Build safe metadata without assuming specific keys across result types
+    attrs =
+      []
+      |> maybe_put(:source_video_id, result)
+      |> maybe_put(:clip_id, result)
+      |> Keyword.put(:duration_ms, Map.get(result, :duration_ms))
+      |> Keyword.put(:metadata, Map.get(result, :metadata))
+      |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+
+    Logger.info("#{worker_module}: Success", attrs)
   end
 
   def log_result(worker_module, {:error, reason}) do
@@ -170,6 +174,14 @@ defmodule Heaters.Processing.Support.ResultBuilder do
   def log_result(_worker_module, :ok) do
     # Backward compatibility - simple :ok returns are not logged with structured data
     :ok
+  end
+
+  defp maybe_put(acc, key, result) do
+    if Map.has_key?(result, key) do
+      Keyword.put(acc, key, Map.get(result, key))
+    else
+      acc
+    end
   end
 
   @doc """

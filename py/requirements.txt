@@ -4,3 +4,4 @@ Pillow==11.1.0
 numpy==2.0.2
 transformers==4.51.0
 opencv-python-headless==4.11.0.86
+accelerate==1.10.0
