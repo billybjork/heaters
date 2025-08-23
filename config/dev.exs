@@ -108,6 +108,7 @@ config :phoenix, :format_version, "3.0"
 # ───────────────────────────────────────────
 config :phoenix_live_view,
   debug_heex_annotations: true,
+  debug_tags_location: true,
   debug_attributes: true,
   enable_expensive_runtime_checks: true
 

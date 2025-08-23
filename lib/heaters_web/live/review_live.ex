@@ -73,7 +73,8 @@ defmodule HeatersWeb.ReviewLive do
           future: [],
           history: [],
           temp_clip: %{},
-          pending_actions: %{}
+          pending_actions: %{},
+          split_mode: false
         )
 
       [cur | fut] ->
@@ -93,7 +94,8 @@ defmodule HeatersWeb.ReviewLive do
           history: [],
           page_state: :reviewing,
           temp_clip: %{},
-          pending_actions: %{}
+          pending_actions: %{},
+          split_mode: false
         )
     end
   end
@@ -131,7 +133,8 @@ defmodule HeatersWeb.ReviewLive do
           history: Enum.reverse(history_clips),
           page_state: :reviewing,
           temp_clip: %{},
-          pending_actions: %{}
+          pending_actions: %{},
+          split_mode: false
         )
     end
   end
@@ -142,7 +145,7 @@ defmodule HeatersWeb.ReviewLive do
 
   # ─────────────────────────────────────────────────────────────────────────
   # Generic SELECT (approve, skip, archive, …)
-  # 
+  #
   # Immediate Persistence Pattern:
   # Actions are persisted to database immediately via async operations.
   # This ensures archived clips are excluded from review queue right away,
@@ -160,7 +163,7 @@ defmodule HeatersWeb.ReviewLive do
 
     socket =
       socket
-      |> assign(flash_action: action)
+      |> assign(flash_action: action, split_mode: false)
       |> push_history(clip)
       |> advance_queue()
       |> refill_future()
@@ -174,7 +177,7 @@ defmodule HeatersWeb.ReviewLive do
 
   # ─────────────────────────────────────────────────────────────────────────
   # Undo - Enhanced Database-Level Reversion
-  # 
+  #
   # Performs both UI navigation and database-level undo:
   # 1. Calls ClipActions.select_clip_and_fetch_next(clip, "undo") to reset database state
   # 2. Navigates UI back to previous clip in history
@@ -204,13 +207,68 @@ defmodule HeatersWeb.ReviewLive do
         future: [cur | fut],
         history: rest,
         page_state: :reviewing,
-        temp_clip: %{}
+        temp_clip: %{},
+        split_mode: false
       )
       |> refill_future()
       |> clear_flash()
       |> put_flash(:info, "Undone - clip #{cur.id} reverted to pending review")
 
     # Don't update URL to preserve in-memory history state
+
+    {:noreply, socket}
+  end
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Split Mode - Frame-by-frame navigation and cut point creation
+  # ─────────────────────────────────────────────────────────────────────────
+  @impl true
+  def handle_event("toggle_split_mode", _params, socket) do
+    new_split_mode = not socket.assigns.split_mode
+
+    socket =
+      socket
+      |> assign(split_mode: new_split_mode)
+      |> push_event("split_mode_changed", %{split_mode: new_split_mode})
+
+    flash_message =
+      if new_split_mode,
+        do: "Split mode active - use ←/→ arrows to navigate frames, Enter to split",
+        else: "Split mode disabled"
+
+    socket = put_flash(socket, :info, flash_message)
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event(
+        "split_at_frame",
+        %{"frame_number" => frame_number},
+        %{assigns: %{current: clip}} = socket
+      ) do
+    # First, persist any pending actions from previous clips
+    socket = persist_all_pending_actions(socket)
+
+    # Immediately execute the split operation
+    Phoenix.LiveView.start_async(socket, {:split, clip.id}, fn ->
+      alias Heaters.Media.Cuts.Operations
+
+      Operations.add_cut(clip.source_video_id, frame_number, nil,
+        metadata: %{operation: "split_action"}
+      )
+    end)
+
+    socket =
+      socket
+      |> assign(flash_action: "split", split_mode: false)
+      |> push_history(clip)
+      |> advance_queue()
+      |> refill_future()
+      |> put_flash(:info, "Split clip #{clip.id} at frame #{frame_number}")
+
+    # Update URL to reflect new current clip
+    socket = update_url_for_current_clip(socket)
 
     {:noreply, socket}
   end
@@ -437,6 +495,25 @@ defmodule HeatersWeb.ReviewLive do
     {:noreply, put_flash(socket, :error, "Undo crashed: #{inspect(reason)}")}
   end
 
+  # Split async handlers
+  @impl true
+  def handle_async({:split, _}, {:ok, {_first_clip, _second_clip}}, socket),
+    do: {:noreply, socket}
+
+  @impl true
+  def handle_async({:split, clip_id}, {:error, reason}, socket) do
+    require Logger
+    Logger.error("Split for clip #{clip_id} failed: #{inspect(reason)}")
+    {:noreply, put_flash(socket, :error, "Split failed: #{inspect(reason)}")}
+  end
+
+  @impl true
+  def handle_async({:split, clip_id}, {:exit, reason}, socket) do
+    require Logger
+    Logger.error("Split for clip #{clip_id} crashed: #{inspect(reason)}")
+    {:noreply, put_flash(socket, :error, "Split crashed: #{inspect(reason)}")}
+  end
+
   # Background persistence handlers (for pending actions)
   @impl true
   def handle_async({:persist_background, _}, {:ok, {_next_clip, _metadata}}, socket),
@@ -512,7 +589,6 @@ defmodule HeatersWeb.ReviewLive do
   # Pending actions management
   # -------------------------------------------------------------------------
 
-
   defp persist_all_pending_actions(%{assigns: %{pending_actions: pending}} = socket) do
     # Persist all pending actions to database
     Enum.each(pending, fn {clip_id, action} ->
@@ -526,7 +602,7 @@ defmodule HeatersWeb.ReviewLive do
   end
 
   # -------------------------------------------------------------------------
-  # URL management helpers  
+  # URL management helpers
   # -------------------------------------------------------------------------
 
   defp update_url_for_current_clip(%{assigns: %{current: nil}} = socket) do
@@ -546,6 +622,7 @@ defmodule HeatersWeb.ReviewLive do
   defp flash_verb("skip"), do: "Skipped"
   defp flash_verb("archive"), do: "Archived"
   defp flash_verb("merge"), do: "Merged"
+  defp flash_verb("split"), do: "Split"
   defp flash_verb(other), do: String.capitalize(other)
 
   # -------------------------------------------------------------------------
@@ -553,58 +630,62 @@ defmodule HeatersWeb.ReviewLive do
   # -------------------------------------------------------------------------
 
   # Check if merge action is available for the current clip.
-  # 
+  #
   # Merge is only possible when:
   # 1. Current clip doesn't start at frame 0 (has a preceding clip)
   # 2. There's a cut point at the start of the current clip
   # 3. There's a preceding clip that ends where current clip starts
   defp merge_available?(%{current: nil}), do: false
   defp merge_available?(%{current: %Clip{start_frame: 0}}), do: false
+
   defp merge_available?(%{current: %Clip{} = clip}) do
     import Ecto.Query
     alias Heaters.Repo
-    
+
     # Check if there's a preceding clip that ends where this clip starts
-    preceding_clip_exists = 
+    preceding_clip_exists =
       from(c in Clip,
-        where: c.source_video_id == ^clip.source_video_id and
-               c.ingest_state != :archived and
-               c.end_frame == ^clip.start_frame
+        where:
+          c.source_video_id == ^clip.source_video_id and
+            c.ingest_state != :archived and
+            c.end_frame == ^clip.start_frame
       )
       |> Repo.one()
       |> case do
         %Clip{} -> true
         nil -> false
       end
-    
+
     # Check if there's a cut at the start of this clip
     cut_exists =
       case Heaters.Media.Cuts.find_cut_at_frame(clip.source_video_id, clip.start_frame) do
         {:ok, _cut} -> true
         {:error, :not_found} -> false
       end
-    
+
     preceding_clip_exists and cut_exists
   rescue
     _ -> false
   end
 
   # Check if group action is available for the current clip.
-  # 
+  #
   # Group is only possible when:
   # 1. Current clip doesn't start at frame 0 (has a preceding clip)
   # 2. There's a preceding clip that ends where current clip starts
   defp group_available?(%{current: nil}), do: false
   defp group_available?(%{current: %Clip{start_frame: 0}}), do: false
+
   defp group_available?(%{current: %Clip{} = clip}) do
     import Ecto.Query
     alias Heaters.Repo
-    
+
     # Check if there's a preceding clip that ends where this clip starts
     from(c in Clip,
-      where: c.source_video_id == ^clip.source_video_id and
-             c.ingest_state != :archived and
-             c.end_frame == ^clip.start_frame
+      where:
+        c.source_video_id == ^clip.source_video_id and
+          c.ingest_state != :archived and
+          c.end_frame == ^clip.start_frame
     )
     |> Repo.one()
     |> case do
@@ -651,7 +732,7 @@ defmodule HeatersWeb.ReviewLive do
 
   This hook provides keyboard shortcuts for the review workflow:
   - A: Approve
-  - S: Skip  
+  - S: Skip
   - D: Archive
   - F: Merge
   - G: Group
@@ -676,7 +757,14 @@ defmodule HeatersWeb.ReviewLive do
        *   │  D          │ archive│
        *   │  F          │ merge  │
        *   │  G          │ group  │
+       *   │  Space      │ split  │
        *   └─────────────┴────────┘
+       *
+       * Split mode navigation:
+       *   - Space: toggle split mode
+       *   - Left/Right arrows: navigate frames (when in split mode)
+       *   - Enter: commit split at current frame (when in split mode)
+       *   - Escape: exit split mode
        *
        * Usage:
        *  - Hold a letter → the corresponding button highlights (is-armed)
@@ -685,15 +773,19 @@ defmodule HeatersWeb.ReviewLive do
        */
       export default {
         mounted() {
+          console.log("[ReviewHotkeys] Hook mounted");
           // Map single-letter keys to their respective actions
           this.keyMap    = { a: "approve", s: "skip", d: "archive", f: "merge", g: "group" };
           this.armed     = null;             // currently-armed key, e.g. "a"
           this.btn       = null;             // highlighted button element
+          this.splitMode = false;            // whether split mode is active
 
           // Key-down handler: manages arming keys and committing actions
           this._onKeyDown = (e) => {
             const tag  = (e.target.tagName || "").toLowerCase();
             const k    = e.key.toLowerCase();
+
+            console.log("[ReviewHotkeys] Key pressed:", k, "Split mode:", this.splitMode);
 
             // Let digits go into any input uninterrupted
             if (tag === "input") {
@@ -708,17 +800,52 @@ defmodule HeatersWeb.ReviewLive do
               return;
             }
 
+            // Split mode handling
+            if (this._isInSplitMode()) {
+              this._handleSplitModeKeys(e, k);
+              return;
+            }
+
+
+            // Arrow keys - enter split mode if not already in it, or navigate if in split mode
+            if (k === "arrowleft" || k === "arrowright") {
+              const mainElement = document.querySelector("#review");
+              const isCurrentlyInSplitMode = mainElement?.classList.contains("split-mode-active");
+
+              if (!isCurrentlyInSplitMode) {
+                // Not in split mode - enter it first
+                console.log("[ReviewHotkeys] Arrow key pressed - entering split mode");
+                this.pushEvent("toggle_split_mode", {});
+
+                const video = document.querySelector(".video-player");
+                if (video) {
+                  // Nuclear option: completely disable ClipPlayer
+                  this._disableClipPlayer(video);
+                  video.pause();
+                  console.log("[ReviewHotkeys] ClipPlayer disabled, video paused for split mode");
+                }
+
+                e.preventDefault();
+                return;
+              }
+
+              // Already in split mode - handle frame navigation
+              this._handleArrowNavigation(k);
+              e.preventDefault();
+              return;
+            }
+
             // 1) First press of A/S/D/G/F → arm and highlight (if button is not disabled)
             if (this.keyMap[k] && !this.armed) {
               if (e.repeat) { e.preventDefault(); return; }
               const targetBtn = document.getElementById(`btn-${this.keyMap[k]}`);
-              
+
               // Don't arm if button is disabled
               if (targetBtn?.disabled) {
                 e.preventDefault();
                 return;
               }
-              
+
               this.armed = k;
               this.btn   = targetBtn;
               this.btn?.classList.add("is-armed");
@@ -750,10 +877,308 @@ defmodule HeatersWeb.ReviewLive do
           window.addEventListener("keyup",   this._onKeyUp);
         },
 
+        updated() {
+          // Check if split mode state changed in the DOM
+          const mainElement = document.querySelector("#review");
+          if (mainElement) {
+            const isNowSplitMode = mainElement.classList.contains("split-mode-active");
+            if (isNowSplitMode !== this.splitMode) {
+              this.splitMode = isNowSplitMode;
+              console.log("[ReviewHotkeys] Split mode updated from DOM:", this.splitMode);
+            }
+          }
+        },
+
         destroyed() {
           window.removeEventListener("keydown", this._onKeyDown);
           window.removeEventListener("keyup",   this._onKeyUp);
         },
+
+        // Handle LiveView events
+        handleEvent(event, payload) {
+          console.log("[ReviewHotkeys] Received event:", event, payload);
+          
+          if (event === "split_mode_changed") {
+            if (!payload.split_mode) {
+              // Exiting split mode - re-enable ClipPlayer and resume video
+              console.log("[ReviewHotkeys] Exiting split mode - re-enabling ClipPlayer");
+              this._enableClipPlayer();
+              
+              const video = document.querySelector(".video-player");
+              if (video) {
+                video.play().catch(error => {
+                  console.log("[ReviewHotkeys] Failed to resume playback:", error);
+                });
+              }
+            }
+            
+            this.splitMode = payload.split_mode;
+            console.log("[ReviewHotkeys] Split mode updated from LiveView:", this.splitMode);
+          }
+        },
+
+        // Check current split mode from DOM (more reliable than internal state)
+        _isInSplitMode() {
+          const mainElement = document.querySelector("#review");
+          return mainElement?.classList.contains("split-mode-active") || false;
+        },
+
+        // Handle arrow key frame navigation in split mode
+        _handleArrowNavigation(k) {
+          console.log("[ReviewHotkeys] Direct frame navigation:", k);
+          
+          const video = document.querySelector(".video-player");
+          if (!video) {
+            console.log("[ReviewHotkeys] No video element found");
+            return;
+          }
+          
+          // Direct frame navigation - bypass ClipPlayer completely
+          const direction = k === "arrowleft" ? "left" : "right";
+          const frameStep = 3; // 3 frames for visible navigation
+          const frameStepSeconds = frameStep / 30; // 30fps
+          
+          const currentTime = video.currentTime;
+          const newTime = direction === "left" 
+            ? Math.max(0, currentTime - frameStepSeconds)
+            : Math.min(video.duration || 0, currentTime + frameStepSeconds);
+          
+          console.log(`[ReviewHotkeys] Direct navigation (${frameStep} frames) from ${currentTime.toFixed(3)}s to ${newTime.toFixed(3)}s (${direction})`);
+          
+          // Pause video and set time directly - no events, no ClipPlayer
+          video.pause();
+          
+          // Try multiple approaches to ensure the time sticks
+          this._forceVideoTime(video, newTime);
+        },
+
+        // Force video time with ClipPlayer completely bypassed
+        _forceVideoTime(video, targetTime) {
+          console.log(`[ReviewHotkeys] Force video time to: ${targetTime.toFixed(3)}s`);
+          
+          // Ensure ClipPlayer is disabled first
+          this._disableClipPlayer(video);
+          
+          // Only set time if video is ready and has duration
+          if (video.readyState >= 1 && video.duration > 0) {
+            // Approach 1: Direct time setting with event prevention
+            console.log(`[ReviewHotkeys] Video ready state: ${video.readyState}, duration: ${video.duration}s`);
+            
+            // Remove all event listeners that might interfere
+            const allEvents = ['loadstart', 'loadedmetadata', 'loadeddata', 'canplay', 'canplaythrough', 'timeupdate', 'seeking', 'seeked', 'ended'];
+            const eventClone = video.cloneNode(true);
+            
+            // Set up the cloned video with desired time and prevent ClipPlayer interference
+            eventClone.currentTime = targetTime;
+            eventClone.pause();
+            eventClone._clipPlayerDisabled = true;
+            eventClone._originalPhxHook = video._originalPhxHook;
+            eventClone.dataset.clipOffsetReset = '1'; // Prevent ClipPlayer time reset
+            
+            // Replace the video element
+            video.parentNode.replaceChild(eventClone, video);
+            
+            // Force time setting with multiple attempts
+            this._ensureVideoTime(eventClone, targetTime);
+            
+          } else {
+            console.log(`[ReviewHotkeys] Video not ready (readyState: ${video.readyState}, duration: ${video.duration}), waiting...`);
+            
+            // Wait for video to be ready, then set time
+            const waitForReady = () => {
+              if (video.readyState >= 1 && video.duration > 0) {
+                this._forceVideoTime(video, targetTime);
+              } else {
+                setTimeout(waitForReady, 50);
+              }
+            };
+            waitForReady();
+          }
+        },
+        
+        // Ensure video time sticks using multiple techniques
+        _ensureVideoTime(video, targetTime) {
+          const setTime = () => {
+            video.currentTime = targetTime;
+            console.log(`[ReviewHotkeys] Set video time to: ${video.currentTime.toFixed(3)}s`);
+          };
+          
+          // Immediate set
+          setTime();
+          
+          // Set again on next frame
+          requestAnimationFrame(() => {
+            setTime();
+            
+            // Set again after a short delay
+            setTimeout(() => {
+              setTime();
+              
+              // Final verification
+              setTimeout(() => {
+                const finalTime = video.currentTime;
+                console.log(`[ReviewHotkeys] Final verification - time: ${finalTime.toFixed(3)}s (target: ${targetTime.toFixed(3)}s)`);
+                
+                if (Math.abs(finalTime - targetTime) > 0.05) {
+                  console.log(`[ReviewHotkeys] Time drift detected, forcing again...`);
+                  video.currentTime = targetTime;
+                }
+              }, 100);
+            }, 50);
+          });
+        },
+
+        // Disable ClipPlayer by removing phx-hook attribute to prevent LiveView re-initialization
+        _disableClipPlayer(video) {
+          if (video._clipPlayerDisabled) return; // Already disabled
+          
+          console.log(`[ReviewHotkeys] Disabling ClipPlayer by removing phx-hook attribute`);
+          
+          // Store original phx-hook value and remove it to prevent LiveView re-initialization
+          video._originalPhxHook = video.getAttribute('phx-hook');
+          video.removeAttribute('phx-hook');
+          
+          // Prevent ClipPlayer's automatic time reset behavior
+          // This is crucial - ClipPlayer resets currentTime to 0 for direct_s3 players
+          video.dataset.clipOffsetReset = '1';
+          
+          // Store original event listeners and remove them
+          if (video._liveViewHook && video._liveViewHook.player) {
+            video._originalPlayer = video._liveViewHook.player;
+            
+            // Directly disable all automatic behaviors from the ClipPlayer
+            try {
+              video._originalPlayer.frameNavigationMode = true;
+              video._originalPlayer.disableAutomaticBehaviors();
+              console.log(`[ReviewHotkeys] ClipPlayer automatic behaviors disabled`);
+            } catch (error) {
+              console.log(`[ReviewHotkeys] Could not disable ClipPlayer behaviors:`, error);
+            }
+          }
+          
+          // Mark as disabled and pause video
+          video._clipPlayerDisabled = true;
+          video.pause();
+          
+          console.log(`[ReviewHotkeys] ClipPlayer disabled - phx-hook removed, video paused, offset reset flag set`);
+        },
+
+        // Re-enable ClipPlayer functionality by restoring phx-hook and triggering LiveView update
+        _enableClipPlayer() {
+          console.log(`[ReviewHotkeys] Re-enabling ClipPlayer functionality`);
+          
+          const video = document.querySelector(".video-player");
+          if (video && video._clipPlayerDisabled) {
+            // Restore phx-hook attribute to re-enable LiveView hook
+            if (video._originalPhxHook) {
+              video.setAttribute('phx-hook', video._originalPhxHook);
+              delete video._originalPhxHook;
+            }
+            
+            // Remove disabled flag
+            delete video._clipPlayerDisabled;
+            
+            console.log(`[ReviewHotkeys] ClipPlayer re-enabled - phx-hook restored`);
+            
+            // Force LiveView to re-initialize the hook by triggering a minor DOM change
+            // This ensures ClipPlayer gets properly reattached after we disabled it
+            setTimeout(() => {
+              const container = video.parentElement;
+              if (container) {
+                // Toggle a data attribute to trigger LiveView update detection
+                const current = container.getAttribute('data-hook-refresh');
+                container.setAttribute('data-hook-refresh', current === 'true' ? 'false' : 'true');
+                console.log(`[ReviewHotkeys] Triggered DOM refresh to reinitialize ClipPlayer`);
+              }
+            }, 50);
+          }
+        },
+
+        // Handle split mode keyboard navigation
+        _handleSplitModeKeys(e, k) {
+          console.log("[ReviewHotkeys] Split mode key handler:", k);
+
+          // Arrow keys for frame navigation
+          if (k === "arrowleft" || k === "arrowright") {
+            this._handleArrowNavigation(k);
+            e.preventDefault();
+            return;
+          }
+
+          // Escape exits split mode
+          if (e.key === "Escape") {
+            console.log("[ReviewHotkeys] Escape key - exiting split mode");
+            
+            this.pushEvent("toggle_split_mode", {});
+            e.preventDefault();
+            return;
+          }
+
+          // Enter commits split at current frame
+          if (e.key === "Enter") {
+            console.log("[ReviewHotkeys] Enter key - attempting split");
+
+            // Get current video time for frame calculation
+            const video = document.querySelector(".video-player");
+            if (video) {
+              const currentTime = video.currentTime;
+              const fps = this._estimateFPS();
+
+              // Get clip start frame from the video element's data attributes
+              const clipInfo = this._getClipInfo();
+              const clipStartFrame = clipInfo ? clipInfo.start_frame || 0 : 0;
+              const relativeFrameNumber = Math.round(currentTime * fps);
+              const absoluteFrameNumber = clipStartFrame + relativeFrameNumber;
+
+              console.log("[ReviewHotkeys] Split calculation - currentTime:", currentTime, "fps:", fps, "startFrame:", clipStartFrame, "relativeFrame:", relativeFrameNumber, "absoluteFrame:", absoluteFrameNumber);
+
+              this.pushEvent("split_at_frame", { frame_number: absoluteFrameNumber });
+            } else {
+              console.log("[ReviewHotkeys] No video element found for split");
+            }
+            e.preventDefault();
+            return;
+          }
+        },
+
+
+        // Estimate FPS for frame calculations (fallback to 30fps)
+        _estimateFPS() {
+          // Could get from clip metadata in the future
+          return 30;
+        },
+
+        // Get clip information from video player
+        _getClipInfo() {
+          const videoElement = document.querySelector('video[phx-hook=".ClipPlayer"]');
+          if (videoElement && videoElement.dataset.clipInfo) {
+            try {
+              return JSON.parse(videoElement.dataset.clipInfo);
+            } catch (error) {
+              console.error("Failed to parse clip info:", error);
+            }
+          }
+          return null;
+        },
+
+        // Handle LiveView events (no longer needed since we use DOM-based state)
+        // handleEvent(event, payload) {
+        //   console.log("[ReviewHotkeys] Received event:", event, payload);
+        //   if (event === "split_mode_changed") {
+        //     this.splitMode = payload.split_mode;
+        //     console.log("[ReviewHotkeys] Split mode changed to:", this.splitMode);
+        //
+        //     // Pause video when entering split mode
+        //     if (this.splitMode && this.videoPlayer && this.videoPlayer.video) {
+        //       this.videoPlayer.video.pause();
+        //       console.log("[ReviewHotkeys] Video paused for split mode");
+        //     }
+        //
+        //     // Update UI to indicate split mode
+        //     document.body.classList.toggle("split-mode-active", this.splitMode);
+        //     console.log("[ReviewHotkeys] Body class split-mode-active:", document.body.classList.contains("split-mode-active"));
+        //   }
+        // },
 
         // Reset armed state and button highlight
         _reset() {

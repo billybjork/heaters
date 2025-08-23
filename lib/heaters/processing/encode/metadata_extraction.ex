@@ -103,7 +103,7 @@ defmodule Heaters.Processing.Encode.MetadataExtraction do
   """
   @spec can_reuse_as_proxy?(map()) :: boolean()
   def can_reuse_as_proxy?(%{width: width, height: height})
-       when is_integer(width) and is_integer(height) do
+      when is_integer(width) and is_integer(height) do
     # Reuse if resolution is 1080p or lower (suitable for proxy)
     width <= 1920 and height <= 1080
   end

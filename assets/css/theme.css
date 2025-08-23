@@ -12,6 +12,7 @@
     --archive: #f56565;
     --group: #ed8936;
     --merge: #4299e1;
+    --split: #ffd700;
 }
 
 /* ------------- Dark mode ---------------------------------------------- */
@@ -86,6 +87,11 @@ html {
     color: #000;
 }
 
+.btn.split:hover {
+    background: var(--split);
+    color: #000;
+}
+
 /* ------------- Flash messages ----------------------------------------- */
 .flash {
     margin-top: var(--space-3);
@@ -116,6 +122,11 @@ html {
 
 .flash--group {
     background: var(--group);
+    color: #000;
+}
+
+.flash--split {
+    background: var(--split);
     color: #000;
 }
 

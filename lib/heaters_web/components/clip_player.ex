@@ -252,21 +252,34 @@ defmodule HeatersWeb.ClipPlayer do
           this.isLoading = false;
           this.isLoadingNewVideo = false;
           this.loadingSpinner = null;
+          this.frameNavigationMode = false; // Add frame navigation mode flag
 
           this.init();
         }
 
         init() {
           this.setupLoadingSpinner();
+          this.setupFrameNavigationEvents();
+
+          // Store bound handlers so we can remove them later
+          this.boundHandlers = {
+            loadstart: this.handleLoadStart.bind(this),
+            loadedmetadata: this.handleLoadedMetadata.bind(this),
+            canplay: this.handleCanPlay.bind(this),
+            canplaythrough: this.handleCanPlayThrough.bind(this),
+            waiting: this.handleWaiting.bind(this),
+            error: this.handleError.bind(this),
+            ended: this.handleEnded.bind(this)
+          };
 
           // Add event listeners for clip playback behavior
-          this.video.addEventListener('loadstart', this.handleLoadStart.bind(this));
-          this.video.addEventListener('loadedmetadata', this.handleLoadedMetadata.bind(this));
-          this.video.addEventListener('canplay', this.handleCanPlay.bind(this));
-          this.video.addEventListener('canplaythrough', this.handleCanPlayThrough.bind(this));
-          this.video.addEventListener('waiting', this.handleWaiting.bind(this));
-          this.video.addEventListener('error', this.handleError.bind(this));
-          this.video.addEventListener('ended', this.handleEnded.bind(this));
+          this.video.addEventListener('loadstart', this.boundHandlers.loadstart);
+          this.video.addEventListener('loadedmetadata', this.boundHandlers.loadedmetadata);
+          this.video.addEventListener('canplay', this.boundHandlers.canplay);
+          this.video.addEventListener('canplaythrough', this.boundHandlers.canplaythrough);
+          this.video.addEventListener('waiting', this.boundHandlers.waiting);
+          this.video.addEventListener('error', this.boundHandlers.error);
+          this.video.addEventListener('ended', this.boundHandlers.ended);
 
           console.log('[ClipPlayer] Initialized with colocated hooks');
         }
@@ -280,6 +293,30 @@ defmodule HeatersWeb.ClipPlayer do
           if (!this.loadingSpinner) {
             console.warn('[ClipPlayer] Loading spinner not found in template');
           }
+        }
+
+        setupFrameNavigationEvents() {
+          // Listen for frame navigation events from other hooks
+          this.handleFrameNavigationRequest = (event) => {
+            console.log('[ClipPlayer] Received frame-navigation-request event:', event.detail);
+            const { direction, frameStep } = event.detail;
+            this.navigateFrames(direction, frameStep);
+          };
+
+          this.handleFrameNavigationToggle = (event) => {
+            console.log('[ClipPlayer] Received frame-navigation-toggle event:', event.detail);
+            const { enabled } = event.detail;
+            if (enabled) {
+              this.enableFrameNavigationMode();
+            } else {
+              this.disableFrameNavigationMode();
+            }
+          };
+
+          this.video.addEventListener('frame-navigation-request', this.handleFrameNavigationRequest);
+          this.video.addEventListener('frame-navigation-toggle', this.handleFrameNavigationToggle);
+          
+          console.log('[ClipPlayer] Frame navigation events registered on video element:', this.video);
         }
 
         async loadVideo(videoUrl, playerType = 'ffmpeg_stream', clipInfo = null) {
@@ -331,8 +368,10 @@ defmodule HeatersWeb.ClipPlayer do
 
         handleLoadedMetadata() {
           console.log('[ClipPlayer] Metadata loaded - clip ready');
+          
           if (this.playerType === 'direct_s3' && this.video.currentTime > 0.01 &&
               this.video.dataset.clipOffsetReset !== '1') {
+            console.log('[ClipPlayer] Resetting video time to 0 for direct_s3 player');
             this.video.currentTime = 0;
             this.video.dataset.clipOffsetReset = '1';
           }
@@ -454,6 +493,106 @@ defmodule HeatersWeb.ClipPlayer do
           this.video.currentTime = Math.max(0, Math.min(this.video.duration || 0, timeSeconds));
         }
 
+        // Enable frame navigation mode - completely disables automatic behaviors
+        enableFrameNavigationMode() {
+          if (this.frameNavigationMode) return; // Already enabled
+          
+          console.log('[ClipPlayer] Entering frame navigation mode - disabling automatic behaviors');
+          this.frameNavigationMode = true;
+          
+          // Pause and save current state
+          this.video.pause();
+          this.savedCurrentTime = this.video.currentTime;
+          
+          // Disable automatic behaviors by removing event listeners temporarily
+          this.disableAutomaticBehaviors();
+        }
+
+        // Disable frame navigation mode - re-enables automatic behaviors  
+        disableFrameNavigationMode() {
+          if (!this.frameNavigationMode) return; // Already disabled
+          
+          console.log('[ClipPlayer] Exiting frame navigation mode - re-enabling automatic behaviors');
+          this.frameNavigationMode = false;
+          
+          // Re-enable automatic behaviors
+          this.enableAutomaticBehaviors();
+          
+          // Resume normal playback
+          this.attemptAutoplay();
+        }
+
+        // Temporarily disable event handlers that interfere with frame navigation
+        disableAutomaticBehaviors() {
+          // Remove interfering handlers using the stored bound references
+          this.video.removeEventListener('loadedmetadata', this.boundHandlers.loadedmetadata);
+          this.video.removeEventListener('canplay', this.boundHandlers.canplay);
+          this.video.removeEventListener('canplaythrough', this.boundHandlers.canplaythrough); 
+          this.video.removeEventListener('ended', this.boundHandlers.ended);
+          
+          console.log('[ClipPlayer] Automatic behaviors disabled');
+        }
+
+        // Re-enable automatic behaviors
+        enableAutomaticBehaviors() {
+          // Restore event handlers using the stored bound references
+          this.video.addEventListener('loadedmetadata', this.boundHandlers.loadedmetadata);
+          this.video.addEventListener('canplay', this.boundHandlers.canplay);
+          this.video.addEventListener('canplaythrough', this.boundHandlers.canplaythrough);
+          this.video.addEventListener('ended', this.boundHandlers.ended);
+          
+          console.log('[ClipPlayer] Automatic behaviors re-enabled');
+        }
+
+        // Frame-accurate seeking for navigation
+        seekToFrame(timeSeconds) {
+          this.enableFrameNavigationMode();
+          
+          // Pause video to prevent interference
+          this.video.pause();
+          
+          // Set time directly
+          this.video.currentTime = Math.max(0, Math.min(this.video.duration || 0, timeSeconds));
+          
+          // Use seeking event to confirm the seek completed
+          const onSeeked = () => {
+            this.video.removeEventListener('seeked', onSeeked);
+            console.log('[ClipPlayer] Frame seek completed to:', this.video.currentTime);
+            
+            // Keep frame navigation mode active until explicitly disabled
+          };
+          
+          this.video.addEventListener('seeked', onSeeked, { once: true });
+          
+          return this.video.currentTime;
+        }
+
+        // Navigate frames in the specified direction
+        navigateFrames(direction, frameStep = 3) {
+          console.log(`[ClipPlayer] navigateFrames called: direction=${direction}, frameStep=${frameStep}`);
+          
+          // Ensure frame navigation mode is enabled
+          this.enableFrameNavigationMode();
+          
+          // Calculate frame step (default 3 frames = 0.1 seconds at 30fps for visible navigation)
+          const frameStepSeconds = frameStep / 30;
+          const currentTime = this.video.currentTime;
+          const newTime = direction === 'left' || direction === 'backward'
+            ? Math.max(0, currentTime - frameStepSeconds)
+            : Math.min(this.video.duration || 0, currentTime + frameStepSeconds);
+          
+          console.log(`[ClipPlayer] Frame navigation (${frameStep} frames) from ${currentTime.toFixed(3)}s to ${newTime.toFixed(3)}s (${direction})`);
+          
+          // Direct time setting - no interference since event handlers are disabled
+          this.video.currentTime = newTime;
+          
+          // Immediate verification
+          const actualTime = this.video.currentTime;
+          console.log(`[ClipPlayer] Frame navigation result: ${actualTime.toFixed(3)}s (target: ${newTime.toFixed(3)}s)`);
+          
+          return actualTime;
+        }
+
         getCurrentTime() {
           return this.video.currentTime;
         }
@@ -489,14 +628,25 @@ defmodule HeatersWeb.ClipPlayer do
             // Ignore errors during destruction
           }
 
-          // Remove event listeners
-          this.video.removeEventListener('loadstart', this.handleLoadStart);
-          this.video.removeEventListener('loadedmetadata', this.handleLoadedMetadata);
-          this.video.removeEventListener('canplay', this.handleCanPlay);
-          this.video.removeEventListener('canplaythrough', this.handleCanPlayThrough);
-          this.video.removeEventListener('waiting', this.handleWaiting);
-          this.video.removeEventListener('error', this.handleError);
-          this.video.removeEventListener('ended', this.handleEnded);
+          // If in frame navigation mode, restore event handlers before cleanup
+          if (this.frameNavigationMode) {
+            this.enableAutomaticBehaviors();
+          }
+
+          // Remove event listeners using bound handlers
+          if (this.boundHandlers) {
+            this.video.removeEventListener('loadstart', this.boundHandlers.loadstart);
+            this.video.removeEventListener('loadedmetadata', this.boundHandlers.loadedmetadata);
+            this.video.removeEventListener('canplay', this.boundHandlers.canplay);
+            this.video.removeEventListener('canplaythrough', this.boundHandlers.canplaythrough);
+            this.video.removeEventListener('waiting', this.boundHandlers.waiting);
+            this.video.removeEventListener('error', this.boundHandlers.error);
+            this.video.removeEventListener('ended', this.boundHandlers.ended);
+          }
+
+          // Remove frame navigation event listeners
+          this.video.removeEventListener('frame-navigation-request', this.handleFrameNavigationRequest);
+          this.video.removeEventListener('frame-navigation-toggle', this.handleFrameNavigationToggle);
 
           if (this.loadingSpinner) {
             this.hideLoading();
@@ -564,6 +714,8 @@ defmodule HeatersWeb.ClipPlayer do
       has_exported_file: false,
       is_loading: true,
       clip_id: clip.id,
+      start_frame: clip.start_frame,
+      end_frame: clip.end_frame,
       start_time_seconds: clip.start_time_seconds,
       end_time_seconds: clip.end_time_seconds,
       duration_seconds: clip.end_time_seconds - clip.start_time_seconds
@@ -575,6 +727,8 @@ defmodule HeatersWeb.ClipPlayer do
       has_exported_file: false,
       is_loading: false,
       clip_id: clip.id,
+      start_frame: clip.start_frame,
+      end_frame: clip.end_frame,
       start_time_seconds: clip.start_time_seconds,
       end_time_seconds: clip.end_time_seconds,
       duration_seconds: clip.end_time_seconds - clip.start_time_seconds
@@ -585,7 +739,9 @@ defmodule HeatersWeb.ClipPlayer do
     %{
       has_exported_file: true,
       is_loading: false,
-      clip_id: clip.id
+      clip_id: clip.id,
+      start_frame: clip.start_frame,
+      end_frame: clip.end_frame
     }
   end
 

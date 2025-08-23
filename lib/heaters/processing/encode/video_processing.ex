@@ -50,7 +50,8 @@ defmodule Heaters.Processing.Encode.VideoProcessing do
       case File.cp(source_path, proxy_local_path) do
         :ok ->
           # Extract keyframes from the reused proxy
-          keyframe_offsets = MetadataExtraction.extract_keyframe_offsets(proxy_local_path, operation_name)
+          keyframe_offsets =
+            MetadataExtraction.extract_keyframe_offsets(proxy_local_path, operation_name)
 
           {:ok,
            %{
@@ -128,7 +129,15 @@ defmodule Heaters.Processing.Encode.VideoProcessing do
   # Private helper functions
 
   # Create encoded video using FFmpeg with progress reporting
-  @spec create_encoded_video(String.t(), String.t(), String.t(), map(), atom(), String.t(), String.t()) ::
+  @spec create_encoded_video(
+          String.t(),
+          String.t(),
+          String.t(),
+          map(),
+          atom(),
+          String.t(),
+          String.t()
+        ) ::
           video_result()
   defp create_encoded_video(
          source_path,
@@ -147,11 +156,18 @@ defmodule Heaters.Processing.Encode.VideoProcessing do
     # Build FFmpeg command using configuration
     command = build_ffmpeg_command(source_path, local_output_path, config)
 
-    case execute_ffmpeg_with_progress(command, duration, "#{String.capitalize(video_type)} Creation", operation_name) do
+    case execute_ffmpeg_with_progress(
+           command,
+           duration,
+           "#{String.capitalize(video_type)} Creation",
+           operation_name
+         ) do
       {:ok, _} ->
         case File.stat(local_output_path) do
           {:ok, %File.Stat{size: file_size}} when file_size > 0 ->
-            Logger.info("#{operation_name}: #{String.capitalize(video_type)} created successfully: #{file_size} bytes")
+            Logger.info(
+              "#{operation_name}: #{String.capitalize(video_type)} created successfully: #{file_size} bytes"
+            )
 
             result = %{
               local_path: local_output_path,
@@ -176,13 +192,15 @@ defmodule Heaters.Processing.Encode.VideoProcessing do
   # Add keyframe offsets to proxy result
   @spec add_keyframe_offsets(video_result(), String.t()) :: video_result()
   defp add_keyframe_offsets({:ok, result}, operation_name) do
-    keyframe_offsets = MetadataExtraction.extract_keyframe_offsets(result.local_path, operation_name)
-    
-    updated_result = Map.merge(result, %{
-      keyframe_offsets: keyframe_offsets,
-      reused_source: false
-    })
-    
+    keyframe_offsets =
+      MetadataExtraction.extract_keyframe_offsets(result.local_path, operation_name)
+
+    updated_result =
+      Map.merge(result, %{
+        keyframe_offsets: keyframe_offsets,
+        reused_source: false
+      })
+
     {:ok, updated_result}
   end
 

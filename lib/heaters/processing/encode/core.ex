@@ -28,6 +28,7 @@ defmodule Heaters.Processing.Encode.Core do
   require Logger
 
   alias Heaters.Processing.Support.Types.EncodeResult
+
   alias Heaters.Processing.Encode.{
     FileOperations,
     MetadataExtraction,
@@ -102,10 +103,12 @@ defmodule Heaters.Processing.Encode.Core do
       "#{operation_name}: Master profile: #{master_profile}, Proxy profile: #{proxy_profile}"
     )
 
-    with {:ok, work_dir} <- FileOperations.setup_temp_directory(Keyword.get(opts, :temp_dir), operation_name),
+    with {:ok, work_dir} <-
+           FileOperations.setup_temp_directory(Keyword.get(opts, :temp_dir), operation_name),
          {:ok, local_source_path} <-
            FileOperations.get_local_source_video(source_video_path, work_dir, operation_name),
-         {:ok, source_metadata} <- MetadataExtraction.extract_source_metadata(local_source_path, operation_name),
+         {:ok, source_metadata} <-
+           MetadataExtraction.extract_source_metadata(local_source_path, operation_name),
          {:ok, proxy_info} <-
            VideoProcessing.create_proxy_file(
              local_source_path,

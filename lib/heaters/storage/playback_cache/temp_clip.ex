@@ -75,11 +75,11 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
   # Handle clip without preloaded source_video
   def build(%{id: id} = _clip) do
     Logger.debug("TempClip: Loading source_video for clip #{id}")
-    
+
     case Repo.get(Heaters.Media.Clip, id) do
       nil ->
         {:error, "Clip not found"}
-      
+
       clip ->
         loaded_clip = Repo.preload(clip, :source_video)
         build(loaded_clip)
@@ -104,12 +104,13 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
   def build_batch(clips) when is_list(clips) do
     Logger.info("TempClip: Building #{length(clips)} temp clips in batch")
 
-    results = Enum.map(clips, fn clip ->
-      case build(clip) do
-        {:ok, url} -> %{clip_id: clip.id, url: url, status: :success}
-        {:error, reason} -> %{clip_id: clip.id, error: reason, status: :error}
-      end
-    end)
+    results =
+      Enum.map(clips, fn clip ->
+        case build(clip) do
+          {:ok, url} -> %{clip_id: clip.id, url: url, status: :success}
+          {:error, reason} -> %{clip_id: clip.id, error: reason, status: :error}
+        end
+      end)
 
     successful = Enum.count(results, fn result -> result.status == :success end)
     failed = length(results) - successful

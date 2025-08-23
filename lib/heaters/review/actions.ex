@@ -66,56 +66,60 @@ defmodule Heaters.Review.Actions do
       end
 
       # For group actions, skip the SQL update since it's handled by handle_group_action
-      {rows, _} = 
+      {rows, _} =
         if db_action == "selected_group_source" do
           # Group actions are handled entirely by handle_group_action, just fetch next clip
-          {:ok, %{rows: rows}} = Repo.query(
-            """
-            SELECT id
-            FROM   clips
-            WHERE  ingest_state = 'pending_review'
-              AND  reviewed_at IS NULL
-            ORDER  BY id
-            LIMIT  1
-            FOR UPDATE SKIP LOCKED;
-            """,
-            []
-          )
+          {:ok, %{rows: rows}} =
+            Repo.query(
+              """
+              SELECT id
+              FROM   clips
+              WHERE  ingest_state = 'pending_review'
+                AND  reviewed_at IS NULL
+              ORDER  BY id
+              LIMIT  1
+              FOR UPDATE SKIP LOCKED;
+              """,
+              []
+            )
+
           {rows, nil}
         else
           # Normal actions go through the SQL update
-          {:ok, %{rows: rows}} = Repo.query(
-            """
-            WITH upd AS (
-              UPDATE clips
-              SET    reviewed_at = CASE WHEN $1 = 'selected_undo'
-                                        THEN NULL
-                                        ELSE NOW()
-                                   END,
-                     ingest_state = CASE WHEN $1 = 'selected_approve'
-                                         THEN 'review_approved'
-                                         WHEN $1 = 'selected_archive'
-                                         THEN 'review_archived'
-                                         WHEN $1 = 'selected_skip'
-                                         THEN 'review_skipped'
-                                         WHEN $1 = 'selected_undo'
-                                         THEN 'pending_review'
-                                         WHEN $1 = 'selected_merge'
-                                         THEN 'review_archived'
-                                         ELSE ingest_state
-                                    END
-              WHERE  id = $2
+          {:ok, %{rows: rows}} =
+            Repo.query(
+              """
+              WITH upd AS (
+                UPDATE clips
+                SET    reviewed_at = CASE WHEN $1 = 'selected_undo'
+                                          THEN NULL
+                                          ELSE NOW()
+                                     END,
+                       ingest_state = CASE WHEN $1 = 'selected_approve'
+                                           THEN 'review_approved'
+                                           WHEN $1 = 'selected_archive'
+                                           THEN 'review_archived'
+                                           WHEN $1 = 'selected_skip'
+                                           THEN 'review_skipped'
+                                           WHEN $1 = 'selected_undo'
+                                           THEN 'pending_review'
+                                           WHEN $1 = 'selected_merge'
+                                           THEN 'review_archived'
+                                           ELSE ingest_state
+                                      END
+                WHERE  id = $2
+              )
+              SELECT id
+              FROM   clips
+              WHERE  ingest_state = 'pending_review'
+                AND  reviewed_at IS NULL
+              ORDER  BY id
+              LIMIT  1
+              FOR UPDATE SKIP LOCKED;
+              """,
+              [db_action, clip_id]
             )
-            SELECT id
-            FROM   clips
-            WHERE  ingest_state = 'pending_review'
-              AND  reviewed_at IS NULL
-            ORDER  BY id
-            LIMIT  1
-            FOR UPDATE SKIP LOCKED;
-            """,
-            [db_action, clip_id]
-          )
+
           {rows, nil}
         end
 
@@ -235,11 +239,12 @@ defmodule Heaters.Review.Actions do
     case Repo.get(Clip, clip_id) do
       %Clip{} = current_clip ->
         # Find the preceding clip that ends where this clip starts
-        preceding_clip = 
+        preceding_clip =
           from(c in Clip,
-            where: c.source_video_id == ^current_clip.source_video_id and
-                   c.ingest_state != :archived and
-                   c.end_frame == ^current_clip.start_frame
+            where:
+              c.source_video_id == ^current_clip.source_video_id and
+                c.ingest_state != :archived and
+                c.end_frame == ^current_clip.start_frame
           )
           |> Repo.one()
 
@@ -251,6 +256,7 @@ defmodule Heaters.Review.Actions do
                 Logger.info(
                   "Review: Successfully grouped clip #{clip_id} with preceding clip #{prev_clip.id}"
                 )
+
                 :ok
 
               {:error, reason} ->
