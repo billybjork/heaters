@@ -241,6 +241,8 @@ defmodule HeatersWeb.ReviewLive do
     {:noreply, socket}
   end
 
+  # Direct ClipPlayer control - no LiveView events needed
+
   @impl true
   def handle_event(
         "split_at_frame",
@@ -329,6 +331,7 @@ defmodule HeatersWeb.ReviewLive do
   # -------------------------------------------------------------------------
   # Background prefetch helpers
   # -------------------------------------------------------------------------
+
 
   defp trigger_background_prefetch(clips) when is_list(clips) do
     # Only prefetch clips without exported files in development (where sync generation causes delays)
@@ -585,6 +588,7 @@ defmodule HeatersWeb.ReviewLive do
     {:noreply, push_event(socket, "temp_clip_error", %{clip_id: clip_id, error: error})}
   end
 
+
   # -------------------------------------------------------------------------
   # Pending actions management
   # -------------------------------------------------------------------------
@@ -813,24 +817,16 @@ defmodule HeatersWeb.ReviewLive do
               const isCurrentlyInSplitMode = mainElement?.classList.contains("split-mode-active");
 
               if (!isCurrentlyInSplitMode) {
-                // Not in split mode - enter it first
+                // Enter split mode and control ClipPlayer directly
                 console.log("[ReviewHotkeys] Arrow key pressed - entering split mode");
                 this.pushEvent("toggle_split_mode", {});
-
-                const video = document.querySelector(".video-player");
-                if (video) {
-                  // Nuclear option: completely disable ClipPlayer
-                  this._disableClipPlayer(video);
-                  video.pause();
-                  console.log("[ReviewHotkeys] ClipPlayer disabled, video paused for split mode");
-                }
-
+                this._enterSplitMode();
                 e.preventDefault();
                 return;
               }
 
-              // Already in split mode - handle frame navigation
-              this._handleArrowNavigation(k);
+              // Already in split mode - navigate frames directly
+              this._navigateFrames(k === "arrowleft" ? "backward" : "forward");
               e.preventDefault();
               return;
             }
@@ -900,16 +896,9 @@ defmodule HeatersWeb.ReviewLive do
           
           if (event === "split_mode_changed") {
             if (!payload.split_mode) {
-              // Exiting split mode - re-enable ClipPlayer and resume video
-              console.log("[ReviewHotkeys] Exiting split mode - re-enabling ClipPlayer");
-              this._enableClipPlayer();
-              
-              const video = document.querySelector(".video-player");
-              if (video) {
-                video.play().catch(error => {
-                  console.log("[ReviewHotkeys] Failed to resume playback:", error);
-                });
-              }
+              // Exiting split mode - restore ClipPlayer
+              console.log("[ReviewHotkeys] Exiting split mode - restoring ClipPlayer");
+              this._exitSplitMode();
             }
             
             this.splitMode = payload.split_mode;
@@ -923,174 +912,33 @@ defmodule HeatersWeb.ReviewLive do
           return mainElement?.classList.contains("split-mode-active") || false;
         },
 
-        // Handle arrow key frame navigation in split mode
-        _handleArrowNavigation(k) {
-          console.log("[ReviewHotkeys] Direct frame navigation:", k);
-          
+        // Simple direct ClipPlayer control methods
+        _enterSplitMode() {
+          console.log("[ReviewHotkeys] Entering split mode - finding ClipPlayer");
           const video = document.querySelector(".video-player");
-          if (!video) {
-            console.log("[ReviewHotkeys] No video element found");
-            return;
-          }
-          
-          // Direct frame navigation - bypass ClipPlayer completely
-          const direction = k === "arrowleft" ? "left" : "right";
-          const frameStep = 3; // 3 frames for visible navigation
-          const frameStepSeconds = frameStep / 30; // 30fps
-          
-          const currentTime = video.currentTime;
-          const newTime = direction === "left" 
-            ? Math.max(0, currentTime - frameStepSeconds)
-            : Math.min(video.duration || 0, currentTime + frameStepSeconds);
-          
-          console.log(`[ReviewHotkeys] Direct navigation (${frameStep} frames) from ${currentTime.toFixed(3)}s to ${newTime.toFixed(3)}s (${direction})`);
-          
-          // Pause video and set time directly - no events, no ClipPlayer
-          video.pause();
-          
-          // Try multiple approaches to ensure the time sticks
-          this._forceVideoTime(video, newTime);
-        },
-
-        // Force video time with ClipPlayer completely bypassed
-        _forceVideoTime(video, targetTime) {
-          console.log(`[ReviewHotkeys] Force video time to: ${targetTime.toFixed(3)}s`);
-          
-          // Ensure ClipPlayer is disabled first
-          this._disableClipPlayer(video);
-          
-          // Only set time if video is ready and has duration
-          if (video.readyState >= 1 && video.duration > 0) {
-            // Approach 1: Direct time setting with event prevention
-            console.log(`[ReviewHotkeys] Video ready state: ${video.readyState}, duration: ${video.duration}s`);
-            
-            // Remove all event listeners that might interfere
-            const allEvents = ['loadstart', 'loadedmetadata', 'loadeddata', 'canplay', 'canplaythrough', 'timeupdate', 'seeking', 'seeked', 'ended'];
-            const eventClone = video.cloneNode(true);
-            
-            // Set up the cloned video with desired time and prevent ClipPlayer interference
-            eventClone.currentTime = targetTime;
-            eventClone.pause();
-            eventClone._clipPlayerDisabled = true;
-            eventClone._originalPhxHook = video._originalPhxHook;
-            eventClone.dataset.clipOffsetReset = '1'; // Prevent ClipPlayer time reset
-            
-            // Replace the video element
-            video.parentNode.replaceChild(eventClone, video);
-            
-            // Force time setting with multiple attempts
-            this._ensureVideoTime(eventClone, targetTime);
-            
+          if (video && video._clipPlayer) {
+            video._clipPlayer.enterSplitMode();
+            console.log("[ReviewHotkeys] ClipPlayer enterSplitMode called");
           } else {
-            console.log(`[ReviewHotkeys] Video not ready (readyState: ${video.readyState}, duration: ${video.duration}), waiting...`);
-            
-            // Wait for video to be ready, then set time
-            const waitForReady = () => {
-              if (video.readyState >= 1 && video.duration > 0) {
-                this._forceVideoTime(video, targetTime);
-              } else {
-                setTimeout(waitForReady, 50);
-              }
-            };
-            waitForReady();
+            console.log("[ReviewHotkeys] ClipPlayer not found or not ready");
           }
         },
-        
-        // Ensure video time sticks using multiple techniques
-        _ensureVideoTime(video, targetTime) {
-          const setTime = () => {
-            video.currentTime = targetTime;
-            console.log(`[ReviewHotkeys] Set video time to: ${video.currentTime.toFixed(3)}s`);
-          };
-          
-          // Immediate set
-          setTime();
-          
-          // Set again on next frame
-          requestAnimationFrame(() => {
-            setTime();
-            
-            // Set again after a short delay
-            setTimeout(() => {
-              setTime();
-              
-              // Final verification
-              setTimeout(() => {
-                const finalTime = video.currentTime;
-                console.log(`[ReviewHotkeys] Final verification - time: ${finalTime.toFixed(3)}s (target: ${targetTime.toFixed(3)}s)`);
-                
-                if (Math.abs(finalTime - targetTime) > 0.05) {
-                  console.log(`[ReviewHotkeys] Time drift detected, forcing again...`);
-                  video.currentTime = targetTime;
-                }
-              }, 100);
-            }, 50);
-          });
-        },
 
-        // Disable ClipPlayer by removing phx-hook attribute to prevent LiveView re-initialization
-        _disableClipPlayer(video) {
-          if (video._clipPlayerDisabled) return; // Already disabled
-          
-          console.log(`[ReviewHotkeys] Disabling ClipPlayer by removing phx-hook attribute`);
-          
-          // Store original phx-hook value and remove it to prevent LiveView re-initialization
-          video._originalPhxHook = video.getAttribute('phx-hook');
-          video.removeAttribute('phx-hook');
-          
-          // Prevent ClipPlayer's automatic time reset behavior
-          // This is crucial - ClipPlayer resets currentTime to 0 for direct_s3 players
-          video.dataset.clipOffsetReset = '1';
-          
-          // Store original event listeners and remove them
-          if (video._liveViewHook && video._liveViewHook.player) {
-            video._originalPlayer = video._liveViewHook.player;
-            
-            // Directly disable all automatic behaviors from the ClipPlayer
-            try {
-              video._originalPlayer.frameNavigationMode = true;
-              video._originalPlayer.disableAutomaticBehaviors();
-              console.log(`[ReviewHotkeys] ClipPlayer automatic behaviors disabled`);
-            } catch (error) {
-              console.log(`[ReviewHotkeys] Could not disable ClipPlayer behaviors:`, error);
-            }
-          }
-          
-          // Mark as disabled and pause video
-          video._clipPlayerDisabled = true;
-          video.pause();
-          
-          console.log(`[ReviewHotkeys] ClipPlayer disabled - phx-hook removed, video paused, offset reset flag set`);
-        },
-
-        // Re-enable ClipPlayer functionality by restoring phx-hook and triggering LiveView update
-        _enableClipPlayer() {
-          console.log(`[ReviewHotkeys] Re-enabling ClipPlayer functionality`);
-          
+        _exitSplitMode() {
+          console.log("[ReviewHotkeys] Exiting split mode - restoring ClipPlayer");
           const video = document.querySelector(".video-player");
-          if (video && video._clipPlayerDisabled) {
-            // Restore phx-hook attribute to re-enable LiveView hook
-            if (video._originalPhxHook) {
-              video.setAttribute('phx-hook', video._originalPhxHook);
-              delete video._originalPhxHook;
-            }
-            
-            // Remove disabled flag
-            delete video._clipPlayerDisabled;
-            
-            console.log(`[ReviewHotkeys] ClipPlayer re-enabled - phx-hook restored`);
-            
-            // Force LiveView to re-initialize the hook by triggering a minor DOM change
-            // This ensures ClipPlayer gets properly reattached after we disabled it
-            setTimeout(() => {
-              const container = video.parentElement;
-              if (container) {
-                // Toggle a data attribute to trigger LiveView update detection
-                const current = container.getAttribute('data-hook-refresh');
-                container.setAttribute('data-hook-refresh', current === 'true' ? 'false' : 'true');
-                console.log(`[ReviewHotkeys] Triggered DOM refresh to reinitialize ClipPlayer`);
-              }
-            }, 50);
+          if (video && video._clipPlayer) {
+            video._clipPlayer.exitSplitMode();
+            console.log("[ReviewHotkeys] ClipPlayer exitSplitMode called");
+          }
+        },
+
+        _navigateFrames(direction) {
+          console.log("[ReviewHotkeys] Navigating frames:", direction);
+          const video = document.querySelector(".video-player");
+          if (video && video._clipPlayer) {
+            video._clipPlayer.navigateFrames(direction);
+            console.log("[ReviewHotkeys] ClipPlayer navigateFrames called");
           }
         },
 
@@ -1098,9 +946,10 @@ defmodule HeatersWeb.ReviewLive do
         _handleSplitModeKeys(e, k) {
           console.log("[ReviewHotkeys] Split mode key handler:", k);
 
-          // Arrow keys for frame navigation
+          // Arrow keys for frame navigation directly
           if (k === "arrowleft" || k === "arrowright") {
-            this._handleArrowNavigation(k);
+            const direction = k === "arrowleft" ? "backward" : "forward";
+            this._navigateFrames(direction);
             e.preventDefault();
             return;
           }
@@ -1108,8 +957,8 @@ defmodule HeatersWeb.ReviewLive do
           // Escape exits split mode
           if (e.key === "Escape") {
             console.log("[ReviewHotkeys] Escape key - exiting split mode");
-            
             this.pushEvent("toggle_split_mode", {});
+            this._exitSplitMode();
             e.preventDefault();
             return;
           }

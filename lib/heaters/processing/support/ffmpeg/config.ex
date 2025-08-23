@@ -410,6 +410,7 @@ defmodule Heaters.Processing.Support.FFmpeg.Config do
     |> add_if_present(["-profile:v", video_config[:profile]])
     |> add_if_present(["-level", video_config[:level]])
     |> add_if_present(["-tune", video_config[:tune]])
+    |> add_if_present(["-force_key_frames", video_config[:force_key_frames]])
     |> add_if_present(["-coder", video_config[:coder]])
     |> add_if_present(["-context", video_config[:context]])
     |> add_if_present(["-slices", video_config[:slices]])

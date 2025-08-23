@@ -6,6 +6,7 @@ import { LiveSocket } from "phoenix_live_view"
 import { hooks as colocatedHooks } from "phoenix-colocated/heaters"
 
 import { HoverPlay, ThumbHoverPlayer } from "./hover-play";
+import ClipPlayer from "./clip_player_hook";
 
 // Pull the CSRF token from the page
 let csrfToken = document
@@ -16,7 +17,8 @@ let csrfToken = document
 let Hooks = {
   HoverPlay,
   ThumbHoverPlayer,
-  // Merge colocated hooks (includes .ClipPlayer and .ReviewHotkeys)
+  ClipPlayer,
+  // Merge colocated hooks (includes .ReviewHotkeys)
   ...colocatedHooks
 }
 
