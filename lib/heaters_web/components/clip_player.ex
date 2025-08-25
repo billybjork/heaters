@@ -1,27 +1,20 @@
 defmodule HeatersWeb.ClipPlayer do
   @moduledoc """
-  Phoenix LiveView component for clip playback using colocated hooks architecture.
+  Phoenix LiveView component for clip playback with frame-accurate navigation.
 
-  This is a **single-file component** that demonstrates Phoenix LiveView 1.1's
-  colocated hooks feature. All JavaScript functionality is embedded directly in
-  this component file, eliminating the need for separate JS files.
+  This component provides video clip playback with precise frame stepping capabilities
+  for the review interface. It integrates with JavaScript hooks for advanced video
+  control and split-mode frame navigation.
 
   ## Key Features
 
-  - **Single-File Architecture**: Elixir, HEEx, and JavaScript in one file
-  - **Automatic Namespacing**: Hook name `.ClipPlayer` is prefixed with module name
   - **Instant Playback**: Small files (2-5MB) generated on-demand using FFmpeg stream copy
   - **Perfect Timeline**: Shows exact clip duration, not full video length
   - **Zero Re-encoding**: Stream copy ensures fastest generation with zero quality loss
+  - **Frame Navigation**: Precise frame-by-frame stepping using database FPS data
+  - **Split Mode**: Advanced editing with frame-accurate cut point selection
   - **Universal Compatibility**: Works offline, all browsers, mobile optimized
   - **Reactive Updates**: Phoenix LiveView patterns eliminate manual refresh
-
-  **Advantages**:
-  - Single source of truth for component behavior
-  - No import/export JavaScript module management
-  - Automatic compilation to `phoenix-colocated/heaters/` directory
-  - Built-in namespacing prevents hook name collisions
-  - Better maintainability with related code together
 
   ## Usage
 
@@ -30,22 +23,18 @@ defmodule HeatersWeb.ClipPlayer do
   The component automatically determines the appropriate video URL and player type
   based on the clip's properties and generates files as needed.
 
-  ## Colocated Hook Implementation
+  ## JavaScript Hook Integration
 
-  The JavaScript functionality is embedded using LiveView 1.1's ColocatedHook:
+  The component uses the `ClipPlayer` JavaScript hook (defined in `assets/js/clip-player-hook.js`)
+  for advanced video control including:
 
-  ```elixir
-  <script :type={ColocatedHook} name=".ClipPlayer">
-    export default {
-      mounted() { /* Hook lifecycle */ },
-      updated() { /* React to LiveView updates */ },
-      destroyed() { /* Cleanup */ }
-    }
-  </script>
-  ```
+  - Frame-by-frame navigation in split mode
+  - Precise seeking with browser compatibility layers
+  - Video loading state management
+  - Split mode entry/exit coordination with ReviewHotkeys
 
-  This replaces the previous separate JavaScript files while maintaining identical
-  functionality with improved maintainability and automatic namespacing.
+  The hook receives clip metadata including FPS data from the database for
+  accurate frame calculations.
   """
 
   use Phoenix.Component
@@ -140,8 +129,6 @@ defmodule HeatersWeb.ClipPlayer do
           </section>
       <% end %>
     </figure>
-
-    <!-- ClipPlayer now uses regular JavaScript hook -->
     """
   end
 
@@ -189,6 +176,9 @@ defmodule HeatersWeb.ClipPlayer do
   # Build clip information for the JavaScript player
   # Each clip is treated as a standalone file
   defp build_clip_info(%{clip_filepath: nil} = clip, :loading) do
+    # Get fps from source video for precise frame navigation
+    fps = get_source_video_fps(clip)
+
     %{
       has_exported_file: false,
       is_loading: true,
@@ -197,11 +187,15 @@ defmodule HeatersWeb.ClipPlayer do
       end_frame: clip.end_frame,
       start_time_seconds: clip.start_time_seconds,
       end_time_seconds: clip.end_time_seconds,
-      duration_seconds: clip.end_time_seconds - clip.start_time_seconds
+      duration_seconds: clip.end_time_seconds - clip.start_time_seconds,
+      fps: fps
     }
   end
 
   defp build_clip_info(%{clip_filepath: nil} = clip, _player_type) do
+    # Get fps from source video for precise frame navigation
+    fps = get_source_video_fps(clip)
+
     %{
       has_exported_file: false,
       is_loading: false,
@@ -210,19 +204,29 @@ defmodule HeatersWeb.ClipPlayer do
       end_frame: clip.end_frame,
       start_time_seconds: clip.start_time_seconds,
       end_time_seconds: clip.end_time_seconds,
-      duration_seconds: clip.end_time_seconds - clip.start_time_seconds
+      duration_seconds: clip.end_time_seconds - clip.start_time_seconds,
+      fps: fps
     }
   end
 
   defp build_clip_info(%{clip_filepath: _filepath} = clip, _player_type) do
+    # Get fps from source video for precise frame navigation
+    fps = get_source_video_fps(clip)
+
     %{
       has_exported_file: true,
       is_loading: false,
       clip_id: clip.id,
       start_frame: clip.start_frame,
-      end_frame: clip.end_frame
+      end_frame: clip.end_frame,
+      fps: fps
     }
   end
+
+  # Helper to extract FPS from source video, with fallback
+  defp get_source_video_fps(%{source_video: %{fps: fps}}) when is_number(fps) and fps > 0, do: fps
+  # Fallback FPS if not available
+  defp get_source_video_fps(_clip), do: 30.0
 
   @doc """
   Helper function to get clip video URL for preloading.

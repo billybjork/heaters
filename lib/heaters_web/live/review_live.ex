@@ -230,13 +230,6 @@ defmodule HeatersWeb.ReviewLive do
       |> assign(split_mode: new_split_mode)
       |> push_event("split_mode_changed", %{split_mode: new_split_mode})
 
-    flash_message =
-      if new_split_mode,
-        do: "Split mode active - use ←/→ arrows to navigate frames, Enter to split",
-        else: "Split mode disabled"
-
-    socket = put_flash(socket, :info, flash_message)
-
     {:noreply, socket}
   end
 

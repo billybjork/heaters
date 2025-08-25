@@ -22,7 +22,7 @@ defmodule HeatersWeb.Router do
     live("/query", QueryLive)
     post("/submit_video", VideoController, :create)
 
-    # Serve temporary clip files in development
+    # Serve temporary clip files with HTTP range support
     get("/temp/:filename", VideoController, :serve_temp_file)
   end
 

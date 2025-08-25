@@ -20,9 +20,8 @@ defmodule Heaters.Processing.Support.FFmpeg.Config do
   **Proxy**: Optimized for internal review UI with significant file size reduction:
   - Resolution capped at 720p for smaller files
   - CRF 28 for acceptable quality with major size reduction
-  - Fast preset for quick encoding during temp clip generation
-  - Optional audio muting for ultimate efficiency
   - All I-frame encoding preserved for frame-by-frame navigation
+  - Used as source for instant temp clip generation via stream copy
 
   **Export Strategy**: Final clips are created via FFmpeg stream copy from proxy,
   providing fast processing optimized for internal review workflows.
@@ -297,21 +296,21 @@ defmodule Heaters.Processing.Support.FFmpeg.Config do
         container: "image2"
       },
 
-      # Temporary clip generation for instant playback using stream copy
+      # Temporary clip generation for instant playback and split-mode navigation
+      # Uses stream copy from all-I proxies; no re-encode
       temp_playback: %{
-        purpose: "Temporary clip generation for instant playback in browser",
-        optimization: "Ultra-fast stream copy with browser compatibility",
+        purpose: "Temp clip for review (split-mode ready)",
+        optimization: "Stream copy from proxy; instant and seekable",
         video: %{
-          # Stream copy for maximum speed (no re-encoding)
-          codec: "copy"
+          codec: "copy",
+          # don't force CFR; use DB fps only if you *need* to re-encode someday
+          framerate: nil
         },
-        # No audio for temp clips to avoid decode issues
+        # keep temp clips silent to save bytes
         no_audio: true,
         container: "mp4",
         web_optimization: %{
-          # Optimize for instant playback
           movflags: "+faststart",
-          # Clean timestamps for browser compatibility
           avoid_negative_ts: "make_zero"
         }
       },
@@ -350,6 +349,7 @@ defmodule Heaters.Processing.Support.FFmpeg.Config do
     |> maybe_update_audio_bitrate(opts[:audio_bitrate])
     |> maybe_update_threads(opts[:threads])
     |> maybe_disable_audio(opts[:no_audio])
+    |> maybe_set_framerate(opts[:fps])
   end
 
   defp maybe_update_crf(config, nil), do: config
@@ -386,6 +386,18 @@ defmodule Heaters.Processing.Support.FFmpeg.Config do
     |> Map.put(:no_audio, true)
   end
 
+  defp maybe_set_framerate(config, nil), do: config
+
+  defp maybe_set_framerate(config, fps) when is_number(fps) do
+    # Don't set framerate for stream copy - it can cause issues
+    if get_in(config, [:video, :codec]) == "copy" do
+      config
+    else
+      fps_float = if is_integer(fps), do: fps * 1.0, else: fps
+      put_in(config, [:video, :framerate], to_string(Float.round(fps_float, 3)))
+    end
+  end
+
   @spec build_ffmpeg_args(map()) :: [String.t()]
   defp build_ffmpeg_args(config) do
     []
@@ -401,6 +413,7 @@ defmodule Heaters.Processing.Support.FFmpeg.Config do
     |> add_if_present(["-c:v", video_config.codec])
     |> add_if_present(["-preset", video_config[:preset]])
     |> add_if_present(["-crf", video_config[:crf]])
+    |> add_if_present(["-r", video_config[:framerate]])
     |> add_scale_filter(video_config[:scale])
     |> add_if_present(["-pix_fmt", video_config[:pix_fmt]])
     |> add_if_present(["-g", video_config[:gop_size]])

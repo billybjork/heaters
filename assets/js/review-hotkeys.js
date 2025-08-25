@@ -34,12 +34,16 @@ export default {
         this.btn = null;             // highlighted button element
         this.splitMode = false;            // whether split mode is active
 
+        // Register LiveView event handler for split mode changes
+        // CRITICAL: Use this.handleEvent() not custom handleEvent method (causes conflicts)
+        this.handleEvent("split_mode_changed", (payload) => {
+            this._onSplitModeChanged(payload);
+        });
+
         // Key-down handler: manages arming keys and committing actions
         this._onKeyDown = (e) => {
             const tag = (e.target.tagName || "").toLowerCase();
             const k = e.key.toLowerCase();
-
-            console.log("[ReviewHotkeys] Key pressed:", k, "Split mode:", this.splitMode);
 
             // Let digits go into any input uninterrupted
             if (tag === "input") {
@@ -67,7 +71,6 @@ export default {
 
                 if (!isCurrentlyInSplitMode) {
                     // Enter split mode and control ClipPlayer directly
-                    console.log("[ReviewHotkeys] Arrow key pressed - entering split mode");
                     this.pushEvent("toggle_split_mode", {});
                     this._enterSplitMode();
                     e.preventDefault();
@@ -139,20 +142,18 @@ export default {
         window.removeEventListener("keyup", this._onKeyUp);
     },
 
-    // Handle LiveView events
-    handleEvent(event, payload) {
-        console.log("[ReviewHotkeys] Received event:", event, payload);
+    // Handle split mode change events from LiveView
+    _onSplitModeChanged(payload) {
+        console.log("[ReviewHotkeys] Received split_mode_changed event:", payload);
 
-        if (event === "split_mode_changed") {
-            if (!payload.split_mode) {
-                // Exiting split mode - restore ClipPlayer
-                console.log("[ReviewHotkeys] Exiting split mode - restoring ClipPlayer");
-                this._exitSplitMode();
-            }
-
-            this.splitMode = payload.split_mode;
-            console.log("[ReviewHotkeys] Split mode updated from LiveView:", this.splitMode);
+        if (!payload.split_mode) {
+            // Exiting split mode - restore ClipPlayer
+            console.log("[ReviewHotkeys] Exiting split mode - restoring ClipPlayer");
+            this._exitSplitMode();
         }
+
+        this.splitMode = payload.split_mode;
+        console.log("[ReviewHotkeys] Split mode updated from LiveView:", this.splitMode);
     },
 
     // Check current split mode from DOM (more reliable than internal state)
@@ -183,17 +184,14 @@ export default {
     },
 
     _navigateFrames(direction) {
-        console.log("[ReviewHotkeys] Navigating frames:", direction);
         const video = document.querySelector(".video-player");
         if (video && video._clipPlayer) {
             video._clipPlayer.navigateFrames(direction);
-            console.log("[ReviewHotkeys] ClipPlayer navigateFrames called");
         }
     },
 
     // Handle split mode keyboard navigation
     _handleSplitModeKeys(e, k) {
-        console.log("[ReviewHotkeys] Split mode key handler:", k);
 
         // Arrow keys for frame navigation directly
         if (k === "arrowleft" || k === "arrowright") {
@@ -205,7 +203,6 @@ export default {
 
         // Escape exits split mode
         if (e.key === "Escape") {
-            console.log("[ReviewHotkeys] Escape key - exiting split mode");
             this.pushEvent("toggle_split_mode", {});
             this._exitSplitMode();
             e.preventDefault();
@@ -214,40 +211,29 @@ export default {
 
         // Enter commits split at current frame
         if (e.key === "Enter") {
-            console.log("[ReviewHotkeys] Enter key - attempting split");
-
             // Get current video time for frame calculation
             const video = document.querySelector(".video-player");
             if (video) {
                 const currentTime = video.currentTime;
-                const fps = this._estimateFPS();
-
-                // Get clip start frame from the video element's data attributes
+                
+                // Get clip info including DB fps
                 const clipInfo = this._getClipInfo();
+                const fps = clipInfo?.fps || 30.0; // Use DB fps with fallback
                 const clipStartFrame = clipInfo ? clipInfo.start_frame || 0 : 0;
                 const relativeFrameNumber = Math.round(currentTime * fps);
                 const absoluteFrameNumber = clipStartFrame + relativeFrameNumber;
 
-                console.log("[ReviewHotkeys] Split calculation - currentTime:", currentTime, "fps:", fps, "startFrame:", clipStartFrame, "relativeFrame:", relativeFrameNumber, "absoluteFrame:", absoluteFrameNumber);
-
                 this.pushEvent("split_at_frame", { frame_number: absoluteFrameNumber });
-            } else {
-                console.log("[ReviewHotkeys] No video element found for split");
             }
             e.preventDefault();
             return;
         }
     },
 
-    // Estimate FPS for frame calculations (fallback to 30fps)
-    _estimateFPS() {
-        // Could get from clip metadata in the future
-        return 30;
-    },
 
     // Get clip information from video player
     _getClipInfo() {
-        const videoElement = document.querySelector('video[phx-hook=".ClipPlayer"]');
+        const videoElement = document.querySelector('video[phx-hook="ClipPlayer"]');
         if (videoElement && videoElement.dataset.clipInfo) {
             try {
                 return JSON.parse(videoElement.dataset.clipInfo);

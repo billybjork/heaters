@@ -1,24 +1,33 @@
 defmodule Heaters.Storage.PlaybackCache.TempClip do
   @moduledoc """
-  Efficient temporary clip generation using unified FFmpeg stream copy abstraction.
+  Efficient temporary clip generation using stream copy from all-I proxy files for instant split-mode compatibility.
 
-  This module leverages the unified `StreamClip` module for consistent, maintainable 
+  This module leverages the unified `StreamClip` module for consistent, maintainable
   clip generation with profile-based configuration and optimal browser compatibility.
 
   ## Key Features
 
   - **Unified Architecture**: Uses `StreamClip` for consistent clip generation
-  - **Profile-Based**: Uses `:temp_playback` profile for optimal temp clip settings  
-  - **Browser Optimized**: Audio removal and fast start for instant playback
-  - **Minimal Files**: Typically 2-5MB for quick transfer and playback
-  - **Stream Copy**: Zero re-encoding for 10x faster generation
+  - **Split-Mode Ready**: Uses stream copy from all-I proxy files for perfect frame-accurate seeking
+  - **Instant Generation**: Stream copy provides instant clip creation with zero re-encoding
+  - **Browser Optimized**: Fast decode, no audio, +faststart for instant playback
+  - **Reasonable Files**: Minimal size overhead since no re-encoding occurs
 
   ## Architecture
 
   Built on the unified FFmpeg abstraction that provides:
   - Direct CloudFront URL processing (no downloads)
   - Profile-based configuration from `FFmpeg.Config`
+  - DB fps integration for metadata preservation
   - Consistent error handling and logging
+
+  ## Split Mode Benefits
+
+  Unlike regular subclips, these stream-copied clips from all-I proxy sources support reliable seeking:
+  - Every frame remains a keyframe from original proxy
+  - Browsers can seek to any timestamp without snapping to 0
+  - Frame stepping works consistently across all browsers
+  - Original timing preserved exactly from source
 
   ## Cleanup
 
@@ -32,13 +41,18 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
   alias Heaters.Repo
 
   @doc """
-  Build a temporary clip file using the unified StreamClip abstraction.
-
-  Uses the `:temp_playback` FFmpeg profile which provides ultra-fast stream copying
-  without re-encoding. The resulting file is tiny (2-5MB) and starts playing immediately.
+  Build a temporary clip file using stream copy from all-I proxy for split-mode compatibility.
 
   ## Parameters
   - `clip`: Clip struct with timing and source video information
+  - `opts`: Options for temp clip generation (currently unused, for future expansion)
+
+  ## Profile
+  Uses `:temp_playback` with stream copy from all-I proxy:
+  - Instant generation via stream copy (no re-encoding)
+  - Perfect seeking preserved from all-I proxy source
+  - No audio for minimal file size
+  - +faststart for instant browser playback
 
   ## Returns
   - `{:ok, file_url}` - HTTP URL for direct browser access
@@ -48,17 +62,24 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
 
       {:ok, url} = TempClip.build(clip)
       # Returns: {:ok, "/temp/clip_123_456789.mp4?t=123456"}
+      # File supports frame-accurate seeking for split mode
   """
-  @spec build(map()) :: {:ok, String.t()} | {:error, String.t()}
-  def build(%{
-        id: id,
-        start_time_seconds: start_seconds,
-        end_time_seconds: end_seconds,
-        source_video: source_video
-      }) do
-    Logger.info("TempClip: Building temp clip #{id} using unified StreamClip abstraction")
+  @spec build(map(), keyword()) :: {:ok, String.t()} | {:error, String.t()}
+  def build(clip, opts \\ [])
 
-    # Use the unified StreamClip module with temp_playback profile
+  def build(
+        %{
+          id: id,
+          start_time_seconds: start_seconds,
+          end_time_seconds: end_seconds,
+          source_video: source_video
+        },
+        opts
+      )
+      when is_list(opts) do
+    Logger.info("TempClip: Building temp clip #{id} using stream-copy temp_playback profile")
+
+    # Use the unified StreamClip module with temp_playback profile (stream copy)
     StreamClip.generate_clip(
       %{
         id: id,
@@ -73,16 +94,16 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
   end
 
   # Handle clip without preloaded source_video
-  def build(%{id: id} = _clip) do
-    Logger.debug("TempClip: Loading source_video for clip #{id}")
+  def build(%{id: _id} = clip, opts) when is_list(opts) do
+    Logger.debug("TempClip: Loading source_video for clip #{clip.id}")
 
-    case Repo.get(Heaters.Media.Clip, id) do
+    case Repo.get(Heaters.Media.Clip, clip.id) do
       nil ->
         {:error, "Clip not found"}
 
-      clip ->
-        loaded_clip = Repo.preload(clip, :source_video)
-        build(loaded_clip)
+      loaded_clip ->
+        loaded_clip = Repo.preload(loaded_clip, :source_video)
+        build(loaded_clip, opts)
     end
   end
 

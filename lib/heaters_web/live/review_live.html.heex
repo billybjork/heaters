@@ -1,5 +1,5 @@
 <Layouts.app flash={@flash}>
-  <main id="review" phx-hook=".ReviewHotkeys" class={if @split_mode, do: "split-mode-active" , else: "" }>
+  <main id="review" phx-hook="ReviewHotkeys" class={if @split_mode, do: "split-mode-active" , else: "" }>
     <!-- Empty-queue ------------------------------------------------------- -->
     <%= if @page_state==:empty do %>
       <section class="stack-center gap-4">
@@ -53,9 +53,9 @@
                       📎 Group
                     </button>
                     <button id="btn-split" class={["btn", "split" , if(@split_mode, do: "is-split-mode-active" ,
-                      else: "" )]} phx-click="toggle_split_mode" title={if(@split_mode, do: "Exit split mode (Esc)" ,
-                      else: "Enter split mode (←/→) - navigate with ←/→, split with Enter" )}>
-                      ✂️ {if @split_mode, do: "Exit Split", else: "Split"}
+                      else: "" )]} phx-click="toggle_split_mode" title={if(@split_mode, do: "Exit split mode" ,
+                      else: "Split clip" )}>
+                      ✂️ Split
                     </button>
                   </nav>
                   <% end %>

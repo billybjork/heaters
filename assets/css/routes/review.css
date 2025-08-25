@@ -142,7 +142,6 @@ article.stack-center {
     background: var(--split);
     color: #000;
     font-weight: bold;
-    box-shadow: 0 0 8px var(--split);
 }
 
 .split-mode-active .video-player {
@@ -150,21 +149,7 @@ article.stack-center {
     box-shadow: 0 0 12px var(--split);
 }
 
-.split-mode-active .video-player-container::after {
-    content: 'SPLIT MODE ACTIVE - Use ←/→ arrows to navigate frames, Enter to split, Esc to exit';
-    position: absolute;
-    top: 10px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--split);
-    color: #000;
-    padding: 8px 16px;
-    border-radius: 4px;
-    font-size: 0.875rem;
-    font-weight: bold;
-    z-index: 10;
-    pointer-events: none;
-}
+
 
 /* Split-mode outline indicator ------------------------------------------ */
 .split-armed {

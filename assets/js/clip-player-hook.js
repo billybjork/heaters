@@ -94,6 +94,8 @@ class ClipPlayerCore {
     this.isLoading = false;
     this.loadingSpinner = null;
     this.splitModeActive = false; // Track split mode
+    this.seekInProgress = false; // Track frame seek operations
+    this.clipInfo = null; // Store clip information for frame calculations
 
     this.init();
   }
@@ -121,8 +123,13 @@ class ClipPlayerCore {
       ended: this.handleEnded.bind(this)
     };
 
-    // Add initial event listeners
-    this._addEventListeners();
+    // Add event listeners directly
+    this.video.addEventListener('loadstart', this.boundHandlers.loadstart);
+    this.video.addEventListener('loadedmetadata', this.boundHandlers.loadedmetadata);
+    this.video.addEventListener('canplaythrough', this.boundHandlers.canplaythrough);
+    this.video.addEventListener('waiting', this.boundHandlers.waiting);
+    this.video.addEventListener('error', this.boundHandlers.error);
+    this.video.addEventListener('ended', this.boundHandlers.ended);
   }
 
   async loadVideo(videoUrl, playerType = 'ffmpeg_stream', clipInfo = null) {
@@ -144,7 +151,7 @@ class ClipPlayerCore {
     } catch (_) { }
 
     this.playerType = playerType;
-    this.clipInfo = clipInfo;
+    this.clipInfo = clipInfo || {}; // Ensure we always have an object
 
     if (playerType === 'ffmpeg_stream') {
       this.showLoading();
@@ -180,9 +187,11 @@ class ClipPlayerCore {
       return;
     }
     
-    // Only reset time for direct_s3 players
+    // Only reset time for direct_s3 players during initial load (not during split mode)
     if (this.playerType === 'direct_s3' && 
-        this.video.currentTime > 0.01 && this.video.dataset.clipOffsetReset !== '1') {
+        this.video.currentTime > 0.01 && 
+        this.video.dataset.clipOffsetReset !== '1' &&
+        !this.splitModeActive) {
       console.log('[ClipPlayer] Resetting video time to 0 for direct_s3 player');
       this.video.currentTime = 0;
       this.video.dataset.clipOffsetReset = '1';
@@ -243,58 +252,115 @@ class ClipPlayerCore {
     this.splitModeActive = true;
     this.video.pause();
     
-    // Temporarily remove all event listeners that might interfere
-    this._removeEventListeners();
+    // Don't remove event listeners - just rely on splitModeActive flag
+    // The individual handlers check this flag and skip their logic
+    console.log('[ClipPlayer] Split mode active - handlers will check flag');
   }
 
   exitSplitMode() {
     console.log('[ClipPlayer] Exiting split mode - enabling automatic behaviors');
     this.splitModeActive = false;
     
-    // Restore event listeners
-    this._addEventListeners();
-    
+    // No need to restore listeners since we didn't remove them
     this.attemptAutoplay();
   }
 
-  // Remove all event listeners during split mode
-  _removeEventListeners() {
-    if (this.boundHandlers) {
-      this.video.removeEventListener('loadstart', this.boundHandlers.loadstart);
-      this.video.removeEventListener('loadedmetadata', this.boundHandlers.loadedmetadata);
-      this.video.removeEventListener('canplaythrough', this.boundHandlers.canplaythrough);
-      this.video.removeEventListener('waiting', this.boundHandlers.waiting);
-      this.video.removeEventListener('error', this.boundHandlers.error);
-      this.video.removeEventListener('ended', this.boundHandlers.ended);
-      console.log('[ClipPlayer] All event listeners removed for split mode');
-    }
-  }
-
-  // Restore all event listeners after split mode
-  _addEventListeners() {
-    if (this.boundHandlers) {
-      this.video.addEventListener('loadstart', this.boundHandlers.loadstart);
-      this.video.addEventListener('loadedmetadata', this.boundHandlers.loadedmetadata);
-      this.video.addEventListener('canplaythrough', this.boundHandlers.canplaythrough);
-      this.video.addEventListener('waiting', this.boundHandlers.waiting);
-      this.video.addEventListener('error', this.boundHandlers.error);
-      this.video.addEventListener('ended', this.boundHandlers.ended);
-      console.log('[ClipPlayer] All event listeners restored after split mode');
-    }
-  }
-
   // Frame navigation - called by ReviewHotkeys
-  // TODO: Implement frame-by-frame navigation for split mode
-  navigateFrames(direction, frameCount = 3) {
+  // Implements precise frame stepping using DB fps data
+  navigateFrames(direction, frameCount = 1) {
     if (!this.splitModeActive) {
       console.log('[ClipPlayer] Frame navigation ignored - not in split mode');
       return;
     }
     
-    console.log(`[ClipPlayer] Frame navigation ${direction} by ${frameCount} frames - TODO: implement proper seeking`);
+    // Don't start a new seek if one is already in progress
+    if (this.seekInProgress) {
+      // Only log every 5th attempt to reduce console spam
+      this._seekAttempts = (this._seekAttempts || 0) + 1;
+      if (this._seekAttempts % 5 === 0) {
+        console.log(`[ClipPlayer] Frame navigation ignored - seek already in progress (${this._seekAttempts} attempts)`);
+      }
+      return;
+    }
     
-    // Placeholder: Currently just pauses the video
-    // Future implementation will handle frame-accurate navigation
+    // Reset attempt counter on successful seek
+    this._seekAttempts = 0;
+    
+    // Check if video is ready for seeking
+    if (this.video.readyState < 2) {
+      console.log('[ClipPlayer] Frame navigation ignored - video not ready for seeking');
+      return;
+    }
+    
+    const fps = this.clipInfo?.fps || 30.0;
+    const frameTime = 1 / fps;
+    
+    // Use a more conservative approach for temp clip seeking
+    let targetTime;
+    if (direction === 'forward' || direction === 'right') {
+      targetTime = this.video.currentTime + frameTime;
+    } else {
+      targetTime = this.video.currentTime - frameTime;
+    }
+    
+    // Clamp to valid range [0, duration]
+    const duration = this.video.duration || 0;
+    if (duration > 0) {
+      targetTime = Math.max(0, Math.min(targetTime, duration - 0.01));
+    } else {
+      console.log('[ClipPlayer] Frame navigation ignored - no video duration');
+      return;
+    }
+    
+    // Skip if we're already at the target time (avoid unnecessary seeks)
+    if (Math.abs(targetTime - this.video.currentTime) < 0.001) {
+      return;
+    }
+    
+    this._seekToTime(targetTime);
+  }
+  
+  // Internal method to perform precise seeking with completion detection
+  _seekToTime(targetTime) {
+    this.seekInProgress = true;
+    
+    // Always wait for 'seeked' event for reliable seeking
+    const onSeeked = () => {
+      this.video.removeEventListener('seeked', onSeeked);
+      
+      const finalTime = this.video.currentTime;
+      // Use requestVideoFrameCallback after seek completes for frame-accurate timing
+      if ('requestVideoFrameCallback' in this.video) {
+        this.video.requestVideoFrameCallback(() => {
+          const frameTime = this.video.currentTime;
+          this.seekInProgress = false;
+        });
+      } else {
+        // Small timeout fallback for Safari
+        setTimeout(() => {
+          console.log(`[ClipPlayer] Frame presentation timeout (Safari fallback)`);
+          this.seekInProgress = false;
+        }, 16); // ~1 frame at 60fps
+      }
+    };
+    
+    // Set up the event listener first
+    this.video.addEventListener('seeked', onSeeked);
+    
+    // Perform the seek
+    const beforeSeek = this.video.currentTime;
+    this.video.currentTime = targetTime;
+    const afterSeek = this.video.currentTime;
+    
+
+    // Timeout fallback in case seeked doesn't fire
+    setTimeout(() => {
+      if (this.seekInProgress) {
+        console.log('[ClipPlayer] Seek timeout fallback - assuming seek completed');
+        this.video.removeEventListener('seeked', onSeeked);
+        this.seekInProgress = false;
+      }
+    }, 500); // Reduced from 1000ms to 500ms
   }
 
   showLoading() {

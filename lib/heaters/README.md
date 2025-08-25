@@ -89,14 +89,14 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 
 ### Clip Player (LiveView 1.1 Colocated Hooks)
 - **Single-File Architecture**: JavaScript and Elixir colocated in one component file
-- **Instant Playback**: Small video files generated on-demand vs. complex byte-range streaming
+- **Frame-Accurate Navigation**: Split mode with precise frame stepping using database FPS data
+- **HTTP Range Support**: 206 Partial Content responses enable reliable video seeking
+- **All-I H.264 Encoding**: Every frame is a keyframe for perfect seeking in review mode
 - **Perfect Timeline**: Shows exact clip duration (e.g., 3.75s) not full video length
 - **Unified Generation**: Uses same StreamClip abstraction as export system for consistency
-- **Stream Copy**: Zero re-encoding with direct CloudFront processing for 10x faster generation
 - **Universal Compatibility**: Works offline, all browsers, mobile optimized
 - **Smart Cleanup**: Scheduled maintenance with LRU eviction and disk space monitoring
 - **Reactive Updates**: Phoenix LiveView reactive pattern eliminates manual refresh requirements
-- **Automatic Namespacing**: Hook names prefixed with module for collision prevention
 
 ### Frontend Architecture (LiveView 1.1)
 - **Colocated Hooks**: JavaScript code embedded directly in Phoenix components
@@ -117,6 +117,8 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 ### Media Processing
 - **FFmpeg**: Native Elixir with encoding profiles centralized in `Processing.Support.FFmpeg.Config`
 - **Unified Clip Generation**: Single abstraction (`Processing.Support.FFmpeg.StreamClip`) handles both temp and export clips
+- **Frame-Perfect Encoding**: All-I H.264 with CFR encoding for reliable seeking in review interface
+- **HTTP Range Requests**: VideoController serves temp files with 206 Partial Content support
 - **Direct CloudFront Processing**: No local downloads, processes directly from CloudFront URLs with stream copy
 - **Video Processing**: Native Elixir implementations for encoding, export, and S3 operations with structured result types
 - **Specialized Python**: Selective integration for yt-dlp downloads, OpenCV scene detection, and ML embeddings
@@ -180,6 +182,27 @@ config :heaters,
 - **Archive Behavior**: `review_archived` clips excluded from review queue; reappear only after undo
 - **Temp File Cleanup**: Archived clip temp files cleaned automatically by playback cache maintenance
 
+### Frame-by-Frame Navigation (Split Mode)
+⚠️ **CRITICAL IMPLEMENTATION**: The frame navigation system requires specific encoding and HTTP transport:
+
+**Essential Components**:
+- **Stream Copy from All-I Proxies**: `temp_playback` profile uses stream copy from all-I proxy files for instant generation
+- **Metadata Preservation**: Stream copy preserves original framerate and timing for precise navigation
+- **HTTP Range Support**: `VideoController.serve_temp_file` returns 206 Partial Content responses
+- **JavaScript Integration**: `ClipPlayer` hook coordinates with `ReviewHotkeys` for split mode
+
+**DO NOT**:
+- Switch to re-encoding temp_playback (reduces performance and increases load)
+- Remove Accept-Ranges or 206 response handling (causes snap-to-zero)
+- Modify hook `handleEvent` registration pattern (causes LiveView conflicts)
+- Remove FPS data from clip_info (breaks frame precision)
+
+**Keyboard Controls**:
+- Right arrow: Enter split mode + step forward
+- Left/Right arrows: Navigate frames (1/fps precision)  
+- Enter: Commit split at current frame
+- Escape: Exit split mode
+
 ### Maintenance & Monitoring
 - **Scheduled Cleanup**: Playback cache maintenance every 4 hours via Oban cron
 - **Cache Size Limits**: Configurable limits (default: 1GB) with LRU eviction strategy
@@ -195,6 +218,13 @@ config :heaters,
 - Check browser console for decode errors and JavaScript exceptions
 - Verify source video proxy files are available in S3
 - Review FFmpeg command logs for encoding issues
+
+**Frame Navigation Problems**
+- Verify 206 Partial Content responses in DevTools Network tab (not 200 OK)
+- Check Accept-Ranges: bytes header is present on /temp requests
+- Confirm `temp_playback` profile uses stream copy from all-I proxy files
+- Validate FPS data is present in clip_info JSON
+- Look for "handleEvent overwrites" warnings (hook conflicts)
 
 **Performance Issues**
 - Monitor Oban job queues for backlog or failed jobs
@@ -217,16 +247,16 @@ See module documentation and inline comments for specific implementation details
 ## Key Benefits
 
 1. **Zero Re-encoding During Review**: Cut-based clips enable instant operations
-2. **Unified Architecture**: Single abstraction handles both temp and export clips with consistent performance
-3. **Direct CloudFront Processing**: No downloads, 10x faster generation with stream copy from CloudFront URLs
-4. **Superior Export Quality**: Stream copy from high-quality proxy preserves original quality with audio
-5. **Optimized I/O**: 78% S3 reduction + direct access via presigned URLs
-6. **FLAME Ready**: Near-zero pipeline latency via direct job chaining
-7. **Universal Workflow**: Handles all ingest types with smart optimization
-8. **Production Reliable**: Resumable, idempotent, robust with graceful fallbacks
-9. **Maintainable**: Declarative configuration, modular design, centralized S3 path management
-10. **Type Safe**: Ecto enums with database constraints and structured worker results ensure complete data integrity
-11. **Self-Managing**: Automated cache maintenance with size limits, LRU eviction, and disk space monitoring
-12. **Reactive Interface**: LiveView reactive patterns eliminate manual refresh requirements
-13. **Single-File Components**: LiveView 1.1 colocated hooks eliminate JavaScript file sprawl
+2. **Frame-Accurate Navigation**: Precise frame stepping with database FPS and HTTP range support
+3. **Unified Architecture**: Single abstraction handles both temp and export clips with consistent performance
+4. **Direct CloudFront Processing**: No downloads, 10x faster generation with stream copy from CloudFront URLs
+5. **Superior Export Quality**: Stream copy from high-quality proxy preserves original quality with audio
+6. **Optimized I/O**: 78% S3 reduction + direct access via presigned URLs
+7. **FLAME Ready**: Near-zero pipeline latency via direct job chaining
+8. **Universal Workflow**: Handles all ingest types with smart optimization
+9. **Production Reliable**: Resumable, idempotent, robust with graceful fallbacks
+10. **Maintainable**: Declarative configuration, modular design, centralized S3 path management
+11. **Type Safe**: Ecto enums with database constraints and structured worker results ensure complete data integrity
+12. **Self-Managing**: Automated cache maintenance with size limits, LRU eviction, and disk space monitoring
+13. **Reactive Interface**: LiveView reactive patterns eliminate manual refresh requirements
 14. **Performance Optimized**: Change tracking with `:key` attributes reduces unnecessary re-renders

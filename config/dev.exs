@@ -190,4 +190,6 @@ config :heaters,
   s3_dev_bucket_name: System.get_env("DEV_S3_BUCKET_NAME") || "heaters-dev",
   aws_region: System.get_env("AWS_REGION") || "us-west-1",
   # FFmpeg streaming timeout (increased for CloudFront latency)
-  ffmpeg_stream_timeout: 60_000
+  ffmpeg_stream_timeout: 60_000,
+  # Temp directory for temporary clip files (with byte-range support)
+  temp_dir: System.get_env("DEV_TEMP_DIR") || System.tmp_dir!()

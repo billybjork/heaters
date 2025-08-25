@@ -55,15 +55,10 @@ defmodule Heaters.Processing.Support.FFmpeg.StreamClip do
           id: integer(),
           start_time_seconds: float(),
           end_time_seconds: float(),
-          source_video: %{proxy_filepath: String.t()}
+          source_video: map()
         }
 
-  @type generate_options :: [
-          output_path: String.t(),
-          upload_to_s3: boolean(),
-          cache_buster: boolean(),
-          operation_name: String.t()
-        ]
+  @type generate_options :: keyword()
 
   @type generate_result :: {:ok, String.t()} | {:error, String.t()}
 
@@ -103,9 +98,8 @@ defmodule Heaters.Processing.Support.FFmpeg.StreamClip do
   @spec generate_clip(clip_data(), atom(), generate_options()) :: generate_result()
   def generate_clip(clip, profile, opts \\ []) do
     # Ensure clip has source_video preloaded
-    clip_with_source = ensure_source_video_loaded(clip)
-
-    with {:ok, ffmpeg_args} <- get_profile_args(profile),
+    with {:ok, clip_with_source} <- ensure_source_video_loaded(clip),
+         {:ok, ffmpeg_args} <- get_profile_args(profile),
          {:ok, input_url} <- get_input_url(clip_with_source.source_video),
          {:ok, output_path} <- determine_output_path(clip_with_source, profile, opts),
          {:ok, result_path} <-
@@ -118,13 +112,13 @@ defmodule Heaters.Processing.Support.FFmpeg.StreamClip do
 
   ## Private Implementation
 
-  @spec ensure_source_video_loaded(clip_data()) :: clip_data()
-  defp ensure_source_video_loaded(%{source_video: %{}} = clip), do: clip
+  @spec ensure_source_video_loaded(clip_data()) :: {:ok, clip_data()} | {:error, String.t()}
+  defp ensure_source_video_loaded(%{source_video: %{}} = clip), do: {:ok, clip}
 
   defp ensure_source_video_loaded(%{id: id} = _clip) do
     case Repo.get(Heaters.Media.Clip, id) do
       nil -> {:error, "Clip not found"}
-      clip -> Repo.preload(clip, :source_video)
+      clip -> {:ok, Repo.preload(clip, :source_video)}
     end
   end
 
