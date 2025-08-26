@@ -209,35 +209,35 @@ defmodule Heaters.Review.Actions do
     absolute_time_seconds = clip.start_time_seconds + time_offset_seconds
     
     # CRITICAL: FPS must come from database - never assume a value
-    fps = case source_video.fps do
-      fps when is_number(fps) and fps > 0 -> fps
-      _ -> 
+    case source_video.fps do
+      fps when is_number(fps) and fps > 0 ->
+        absolute_frame = round(absolute_time_seconds * fps)
+        
+        Logger.info("""
+        Review: Server-side split calculation for clip #{clip.id}:
+          Clip start: #{clip.start_time_seconds}s (frame #{clip.start_frame})
+          Time offset: #{time_offset_seconds}s
+          Calculated absolute time: #{absolute_time_seconds}s
+          FPS: #{fps}
+          Calculated absolute frame: #{absolute_frame}
+        """)
+        
+        # Validate frame is within clip boundaries
+        cond do
+          absolute_frame <= clip.start_frame ->
+            {:error, "Split frame #{absolute_frame} is at or before clip start (#{clip.start_frame})"}
+            
+          absolute_frame >= clip.end_frame ->
+            {:error, "Split frame #{absolute_frame} is at or after clip end (#{clip.end_frame})"}
+            
+          true ->
+            # Use existing cuts-based split operation
+            handle_virtual_split(clip, absolute_frame)
+        end
+        
+      _ ->
         Logger.error("Review: Source video #{source_video.id} missing FPS data - cannot perform frame calculation")
-        return {:error, "Source video missing FPS data - frame-accurate operations require database FPS"}
-    end
-    
-    absolute_frame = round(absolute_time_seconds * fps)
-    
-    Logger.info("""
-    Review: Server-side split calculation for clip #{clip.id}:
-      Clip start: #{clip.start_time_seconds}s (frame #{clip.start_frame})
-      Time offset: #{time_offset_seconds}s
-      Calculated absolute time: #{absolute_time_seconds}s
-      FPS: #{fps}
-      Calculated absolute frame: #{absolute_frame}
-    """)
-    
-    # Validate frame is within clip boundaries
-    cond do
-      absolute_frame <= clip.start_frame ->
-        {:error, "Split frame #{absolute_frame} is at or before clip start (#{clip.start_frame})"}
-        
-      absolute_frame >= clip.end_frame ->
-        {:error, "Split frame #{absolute_frame} is at or after clip end (#{clip.end_frame})"}
-        
-      true ->
-        # Use existing cuts-based split operation
-        handle_virtual_split(clip, absolute_frame)
+        {:error, "Source video missing FPS data - frame-accurate operations require database FPS"}
     end
   end
 

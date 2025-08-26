@@ -101,10 +101,10 @@ defmodule HeatersWeb.MediaController do
     # CRITICAL: FPS must be provided from database - never assume values
     if is_nil(fps) or fps <= 0 do
       Logger.error("MediaController: Missing or invalid FPS parameter for virtual clip streaming")
-      return conn
+      conn
       |> put_status(:bad_request)
       |> json(%{error: "Invalid fps parameter - frame-accurate operations require database FPS"})
-    end
+    else
 
     # Extract IDs for logging
     video_id = parse_int(params["video_id"], 0)
@@ -139,6 +139,7 @@ defmodule HeatersWeb.MediaController do
         end_time: end_time,
         duration: duration
       })
+    end
     end
   end
 
