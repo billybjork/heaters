@@ -19,47 +19,31 @@ defmodule Heaters.Pipeline.Config do
 
   ## Resumable Processing
 
-  The pipeline supports resumable processing of interrupted jobs across all stages:
-  - **Download Stage**: Processes videos in "new", "downloading", or "download_failed" states
-  - **Encode Stage**: Processes videos in "downloaded", "encoding", or "encoding_failed" states
-  - **Scene Detection Stage**: Processes videos with proxy files needing virtual clip creation
-  - **Cache Persistence Stage**: Processes videos needing S3 persistence and cache cleanup
-  - **Export Stage**: Processes approved virtual clips for rolling export to physical clips
-  - **Keyframe Stage**: Processes exported clips in "exported", "keyframing", or "keyframe_failed" states
-  - **Embedding Stage**: Processes clips in "keyframed", "embedding", or "embedding_failed" states
-
+  The pipeline supports resumable processing of interrupted jobs across all stages.
   When containers shut down mid-processing, work resumes automatically without manual intervention
   or data loss. This provides production-grade reliability for video processing workloads.
 
   ## Virtual Clip Review Actions
 
   Review actions are handled directly in the UI with instant cut point operations:
-  - review_approved → rolling export (continues through pipeline)
+  - review_approved → export (continues through pipeline)
   - review_skipped → terminal state (no further processing)
-  - review_archived → terminal state (marked for archival, cleaned by playback cache)
+  - review_archived → terminal state (marked for archival)
   - cut point operations → instant database updates (add/remove/move cuts)
   - group actions → both clips advance to review_approved
 
-  ## Rolling Export Architecture
+  ## Export Architecture
 
   The pipeline uses individual clip export rather than batch processing:
   - Each approved virtual clip gets its own export job
   - Resource sharing optimizes master downloads
   - Clips become available immediately after export (no waiting for full batch)
 
-  ## Job Chaining (Centralized in this module)
+  ## State Transitions (Centralized in this module)
 
-  Chaining is configured in this module via `next_stage` entries and executed by
+  State transitions are configured in this module via `next_stage` entries and executed by
   `maybe_chain_next_job/2`. All workers call `maybe_chain_next_job/2` to trigger
   their next stage when the configured `condition` evaluates to true.
-
-  The pipeline supports direct job chaining for performance optimization:
-  - Download → Encode (when download completes successfully)
-  - Encode → Scene Detection (when encoding completes and splicing is needed)
-  - Scene Detection → Cache Upload (when scene detection completes)
-  - Export → Keyframes (post-review: when physical clip is created)
-  - Keyframes → Embeddings (post-review: when keyframe artifacts are created)
-  - Other stages use standard Oban job scheduling
   """
 
   alias Heaters.Pipeline.Queries, as: PipelineQueries
@@ -120,8 +104,7 @@ defmodule Heaters.Pipeline.Config do
   @spec stages() :: [map()]
   def stages do
     [
-      # Stage 1: Download
-      # Chaining: Download → Encode
+      # State 1: Download (chains to encode stage)
       %{
         label: "videos needing download",
         query: fn -> PipelineQueries.get_videos_needing_ingest() end,
@@ -135,8 +118,7 @@ defmodule Heaters.Pipeline.Config do
         }
       },
 
-      # Stage 2: Encode
-      # Chaining: Encode → Scene detection
+      # State 2: Encode (chains to scene detection stage)
       %{
         label: "videos needing encoding → proxy generation",
         query: fn -> PipelineQueries.get_videos_needing_encoding() end,
@@ -152,8 +134,7 @@ defmodule Heaters.Pipeline.Config do
         }
       },
 
-      # Stage 3: Scene detection
-      # Chaining: Scene detection → Cache persistence
+      # State 3: Scene detection (chains to cache persistence stage)
       %{
         label: "videos needing scene detection → virtual clips",
         query: fn -> PipelineQueries.get_videos_needing_scene_detection() end,
@@ -171,25 +152,18 @@ defmodule Heaters.Pipeline.Config do
         }
       },
 
-      # Stage 4: Cache persistence
-      # Chaining: none (end of video processing)
+      # State 4: Cache persistence (end of video processing)
       %{
         label: "videos needing cache persistence → S3 persistence",
         query: fn -> PipelineQueries.get_videos_needing_cache_persistence() end,
         build: fn video -> PersistCacheWorker.new(%{source_video_id: video.id}) end
-        # No next_stage - this is the end of the video processing pipeline
       },
 
       # ===== HUMAN REVIEW BOUNDARY =====
-      # End of automated video processing pipeline (download → encode → detect_scenes → persist_cache)
-      # Human review occurs here: cut operations, approve/skip/archive actions
-      # Beginning of clip export pipeline (export → keyframes → embeddings)
-      # ===== HUMAN REVIEW BOUNDARY =====
 
-      # Stage 5: Rolling Export (virtual clips → physical clips)
-      # Chaining: Export → Keyframes
+      # State 5: Export (chains to keyframes stage)
       %{
-        label: "approved virtual clips → rolling export",
+        label: "approved virtual clips → export",
         query: fn -> PipelineQueries.get_virtual_clips_ready_for_export() end,
         build: fn clip ->
           ExportWorker.new(%{
@@ -200,15 +174,13 @@ defmodule Heaters.Pipeline.Config do
         next_stage: %{
           worker: KeyframeWorker,
           condition: fn clip ->
-            # After export completes, clip should be in :exported state
             clip.ingest_state == :exported and is_binary(clip.clip_filepath)
           end,
           args: fn clip -> %{clip_id: clip.id, strategy: default_keyframe_strategy()} end
         }
       },
 
-      # Stage 6: Keyframes (operates on exported physical clips)
-      # Chaining: Keyframes → Embeddings
+      # State 6: Keyframes (chains to embeddings stage)
       %{
         label: "exported clips needing keyframes",
         query: fn -> PipelineQueries.get_clips_needing_keyframes() end,
@@ -230,7 +202,7 @@ defmodule Heaters.Pipeline.Config do
         }
       },
 
-      # Stage 7: Embeddings (operates on keyframed clips)
+      # State 7: Embeddings
       %{
         label: "keyframed clips needing embeddings",
         query: fn -> PipelineQueries.get_clips_needing_embeddings() end,
@@ -245,9 +217,9 @@ defmodule Heaters.Pipeline.Config do
         end
       },
 
-      # Stage 8: Missing default embeddings backfill (operates on embedded clips)
+      # State 8: Vector sync
       %{
-        label: "embedded clips missing default embeddings",
+        label: "clips needing vector sync",
         query: fn ->
           kf = default_keyframe_strategy()
 
@@ -290,8 +262,6 @@ defmodule Heaters.Pipeline.Config do
 
   @doc """
   Find the next stage configuration for a given worker.
-
-  Returns the chaining configuration if the worker has a next stage defined.
   """
   @spec find_next_stage_for_worker(module()) :: {:ok, map()} | {:error, :not_found}
   def find_next_stage_for_worker(worker_module) do
@@ -330,9 +300,7 @@ defmodule Heaters.Pipeline.Config do
   end
 
   @doc """
-  Execute job chaining for a worker if configured.
-
-  This is the centralized chaining logic that workers can call.
+  Execute state transition for a worker if configured.
   """
   @spec maybe_chain_next_job(module(), any()) :: :ok | {:error, any()}
   def maybe_chain_next_job(current_worker, item) do
@@ -343,7 +311,7 @@ defmodule Heaters.Pipeline.Config do
         if condition_result do
           args = args_fn.(item)
 
-          # Chain immediately via Task for performance (Oban unique constraints prevent duplicates)
+          # Execute immediately via Task for performance
           Task.start(fn ->
             string_args = for {key, value} <- args, into: %{}, do: {to_string(key), value}
             next_worker.handle_work(string_args)

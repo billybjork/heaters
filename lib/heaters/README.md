@@ -36,7 +36,7 @@ Heaters processes videos through a **cuts-based pipeline**: download → encodin
 
 - **`Media`**: Domain entities (videos, clips, cuts, artifacts) and cut operations
 - **`Processing`**: Automated pipeline stages with structured results and native Elixir implementations (download, encode, scene detection, export, keyframes, embeddings)
-- **`Storage`**: All storage concerns (pipeline cache, playback cache with scheduled cleanup, archive, S3 operations)
+- **`Storage`**: All storage concerns (pipeline cache, temp cache with scheduled cleanup, archive, S3 operations)
 - **`Review`**: Human workflow (queue management, actions)
 - **`Pipeline`**: Declarative orchestration (config, dispatcher, queries)
 
@@ -246,7 +246,7 @@ config :heaters,
 - **Cut Operations**: `add_cut`, `remove_cut`, `move_cut` with declarative validation  
 - **Enhanced Undo**: Database-level reversion (Ctrl+Z) restores clips to `pending_review` state and UI navigation
 - **Archive Behavior**: `review_archived` clips excluded from review queue; reappear only after undo
-- **Temp File Cleanup**: Archived clip temp files cleaned automatically by playback cache maintenance
+- **Temp File Cleanup**: Archived clip temp files cleaned automatically by temp cache maintenance
 
 ### Frame-by-Frame Navigation (Split Mode)
 ⚠️ **CRITICAL IMPLEMENTATION**: The frame navigation system requires specific encoding and HTTP transport:

@@ -134,9 +134,6 @@ defmodule Heaters.Storage.S3.Adapter do
 
         {:error, reason} ->
           {:error, "File write error: #{inspect(reason)}"}
-
-        error ->
-          error
       end
     after
       # Clean up temporary file

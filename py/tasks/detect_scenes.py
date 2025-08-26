@@ -2,7 +2,7 @@
 Simple Scene Detection Task - Pure OpenCV scene detection.
 
 This "dumb" version:
-- Takes a local video file path (no S3 operations)
+- Takes a local video file path (Elixir handles all S3 operations)
 - Runs OpenCV histogram comparison
 - Returns raw scene cuts as simple JSON
 - No caching, no downloads, no complex error handling
@@ -41,7 +41,7 @@ def run_detect_scenes(
     Detect scene cuts in a proxy video file and return cut points for clip creation.
     
     Args:
-        proxy_video_path: Local path or S3 path to proxy video file
+        proxy_video_path: Local path to proxy video file (provided by Elixir TempCache)
         source_video_id: Database ID of the source video
         threshold: Scene cut threshold (0.0-1.0)
         method: Comparison method name
@@ -55,47 +55,31 @@ def run_detect_scenes(
         logger.info(f"Starting scene detection for source_video_id: {source_video_id}")
         logger.info(f"Using proxy video: {proxy_video_path}")
         
-        # Handle both local paths (from temp cache) and S3 paths
-        temp_dir_created = False
-        temp_dir = None
+        # Elixir always provides local file paths via TempCache
+        if not Path(proxy_video_path).exists():
+            raise FileNotFoundError(f"Local proxy file not found: {proxy_video_path}")
         
-        try:
-            if Path(proxy_video_path).exists():
-                # Local file path (from temp cache)
-                logger.info(f"Using local proxy file: {proxy_video_path}")
-                local_proxy_path = Path(proxy_video_path)
-            else:
-                # S3 path - need to download
-                logger.info(f"Downloading proxy from S3: {proxy_video_path}")
-                temp_dir = tempfile.mkdtemp()
-                local_proxy_path = Path(temp_dir) / "proxy.mp4"
-                download_from_s3(proxy_video_path, local_proxy_path)
-                temp_dir_created = True
-            
-            # Open video
-            cap = cv2.VideoCapture(str(local_proxy_path))
-            if not cap.isOpened():
-                raise ValueError(f"Cannot open proxy video: {proxy_video_path}")
-            
-            # Get video properties
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            
-            # Detect scene cuts
-            cut_frames = detect_scene_cuts(cap, threshold, method, total_frames)
-            
-            # Build cut points for clips (not scenes)
-            cut_points = build_cut_points_from_cuts(cut_frames, fps, min_duration_seconds)
-            
-            cap.release()
-            
-        finally:
-            # Clean up temp directory if we created one
-            if temp_dir_created and temp_dir:
-                import shutil
-                shutil.rmtree(temp_dir, ignore_errors=True)
+        local_proxy_path = Path(proxy_video_path)
+        logger.info(f"Using local proxy file: {proxy_video_path}")
+        
+        # Open video
+        cap = cv2.VideoCapture(str(local_proxy_path))
+        if not cap.isOpened():
+            raise ValueError(f"Cannot open proxy video: {proxy_video_path}")
+        
+        # Get video properties
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        
+        # Detect scene cuts
+        cut_frames = detect_scene_cuts(cap, threshold, method, total_frames)
+        
+        # Build cut points for clips (not scenes)
+        cut_points = build_cut_points_from_cuts(cut_frames, fps, min_duration_seconds)
+        
+        cap.release()
         
         logger.info(f"Scene detection complete: found {len(cut_points)} valid cut points")
         
@@ -233,12 +217,6 @@ def build_scenes_from_cuts(cut_frames: List[int], fps: float, min_duration: floa
     return scenes
 
 
-def download_from_s3(s3_path: str, local_path: Path) -> None:
-    """Download file from S3 to local path using centralized S3 handler"""
-    from tasks.upload_s3 import get_s3_config, download_from_s3 as s3_download
-    
-    s3_client, bucket_name = get_s3_config()
-    s3_download(s3_client, bucket_name, s3_path, local_path)
 
 
 def main():

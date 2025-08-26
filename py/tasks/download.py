@@ -14,13 +14,13 @@ making handled by the Elixir YtDlpConfig module.
 ## Responsibilities:
 - yt-dlp execution with progress tracking
 - FFmpeg normalization execution
-- File handling and S3 upload
+- File handling and temp caching
 - Error reporting (not error decision making)
 
 ## Dependencies:
 - YtDlpConfig: Complete configuration from Elixir
 - FFmpegConfig: Normalization arguments from Elixir
-- S3: File storage and upload
+- TempCache: Local file storage for Elixir processing
 
 All business logic, quality assessment, and configuration is handled by Elixir.
 """
@@ -111,11 +111,11 @@ def run_download(
         timestamp: Timestamp for unique file naming (Elixir will generate final S3 path)
         download_config: Complete configuration from YtDlpConfig
         normalize_args: FFmpeg arguments for normalization (from FFmpegConfig)
-        use_temp_cache: If True, cache the file locally instead of uploading to S3
+        use_temp_cache: If True, cache the file locally for Elixir processing
         **kwargs: Additional options
     
     Returns:
-        dict: Structured data about the downloaded video including S3 path and metadata
+        dict: Structured data about the downloaded video including local path and metadata
         
     Raises:
         DownloadError: If yt-dlp download fails with all strategies
@@ -124,10 +124,7 @@ def run_download(
     logger.info(f"RUNNING DOWNLOAD for source_video_id: {source_video_id}")
     logger.info(f"Input: '{input_source}'")
 
-    # Get S3 resources from environment (provided by Elixir)
-    s3_bucket_name = os.getenv("S3_BUCKET_NAME")
-    if not s3_bucket_name:
-        raise ValueError("S3_BUCKET_NAME environment variable not set")
+    # Note: Elixir handles all S3 operations - Python only handles local file processing
 
     is_url = input_source.lower().startswith(("http://", "https://"))
     
@@ -172,15 +169,15 @@ def run_download(
             # Validate final video
             _validate_downloaded_file(final_path)
             
-            # Generate temporary S3 key for temp cache storage (Elixir will generate final path with real title)
-            temp_s3_key = f"originals/temp_{source_video_id}_{timestamp}.mp4"
+            # Generate temporary cache key for local storage (Elixir will generate final S3 path)
+            temp_cache_key = f"temp_{source_video_id}_{timestamp}.mp4"
             
             # Always use temp cache - Elixir will handle S3 upload with native operations
-            local_filepath = handle_temp_cache_storage(final_path, temp_s3_key)
+            local_filepath = handle_temp_cache_storage(final_path, temp_cache_key)
             
             # Return structured data for Elixir to process
             result = build_success_result(
-                temp_s3_key, metadata, final_path, local_filepath, s3_bucket_name, timestamp
+                temp_cache_key, metadata, final_path, local_filepath, timestamp
             )
             
             return result
@@ -527,12 +524,12 @@ def extract_video_metadata(video_path: Path) -> dict:
 # to eliminate coupling between Python and Elixir path generation logic
 
 
-def handle_temp_cache_storage(final_path: Path, s3_key: str) -> str:
+def handle_temp_cache_storage(final_path: Path, cache_key: str) -> str:
     """Handle temp cache storage for pipeline chaining"""
     persist_dir = Path(tempfile.gettempdir()) / "heaters_persistent"
     persist_dir.mkdir(exist_ok=True)
     
-    persist_filename = s3_key.replace("/", "_").replace("\\", "_")
+    persist_filename = cache_key.replace("/", "_").replace("\\", "_")
     persistent_path = persist_dir / persist_filename
     
     shutil.copy2(final_path, persistent_path)
@@ -541,14 +538,14 @@ def handle_temp_cache_storage(final_path: Path, s3_key: str) -> str:
     return str(persistent_path)
 
 
-def build_success_result(s3_key: str, metadata: dict, final_path: Path, 
-                        local_filepath: Optional[str], s3_bucket_name: str, timestamp: str) -> dict:
+def build_success_result(cache_key: str, metadata: dict, final_path: Path, 
+                        local_filepath: Optional[str], timestamp: str) -> dict:
     """Build success result dict for Elixir"""
     file_size = final_path.stat().st_size
     
     result = {
         "status": "success",
-        "filepath": s3_key,
+        "filepath": cache_key,  # Temporary cache key, Elixir will generate final S3 path
         "duration_seconds": metadata.get("duration_seconds"),
         "fps": metadata.get("fps"),
         "width": metadata.get("width"),
@@ -563,8 +560,7 @@ def build_success_result(s3_key: str, metadata: dict, final_path: Path,
             "transcoded": metadata.get('normalized', False),
             "download_method": metadata.get('download_method', 'unknown'),
             "processing_timestamp": datetime.utcnow().isoformat(),
-            "s3_key": s3_key,
-            "s3_bucket": s3_bucket_name,
+            "cache_key": cache_key,  # For Elixir temp cache reference
             "timestamp": timestamp
         }
     }

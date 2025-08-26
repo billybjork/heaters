@@ -44,7 +44,7 @@ defmodule Heaters.Processing.Export.Worker do
   - **10x Faster**: Stream copy vs re-encoding + no local downloads
   - **Zero Quality Loss**: No transcoding artifacts or generational loss
   - **Resource Efficient**: Minimal CPU and I/O usage
-  - **Unified Architecture**: Same foundations as playback cache system
+  - **Unified Architecture**: Same foundations as temp cache system
 
   ## Architecture (V2)
 

@@ -11,7 +11,7 @@ defmodule Heaters.Processing.Export.Core do
   - **10x Faster**: No local file downloads, processes directly from CloudFront URLs
   - **Zero Quality Loss**: Stream copy preserves original quality with audio
   - **Profile-Based**: Uses FFmpeg configuration system for maintainable settings
-  - **Unified Architecture**: Built on same foundations as playback cache system
+  - **Unified Architecture**: Built on same foundations as temp cache system
 
   ## Architecture
 
