@@ -1,16 +1,12 @@
 /**
  * Frame Navigator - Frame-accurate navigation for video review
  * 
- * Handles precise frame stepping, split operations, and coordinate system translation
- * for virtual subclips. This is the most critical part of the split functionality.
+ * Handles precise frame stepping and split operations for virtual subclips.
+ * Uses simplified server-side coordinate calculations to eliminate client-side
+ * brittleness while maintaining frame-accurate navigation.
  * 
- * COORDINATE SYSTEM DOCUMENTATION:
- * This module handles the complex translation between three coordinate systems:
- * 1. Source Video (absolute) - Database storage, cuts, validation
- * 2. Virtual Subclip (relative) - UI timeline, user interaction  
- * 3. Video Element (absolute source time) - video.currentTime, seeking
- * 
- * CRITICAL: video.currentTime is ALWAYS absolute source video time!
+ * KEY INSIGHT: All complex frame calculations now happen server-side using
+ * authoritative database FPS data. Client only sends relative time offsets.
  */
 
 export default class FrameNavigator {
@@ -54,26 +50,18 @@ export default class FrameNavigator {
   }
 
   /**
-   * CRITICAL: Frame Navigation for Virtual Subclips
+   * Frame Navigation for Virtual Subclips
    * 
    * Implements precise frame stepping using database FPS data for split mode.
-   * This function works with ABSOLUTE source video time coordinates.
+   * The video element maintains absolute source video time coordinates, while
+   * split calculations are handled server-side for reliability.
    * 
-   * COORDINATE HANDLING:
-   * - this.video.currentTime is ALWAYS absolute source video time
-   * - frameTime = 1/fps gives the time delta for one frame
-   * - targetTime = currentTime +/- frameTime stays in absolute coordinates
-   * - Virtual subclip boundaries are handled by timeupdate event handlers
-   * 
-   * EXAMPLE:
-   * - Clip spans 33.292s-35.708s in source video @ 24fps
-   * - frameTime = 1/24 = 0.04167s per frame
-   * - Current position: video.currentTime = 34.5s (absolute)
-   * - Step forward: targetTime = 34.5s + 0.04167s = 34.54167s (still absolute)
-   * - Split calculation later: (34.54167s - 33.292s) * 24fps + 799 = frame 829
-   * 
-   * This maintains consistency with the virtual subclip coordinate system
-   * and enables accurate split frame calculations.
+   * SIMPLIFIED APPROACH:
+   * - video.currentTime remains absolute source video time
+   * - frameTime = 1/fps gives the time delta for one frame  
+   * - targetTime = currentTime +/- frameTime (absolute coordinates)
+   * - Split operations send relative time offsets to server
+   * - Server handles all coordinate translation and frame calculations
    */
   navigateFrames(direction, frameCount = 1) {
     if (!this.splitModeActive) {
@@ -100,7 +88,14 @@ export default class FrameNavigator {
       return;
     }
 
-    const fps = this.clipInfo?.fps || 30.0;
+    // CRITICAL: FPS must come from database - never assume
+    const fps = this.clipInfo?.fps;
+    if (!fps || fps <= 0) {
+      console.error('[FrameNavigator] Missing or invalid FPS data - frame navigation disabled');
+      console.error('[FrameNavigator] ClipInfo:', this.clipInfo);
+      return;
+    }
+    
     const frameTime = 1 / fps;
     
     // Calculate target time in absolute source video coordinates
@@ -117,10 +112,11 @@ export default class FrameNavigator {
   }
 
   /**
-   * Commit split at current video position
+   * Commit split at current video position using simplified time offset approach
    * 
-   * Handles the complex coordinate translation from absolute video time
-   * to absolute frame number for the split operation.
+   * This eliminates the complex coordinate translation by sending the relative
+   * time offset to the server, which handles all frame calculations using
+   * authoritative database FPS data.
    */
   commitSplit() {
     if (!this.splitModeActive) {
@@ -129,67 +125,33 @@ export default class FrameNavigator {
     }
 
     const currentTime = this.video.currentTime;
-    const fps = this.clipInfo?.fps || 30.0; 
-    const clipStartFrame = this.clipInfo?.start_frame || 0;
     const clipStartTime = this.clipInfo?.start_time_seconds || 0;
+    const clipEndTime = this.clipInfo?.end_time_seconds || 0;
     
-    /**
-     * CRITICAL: Virtual Subclip Coordinate System Documentation
-     * 
-     * Virtual subclips use HTTP Range requests to stream video segments without
-     * creating temp files. This creates a complex coordinate system that MUST
-     * be handled correctly to avoid split operation failures.
-     * 
-     * COORDINATE SYSTEMS:
-     * 1. Source Video Coordinates (absolute):
-     *    - Time: 0s to video.duration_seconds (e.g., 50s video)
-     *    - Frames: 0 to (duration * fps) (e.g., 0-1200 @ 24fps)
-     * 
-     * 2. Virtual Subclip Coordinates (relative to clip start):
-     *    - Time: 0s to clip.duration_seconds (e.g., 0-2.4s for short clip)
-     *    - Frames: 0 to clip frame count (e.g., 0-58 frames)
-     * 
-     * 3. Database Clip Coordinates (absolute source positions):
-     *    - start_time_seconds: 33.292s (absolute time in source)
-     *    - end_time_seconds: 35.708s (absolute time in source)  
-     *    - start_frame: 799 (absolute frame in source)
-     *    - end_frame: 857 (absolute frame in source)
-     * 
-     * KEY INSIGHT: video.currentTime for virtual subclips is ABSOLUTE SOURCE TIME!
-     * 
-     * EXAMPLE CALCULATION:
-     * - Clip spans frames 799-857 (time 33.292s-35.708s) in source video
-     * - User seeks to middle: video.currentTime = 34.5s (ABSOLUTE source time)
-     * - Split calculation:
-     *   1. relativeTime = 34.5s - 33.292s = 1.208s (relative to clip start)
-     *   2. relativeFrame = 1.208s * 24fps = 29 frames (relative to clip start)
-     *   3. absoluteFrame = 799 + 29 = 828 (absolute frame in source - CORRECT)
-     * 
-     * WRONG CALCULATION (old bug):
-     *   absoluteFrame = 34.5s * 24fps = 828, then + 799 = 1627 (way outside clip!)
-     * 
-     * This coordinate translation is the most fragile part of virtual subclips.
-     * Any changes to video.currentTime handling MUST preserve this logic.
-     */
-    const relativeTime = currentTime - clipStartTime;
-    const relativeFrameNumber = Math.round(relativeTime * fps);
-    const absoluteFrameNumber = clipStartFrame + relativeFrameNumber;
-
-    // Bounds checking for robustness
-    const clipEndFrame = this.clipInfo.end_frame || (clipStartFrame + Math.round((this.clipInfo.duration_seconds || 1) * fps));
+    // Calculate relative time offset from clip start
+    const timeOffsetSeconds = currentTime - clipStartTime;
+    const clipDuration = clipEndTime - clipStartTime;
     
-    console.log(`[FrameNavigator] Split frame calculation:
-  Video time: ${currentTime.toFixed(3)}s
-  Clip start: ${clipStartTime}s (frame ${clipStartFrame})
-  Relative time: ${relativeTime.toFixed(3)}s
-  Calculated frame: ${absoluteFrameNumber} (within ${clipStartFrame}-${clipEndFrame})`);
+    console.log(`[FrameNavigator] Simplified split calculation:
+  Video time: ${currentTime.toFixed(3)}s (absolute source time)
+  Clip start: ${clipStartTime}s
+  Clip end: ${clipEndTime}s  
+  Time offset from clip start: ${timeOffsetSeconds.toFixed(3)}s
+  Clip duration: ${clipDuration.toFixed(3)}s`);
 
-    if (absoluteFrameNumber <= clipStartFrame || absoluteFrameNumber >= clipEndFrame) {
-      console.warn(`[FrameNavigator] Frame ${absoluteFrameNumber} is outside clip boundaries ${clipStartFrame}-${clipEndFrame}, skipping split`);
+    // Basic bounds checking (server will do authoritative validation)
+    if (timeOffsetSeconds <= 0.01) {
+      console.warn('[FrameNavigator] Split too close to clip start, skipping');
       return;
     }
 
-    this.pushEvent("split_at_frame", { frame_number: absoluteFrameNumber });
+    if (timeOffsetSeconds >= (clipDuration - 0.01)) {
+      console.warn('[FrameNavigator] Split too close to clip end, skipping');
+      return;
+    }
+
+    // Send relative time offset to server for authoritative frame calculation
+    this.pushEvent("split_at_time_offset", { time_offset_seconds: timeOffsetSeconds });
   }
 
   /**

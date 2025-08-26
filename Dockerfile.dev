@@ -1,6 +1,6 @@
 # For DEVELOPMENT environment
 
-FROM elixir:1.16.2-otp-26-slim
+FROM elixir:1.18.4-otp-26-slim
 
 # Install system-level dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

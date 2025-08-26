@@ -137,10 +137,11 @@ defmodule HeatersWeb.ClipPlayer do
           sv
 
         _ ->
-          # Fallback source video structure
+          # Fallback source video structure - NEVER assume FPS
+          Logger.warning("ClipPlayer: Clip #{clip.id} missing source_video association - frame navigation will be disabled")
           %{
             proxy_filepath: nil,
-            fps: 30.0
+            fps: nil
           }
       end
 
@@ -176,12 +177,15 @@ defmodule HeatersWeb.ClipPlayer do
     }
   end
 
-  # Helper to extract FPS from source video, with fallback
+  # Helper to extract FPS from source video - NEVER assume FPS values
   defp get_source_video_fps(clip) do
     case Map.get(clip, :source_video) do
-      %{fps: fps} when is_number(fps) and fps > 0 -> fps
-      # Fallback FPS if not available
-      _ -> 30.0
+      %{fps: fps} when is_number(fps) and fps > 0 -> 
+        fps
+      _ -> 
+        # CRITICAL: Log missing FPS but don't assume - let JavaScript handle gracefully
+        Logger.warning("ClipPlayer: Source video missing FPS data for clip #{clip.id} - frame navigation may be impaired")
+        nil
     end
   end
 

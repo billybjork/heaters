@@ -96,7 +96,15 @@ defmodule HeatersWeb.MediaController do
     start_time = parse_float(params["start"], 0.0)
     end_time = parse_float(params["end"], 10.0)
     duration = parse_float(params["duration"], end_time - start_time)
-    fps = parse_float(params["fps"], 30.0)
+    fps = parse_float(params["fps"], nil)
+    
+    # CRITICAL: FPS must be provided from database - never assume values
+    if is_nil(fps) or fps <= 0 do
+      Logger.error("MediaController: Missing or invalid FPS parameter for virtual clip streaming")
+      return conn
+      |> put_status(:bad_request)
+      |> json(%{error: "Invalid fps parameter - frame-accurate operations require database FPS"})
+    end
 
     # Extract IDs for logging
     video_id = parse_int(params["video_id"], 0)

@@ -3,7 +3,7 @@
 # -----------------------
 # 1) Build stage
 # -----------------------
-FROM elixir:1.16.2-otp-26-slim AS build
+FROM elixir:1.18.4-otp-26-slim AS build
 
 ENV MIX_ENV=prod
 
@@ -59,7 +59,7 @@ RUN mix release heaters --overwrite
 # -----------------------
 # 2) Runtime image
 # -----------------------
-FROM elixir:1.16.2-otp-26-slim AS app
+FROM elixir:1.18.4-otp-26-slim AS app
 
 # Install only essential runtime dependencies.
 # The Python executable is needed to run the scripts.

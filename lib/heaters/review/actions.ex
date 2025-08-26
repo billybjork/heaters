@@ -177,15 +177,72 @@ defmodule Heaters.Review.Actions do
     end)
   end
 
-  @doc "Handle a **split** request on `clip` at `frame_num`."
-  def request_split_and_fetch_next(%Clip{clip_filepath: nil} = clip, frame_num)
-      when is_integer(frame_num) do
-    # UNEXPORTED CLIPS: Instant split via cut point operations
-    handle_virtual_split(clip, frame_num)
+
+  @doc """
+  Handle a **split** request on `clip` at relative `time_offset_seconds`.
+  
+  This is the simplified server-side approach that eliminates coordinate system
+  complexity by handling all frame calculations on the server using authoritative
+  database FPS data.
+  
+  ## Parameters
+  - `clip`: The clip to split
+  - `time_offset_seconds`: Time offset from clip start (e.g., 1.5s into the clip)
+  
+  ## Returns
+  - `{next_clip, metadata}` on success
+  - `{:error, reason}` on failure
+  
+  ## Example
+  - Clip spans 33.292s-35.708s in source video
+  - User seeks to 1.5s relative to clip start  
+  - Server calculates: 33.292s + 1.5s = 34.792s absolute time
+  - Server calculates: 34.792s * 24fps = frame 835 (rounded)
+  - Uses existing cuts operation at frame 835
+  """
+  def request_split_at_time_offset(%Clip{clip_filepath: nil} = clip, time_offset_seconds)
+      when is_number(time_offset_seconds) do
+    # Load source video for FPS data
+    source_video = Repo.get!(Heaters.Media.Video, clip.source_video_id)
+    
+    # Server-side frame calculation using authoritative database FPS
+    absolute_time_seconds = clip.start_time_seconds + time_offset_seconds
+    
+    # CRITICAL: FPS must come from database - never assume a value
+    fps = case source_video.fps do
+      fps when is_number(fps) and fps > 0 -> fps
+      _ -> 
+        Logger.error("Review: Source video #{source_video.id} missing FPS data - cannot perform frame calculation")
+        return {:error, "Source video missing FPS data - frame-accurate operations require database FPS"}
+    end
+    
+    absolute_frame = round(absolute_time_seconds * fps)
+    
+    Logger.info("""
+    Review: Server-side split calculation for clip #{clip.id}:
+      Clip start: #{clip.start_time_seconds}s (frame #{clip.start_frame})
+      Time offset: #{time_offset_seconds}s
+      Calculated absolute time: #{absolute_time_seconds}s
+      FPS: #{fps}
+      Calculated absolute frame: #{absolute_frame}
+    """)
+    
+    # Validate frame is within clip boundaries
+    cond do
+      absolute_frame <= clip.start_frame ->
+        {:error, "Split frame #{absolute_frame} is at or before clip start (#{clip.start_frame})"}
+        
+      absolute_frame >= clip.end_frame ->
+        {:error, "Split frame #{absolute_frame} is at or after clip end (#{clip.end_frame})"}
+        
+      true ->
+        # Use existing cuts-based split operation
+        handle_virtual_split(clip, absolute_frame)
+    end
   end
 
-  def request_split_and_fetch_next(%Clip{} = _clip, _frame_num) do
-    # EXPORTED CLIPS: Not supported in cuts-based architecture
+  def request_split_at_time_offset(%Clip{}, _time_offset_seconds) do
+    # EXPORTED CLIPS: Not supported in cuts-based architecture  
     {:error, "Split operation only supported for virtual clips"}
   end
 
