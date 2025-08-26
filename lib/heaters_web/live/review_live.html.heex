@@ -20,7 +20,7 @@
         <article class="stack-center gap-4">
           <%!-- Clip player component --%>
             <%= if @current do %>
-              <.clip_player clip={@current} temp_clip={@temp_clip} id={"video-player-#{@current.id}"} />
+              <.clip_player clip={@current} id={"video-player-#{@current.id}"} />
               <% end %>
 
                 <!-- Action buttons ------------------------------------------------ -->

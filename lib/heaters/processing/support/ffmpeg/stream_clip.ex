@@ -16,7 +16,7 @@ defmodule Heaters.Processing.Support.FFmpeg.StreamClip do
 
   ## Supported Use Cases
 
-  - **Temporary Clips**: Fast preview generation for review UI (no audio, small files)
+  - **Virtual Clips**: Fast preview generation handled by HTTP Range requests (no FFmpeg needed)
   - **Final Exports**: High-quality permanent clips with audio preservation
   - **Custom Profiles**: Extensible via FFmpeg configuration system
 
@@ -25,12 +25,9 @@ defmodule Heaters.Processing.Support.FFmpeg.StreamClip do
   This module builds on the foundations laid by:
   - `Heaters.Storage.PlaybackCache.TempClip` - Original efficient implementation pattern
   - `Heaters.Processing.Support.FFmpeg.Config` - Profile-based configuration
-  - `Heaters.Storage.S3.ClipUrlGenerator` - CloudFront URL generation
+  - `Heaters.Storage.S3.ClipUrls` - CloudFront URL generation
 
   ## Usage
-
-      # Generate a temporary clip for browser preview
-      {:ok, temp_url} = StreamClip.generate_clip(clip, :temp_playback)
 
       # Generate a final export clip with audio
       {:ok, s3_path} = StreamClip.generate_clip(clip, :final_export, output_path: "exports/clip_123.mp4")
@@ -45,7 +42,7 @@ defmodule Heaters.Processing.Support.FFmpeg.StreamClip do
   require Logger
 
   alias Heaters.Processing.Support.FFmpeg.Config
-  alias Heaters.Storage.S3.ClipUrlGenerator
+  alias Heaters.Storage.S3.ClipUrls
   alias Heaters.Repo
 
   @ffmpeg_bin Application.compile_env(:heaters, :ffmpeg_bin, "/usr/bin/ffmpeg")
@@ -68,26 +65,21 @@ defmodule Heaters.Processing.Support.FFmpeg.StreamClip do
   ## Parameters
 
   - `clip`: Clip struct with timing and source video information
-  - `profile`: FFmpeg profile atom (e.g., `:temp_playback`, `:final_export`)
+  - `profile`: FFmpeg profile atom (e.g., `:final_export`)
   - `opts`: Generation options
 
   ## Options
 
-  - `:output_path` - Custom output path (required for final exports)
-  - `:upload_to_s3` - Whether to upload result to S3 (default: false for temp, true for final)
-  - `:cache_buster` - Add timestamp to prevent browser caching (default: true for temp)
+  - `:output_path` - Custom output path (required for exports)
+  - `:upload_to_s3` - Whether to upload result to S3 (default: true)
   - `:operation_name` - Name for logging (default: "StreamClip")
 
   ## Returns
 
-  - `{:ok, path_or_url}` - Success with file path (for temp) or S3 path (for final)
+  - `{:ok, s3_path}` - Success with S3 path
   - `{:error, reason}` - Failure with error description
 
   ## Examples
-
-      # Temporary clip for browser preview
-      {:ok, "/temp/clip_123_456789.mp4?t=123456"} =
-        StreamClip.generate_clip(clip, :temp_playback)
 
       # Final export with S3 upload
       {:ok, "clips/clip_123.mp4"} =
@@ -137,7 +129,7 @@ defmodule Heaters.Processing.Support.FFmpeg.StreamClip do
     if Application.get_env(:heaters, :app_env) == "development" do
       # In development, try CloudFront URL first, fallback to local test file
       try do
-        {:ok, url} = ClipUrlGenerator.generate_signed_cloudfront_url(proxy_filepath)
+        {:ok, url} = ClipUrls.generate_signed_cloudfront_url(proxy_filepath)
         {:ok, url}
       rescue
         _ ->
@@ -146,7 +138,7 @@ defmodule Heaters.Processing.Support.FFmpeg.StreamClip do
       end
     else
       # Production: use CloudFront URL
-      ClipUrlGenerator.generate_signed_cloudfront_url(proxy_filepath)
+      ClipUrls.generate_signed_cloudfront_url(proxy_filepath)
     end
   end
 
@@ -166,21 +158,13 @@ defmodule Heaters.Processing.Support.FFmpeg.StreamClip do
 
   @spec determine_output_path(clip_data(), atom(), generate_options()) ::
           {:ok, String.t()} | {:error, String.t()}
-  defp determine_output_path(clip, :temp_playback, _opts) do
-    # Generate unique temp file path with timestamp
-    timestamp = System.system_time(:millisecond)
-    filename = "clip_#{clip.id}_#{timestamp}.mp4"
-    {:ok, Path.join(@tmp_dir, filename)}
-  end
-
   defp determine_output_path(_clip, _profile, opts) do
     case Keyword.get(opts, :output_path) do
       nil ->
-        {:error, "output_path required for non-temp profiles"}
+        {:error, "output_path required"}
 
       path ->
-        # For non-temp profiles, use a local temp file first
-        # The S3 upload will happen in post-processing
+        # Use a local temp file first, S3 upload happens in post-processing
         filename = Path.basename(path)
         local_path = Path.join(@tmp_dir, filename)
         {:ok, local_path}
@@ -276,27 +260,8 @@ defmodule Heaters.Processing.Support.FFmpeg.StreamClip do
   end
 
   @spec handle_post_generation(String.t(), atom(), generate_options()) :: generate_result()
-  defp handle_post_generation(file_path, :temp_playback, opts) do
-    # For temp clips, return HTTP URL for browser access
-    operation_name = Keyword.get(opts, :operation_name, "StreamClip")
-    cache_buster = Keyword.get(opts, :cache_buster, true)
-
-    filename = Path.basename(file_path)
-
-    url =
-      if cache_buster do
-        timestamp = System.system_time(:second)
-        "/temp/#{filename}?t=#{timestamp}"
-      else
-        "/temp/#{filename}"
-      end
-
-    Logger.debug("#{operation_name}: Temp clip available at #{url}")
-    {:ok, url}
-  end
-
   defp handle_post_generation(file_path, _profile, opts) do
-    # For permanent clips, handle S3 upload if requested
+    # Handle S3 upload
     upload_to_s3 = Keyword.get(opts, :upload_to_s3, true)
     operation_name = Keyword.get(opts, :operation_name, "StreamClip")
 

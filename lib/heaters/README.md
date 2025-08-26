@@ -40,6 +40,13 @@ Heaters processes videos through a **cuts-based pipeline**: download → encodin
 - **`Review`**: Human workflow (queue management, actions)
 - **`Pipeline`**: Declarative orchestration (config, dispatcher, queries)
 
+### Consolidated Architecture
+
+Recent optimizations consolidated related functionality for improved maintainability:
+
+- **`Storage.S3.ClipUrls`**: Unified URL generation for both exported clips and virtual clips with auto-detection of optimal streaming format
+- **`MediaController`**: Consolidated video submission and virtual clip streaming endpoints with consistent error handling
+
 ### Type Safety & Data Integrity
 
 - **Ecto Enums**: All state fields (`ingest_state`, `artifact_type`, `strategy`, `generation_strategy`) use native Ecto enums
@@ -98,6 +105,69 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 - **Smart Cleanup**: Scheduled maintenance with LRU eviction and disk space monitoring
 - **Reactive Updates**: Phoenix LiveView reactive pattern eliminates manual refresh requirements
 
+### Virtual Clip Coordinate Systems
+
+**CRITICAL**: Virtual clips create a complex multi-layered coordinate system that must be handled correctly to prevent split operation failures. This is the most fragile part of the system.
+
+#### Three Coordinate Systems
+
+1. **Source Video Coordinates (Absolute)**
+   - Time: `0s` to `video.duration_seconds` (e.g., 50s total video)
+   - Frames: `0` to `duration * fps` (e.g., 0-1200 @ 24fps)
+   - Used by: Database storage, cut definitions, validation logic
+
+2. **Virtual Clip Coordinates (Relative to Clip)**  
+   - Time: `0s` to `clip.duration_seconds` (e.g., 0-2.4s for short clip)
+   - Frames: `0` to `clip frame count` (e.g., 0-58 frames) 
+   - Used by: UI timeline display, virtual controls, user interaction
+
+3. **Video Element Coordinates (Absolute Source Time)**
+   - **CRITICAL**: `video.currentTime` is **ALWAYS absolute source video time**
+   - Time: Matches source video coordinates (e.g., 34.5s absolute position)
+   - Used by: HTML video element, seeking operations, JavaScript calculations
+
+#### Coordinate Translation Logic
+
+**Split Frame Calculation** (`assets/js/review-hotkeys.js`):
+```javascript
+// CORRECT: Convert absolute time to relative, then to absolute frame
+const relativeTime = currentTime - clipStartTime;      // 34.5s - 33.292s = 1.208s  
+const relativeFrame = Math.round(relativeTime * fps);  // 1.208s * 24fps = 29 frames
+const absoluteFrame = clipStartFrame + relativeFrame;  // 799 + 29 = 828 (✓ valid)
+
+// WRONG: Treat currentTime as relative (old bug)
+const wrongFrame = clipStartFrame + Math.round(currentTime * fps); // 799 + 828 = 1627 (✗ invalid)
+```
+
+**Virtual Timeline Seeking** (`assets/js/clip-player.js`):
+```javascript  
+// Convert virtual timeline position to absolute source time
+const virtualTime = parseFloat(progressBar.value);     // 1.2s (relative to clip start)
+const actualTime = this.virtualClip.startTime + virtualTime; // 33.292s + 1.2s = 34.492s (absolute)
+this.video.currentTime = actualTime; // Sets absolute source position
+```
+
+#### Architecture Invariants
+
+**DO NOT MODIFY**:
+- `video.currentTime` must remain absolute source video time
+- Database clip coordinates must stay absolute (start_time_seconds, start_frame)
+- Frame calculation must use: `(currentTime - clipStartTime) * fps + clipStartFrame`
+
+**Safe to modify**:
+- Virtual controls UI and timeline display
+- Progress bar ranges and visual presentation  
+- Seeking debouncing and performance optimizations
+
+#### Common Bugs to Avoid
+
+1. **Double-counting start offset**: Adding clipStartTime to already-absolute currentTime
+2. **Coordinate system confusion**: Treating absolute time as relative to clip
+3. **Frame boundary errors**: Not validating calculated frames against clip boundaries
+4. **FPS inconsistency**: Using hardcoded FPS instead of database fps value
+
+This coordinate system enables virtual clips to work without temp files while maintaining frame-accurate navigation and split operations.
+
 ### Frontend Architecture (LiveView 1.1)
 - **Colocated Hooks**: JavaScript code embedded directly in Phoenix components
 - **Change Tracking**: `:key` attributes for optimized list rendering performance
@@ -118,7 +188,7 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 - **FFmpeg**: Native Elixir with encoding profiles centralized in `Processing.Support.FFmpeg.Config`
 - **Unified Clip Generation**: Single abstraction (`Processing.Support.FFmpeg.StreamClip`) handles both temp and export clips
 - **Frame-Perfect Encoding**: All-I H.264 with CFR encoding for reliable seeking in review interface
-- **HTTP Range Requests**: VideoController serves temp files with 206 Partial Content support
+- **HTTP Range Requests**: MediaController serves virtual clips with 206 Partial Content support
 - **Direct CloudFront Processing**: No local downloads, processes directly from CloudFront URLs with stream copy
 - **Video Processing**: Native Elixir implementations for encoding, export, and S3 operations with structured result types
 - **Specialized Python**: Selective integration for yt-dlp downloads, OpenCV scene detection, and ML embeddings
@@ -221,7 +291,7 @@ config :heaters,
 
 **Frame Navigation Problems**
 - Verify 206 Partial Content responses in DevTools Network tab (not 200 OK)
-- Check Accept-Ranges: bytes header is present on /temp requests
+- Check Accept-Ranges: bytes header is present on virtual clip requests
 - Confirm `temp_playback` profile uses stream copy from all-I proxy files
 - Validate FPS data is present in clip_info JSON
 - Look for "handleEvent overwrites" warnings (hook conflicts)

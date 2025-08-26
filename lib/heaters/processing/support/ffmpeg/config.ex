@@ -296,25 +296,6 @@ defmodule Heaters.Processing.Support.FFmpeg.Config do
         container: "image2"
       },
 
-      # Temporary clip generation for instant playback and split-mode navigation
-      # Uses stream copy from all-I proxies; no re-encode
-      temp_playback: %{
-        purpose: "Temp clip for review (split-mode ready)",
-        optimization: "Stream copy from proxy; instant and seekable",
-        video: %{
-          codec: "copy",
-          # don't force CFR; use DB fps only if you *need* to re-encode someday
-          framerate: nil
-        },
-        # keep temp clips silent to save bytes
-        no_audio: true,
-        container: "mp4",
-        web_optimization: %{
-          movflags: "+faststart",
-          avoid_negative_ts: "make_zero"
-        }
-      },
-
       # Final export for permanent clips using stream copy with audio preservation
       final_export: %{
         purpose: "Final export for permanent clips using stream copy",

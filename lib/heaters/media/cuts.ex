@@ -194,7 +194,7 @@ defmodule Heaters.Media.Cuts do
         preconditions: [
           {:cut_within_segment, "Cut must be within existing segment boundaries"},
           {:minimum_segment_size, minimum_segment_frames(),
-           "Segments must be at least #{minimum_segment_frames()} frames"},
+           "Segments must be at least #{minimum_segment_frames()} frame"},
           {:not_duplicate_cut, "Cut cannot be at existing cut position"}
         ],
         effects: [
@@ -338,12 +338,12 @@ defmodule Heaters.Media.Cuts do
   @doc """
   Minimum number of frames required for a segment.
 
-  Prevents creating segments that are too short to be meaningful.
+  Set to 1 to allow splits of any duration while preventing degenerate segments.
   Can be overridden via application config.
   """
   @spec minimum_segment_frames() :: integer()
   def minimum_segment_frames do
-    Application.get_env(:heaters, :minimum_segment_frames, 30)
+    Application.get_env(:heaters, :minimum_segment_frames, 1)
   end
 
   @doc """

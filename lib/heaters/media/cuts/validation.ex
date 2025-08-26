@@ -89,6 +89,11 @@ defmodule Heaters.Media.Cuts.Validation do
 
   Used for add_cut operations to ensure the new cut point falls within
   a valid segment boundary.
+
+  CRITICAL: This validation expects absolute source video frame numbers.
+  Virtual subclip split operations must convert from virtual coordinates
+  before calling this function. See assets/js/review-hotkeys.js for the
+  correct coordinate translation: (currentTime - clipStartTime) * fps + clipStartFrame
   """
   @spec validate_cut_within_segment(integer(), integer()) :: :ok | {:error, String.t()}
   def validate_cut_within_segment(source_video_id, frame_number) do

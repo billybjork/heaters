@@ -5,7 +5,7 @@ import { Socket } from "phoenix"
 import { LiveSocket } from "phoenix_live_view"
 
 import { HoverPlay, ThumbHoverPlayer } from "./hover-play";
-import ClipPlayer from "./clip-player-hook";
+import ClipPlayer from "./clip-player";
 import ReviewHotkeys from "./review-hotkeys";
 
 // Pull the CSRF token from the page

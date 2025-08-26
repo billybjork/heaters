@@ -18,7 +18,7 @@ defmodule Heaters.Processing.Export.Core do
   This module leverages:
   - `Heaters.Processing.Support.FFmpeg.StreamClip` - Unified clip generation
   - `Heaters.Processing.Support.FFmpeg.Config` - Profile-based configuration
-  - `Heaters.Storage.S3.ClipUrlGenerator` - CloudFront URL generation
+  - `Heaters.Storage.S3.ClipUrls` - CloudFront URL generation
 
   ## Performance Benefits
 

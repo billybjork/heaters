@@ -15,8 +15,6 @@ defmodule HeatersWeb.ReviewLive do
   @prefetch 6
   @refill_threshold 3
   @history_limit 5
-  # Sequential pre-warming: generate cache for next N clips per source video
-  @sequential_prefetch_count 4
 
   # -------------------------------------------------------------------------
   # Mount – build initial queue
@@ -71,28 +69,16 @@ defmodule HeatersWeb.ReviewLive do
           current: nil,
           future: [],
           history: [],
-          temp_clip: %{},
           pending_actions: %{},
           split_mode: false
         )
 
       [cur | fut] ->
-        # Subscribe to temp clip events for all clips
-        all_clips = [cur | fut]
-
-        Enum.each(all_clips, fn clip ->
-          Phoenix.PubSub.subscribe(Heaters.PubSub, "clips:#{clip.id}")
-        end)
-
-        # Trigger background prefetch for next clips
-        trigger_background_prefetch([cur | Enum.take(fut, 2)])
-
         assign(socket,
           current: cur,
           future: fut,
           history: [],
           page_state: :reviewing,
-          temp_clip: %{},
           pending_actions: %{},
           split_mode: false
         )
@@ -116,22 +102,11 @@ defmodule HeatersWeb.ReviewLive do
         history_clips = ClipReview.clips_before(target_clip_id, before_count)
         future_clips = ClipReview.clips_after(target_clip_id, after_count)
 
-        # Subscribe to temp clip events for all clips
-        all_clips = [target_clip | history_clips ++ future_clips]
-
-        Enum.each(all_clips, fn clip ->
-          Phoenix.PubSub.subscribe(Heaters.PubSub, "clips:#{clip.id}")
-        end)
-
-        # Trigger background prefetch for current and next few clips
-        trigger_background_prefetch([target_clip | Enum.take(future_clips, 2)])
-
         assign(socket,
           current: target_clip,
           future: future_clips,
           history: Enum.reverse(history_clips),
           page_state: :reviewing,
-          temp_clip: %{},
           pending_actions: %{},
           split_mode: false
         )
@@ -206,7 +181,6 @@ defmodule HeatersWeb.ReviewLive do
         future: [cur | fut],
         history: rest,
         page_state: :reviewing,
-        temp_clip: %{},
         split_mode: false
       )
       |> refill_future()
@@ -230,6 +204,13 @@ defmodule HeatersWeb.ReviewLive do
       |> assign(split_mode: new_split_mode)
       |> push_event("split_mode_changed", %{split_mode: new_split_mode})
 
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("split_mode_changed", %{"active" => active}, socket) do
+    # Handle split mode state changes from JavaScript
+    socket = assign(socket, split_mode: active)
     {:noreply, socket}
   end
 
@@ -287,14 +268,6 @@ defmodule HeatersWeb.ReviewLive do
       needed = @prefetch - (length(assigns.future) + 1)
       new_clips = ClipReview.next_pending_review_clips(needed, exclude_ids)
 
-      # Subscribe to temp clip events for new clips
-      Enum.each(new_clips, fn clip ->
-        Phoenix.PubSub.subscribe(Heaters.PubSub, "clips:#{clip.id}")
-      end)
-
-      # Trigger background prefetch for newly loaded clips
-      trigger_background_prefetch(new_clips)
-
       update(socket, :future, &(&1 ++ new_clips))
     else
       socket
@@ -308,148 +281,12 @@ defmodule HeatersWeb.ReviewLive do
   end
 
   defp advance_queue(%{assigns: %{future: []}} = socket) do
-    assign(socket, current: nil, page_state: :empty, temp_clip: %{})
+    assign(socket, current: nil, page_state: :empty)
   end
 
   defp advance_queue(%{assigns: %{future: [next | rest]}} = socket) do
-    # Trigger background prefetch for the next few clips when advancing
-    upcoming_clips = Enum.take([next | rest], 2)
-    trigger_background_prefetch(upcoming_clips)
-
     socket
-    |> assign(current: next, future: rest, page_state: :reviewing, temp_clip: %{})
-  end
-
-  # -------------------------------------------------------------------------
-  # Background prefetch helpers
-  # -------------------------------------------------------------------------
-
-  defp trigger_background_prefetch(clips) when is_list(clips) do
-    # Only prefetch clips without exported files in development (where sync generation causes delays)
-    if Application.get_env(:heaters, :app_env) == "development" do
-      clips_to_process =
-        clips
-        # Only clips that haven't been exported yet (nil clip_filepath)
-        |> Enum.filter(fn clip -> is_nil(clip.clip_filepath) end)
-
-      # Process immediate clips first
-      Enum.each(clips_to_process, &maybe_trigger_background_generation/1)
-
-      # Pre-warm additional clips from the same source videos for sequential review
-      # Only do this if we have clips to process (avoids unnecessary DB queries)
-      if length(clips_to_process) > 0 do
-        trigger_sequential_prewarming(clips_to_process)
-      end
-    end
-  end
-
-  defp maybe_trigger_background_generation(clip) do
-    # Smart Prefetch Logic:
-    # Check if this clip already has a temp file or generation in progress
-    # by trying to generate the URL - if it fails or is loading, queue background generation.
-    # Oban uniqueness constraints prevent duplicate jobs for the same clip.
-    case Heaters.Storage.S3.ClipUrlGenerator.get_video_url(clip, clip.source_video || %{}) do
-      {:error, _reason} ->
-        # Queue background generation via Oban worker (with uniqueness constraints)
-        job_result =
-          %{clip_id: clip.id}
-          |> Heaters.Storage.PlaybackCache.Worker.new()
-          |> Oban.insert()
-
-        case job_result do
-          {:ok, %Oban.Job{}} ->
-            :ok
-
-          {:error, %Ecto.Changeset{errors: [unique: _]}} ->
-            :ok
-
-          {:error, reason} ->
-            Logger.warning(
-              "ReviewLive: Failed to queue job for clip #{clip.id}: #{inspect(reason)}"
-            )
-        end
-
-      {:loading, nil} ->
-        # Temp clip needs to be generated - queue background generation (with uniqueness constraints)
-        job_result =
-          %{clip_id: clip.id}
-          |> Heaters.Storage.PlaybackCache.Worker.new()
-          |> Oban.insert()
-
-        case job_result do
-          {:ok, %Oban.Job{}} ->
-            :ok
-
-          {:error, %Ecto.Changeset{errors: [unique: _]}} ->
-            :ok
-
-          {:error, reason} ->
-            Logger.warning(
-              "ReviewLive: Failed to queue job for clip #{clip.id}: #{inspect(reason)}"
-            )
-        end
-
-      {:ok, _url, _type} ->
-        # Already available, no need to prefetch
-        :ok
-    end
-  rescue
-    # Gracefully handle any errors in prefetch - don't break the main flow
-    _error -> :ok
-  end
-
-  # Pre-warm additional clips from the same source videos for sequential review
-  defp trigger_sequential_prewarming(clips) when is_list(clips) do
-    # Sequential Prewarming Optimization:
-    # When users review clips sequentially from the same source video,
-    # pre-generate the next N clips to reduce wait times. This excludes
-    # clips already being processed to avoid duplicate work.
-
-    # Get unique source video IDs from current clips
-    source_video_ids =
-      clips
-      |> Enum.map(& &1.source_video_id)
-      |> Enum.uniq()
-
-    # Get clip IDs that are already being processed to avoid duplicates
-    already_processing_ids = Enum.map(clips, & &1.id)
-
-    # For each source video, pre-warm the next N clips in review queue order
-    Enum.each(
-      source_video_ids,
-      &prefetch_next_clips_for_video(&1, @sequential_prefetch_count, already_processing_ids)
-    )
-  end
-
-  defp prefetch_next_clips_for_video(source_video_id, prefetch_count, exclude_clip_ids) do
-    # Get the next clips for this source video in review order
-    # Use a direct query to avoid loading full associations for prefetch
-    import Ecto.Query
-    alias Heaters.Repo
-
-    next_clips =
-      from(c in Heaters.Media.Clip,
-        join: sv in assoc(c, :source_video),
-        where: c.source_video_id == ^source_video_id,
-        where: c.ingest_state == :pending_review,
-        where: is_nil(c.clip_filepath),
-        # Exclude clips that are already being processed
-        where: c.id not in ^exclude_clip_ids,
-        # Only include clips where proxy is available (same filters as review queue)
-        where: not is_nil(sv.proxy_filepath),
-        where: not is_nil(sv.cache_persisted_at),
-        order_by: [asc: c.id],
-        limit: ^prefetch_count,
-        preload: [:source_video]
-      )
-      |> Repo.all()
-
-    # Queue background generation for these clips
-    # Note: Oban uniqueness constraints prevent duplicate jobs for same clip_id
-    Enum.each(next_clips, &maybe_trigger_background_generation/1)
-  rescue
-    # Gracefully handle any database errors in prefetch
-    _error -> :ok
+    |> assign(current: next, future: rest, page_state: :reviewing)
   end
 
   # -------------------------------------------------------------------------
@@ -527,56 +364,6 @@ defmodule HeatersWeb.ReviewLive do
     Logger.error("Background persist for clip #{clip_id} crashed: #{inspect(reason)}")
     # Don't show error flashes for background operations
     {:noreply, socket}
-  end
-
-  # -------------------------------------------------------------------------
-  # PubSub message handlers
-  # -------------------------------------------------------------------------
-
-  @impl true
-  def handle_info(
-        %{
-          topic: "clips:" <> _clip_id,
-          event: "temp_ready",
-          payload: %{path: path, clip_id: clip_id}
-        },
-        socket
-      ) do
-    require Logger
-    Logger.info("ReviewLive: Received temp_ready for clip #{clip_id}, path: #{path}")
-
-    # Check if this is for the current clip being reviewed
-    current_clip_id = socket.assigns[:current] && socket.assigns.current.id
-
-    if current_clip_id && current_clip_id == clip_id do
-      # Reactive Pattern Implementation:
-      # Store temp clip info in assigns separately from the clip struct.
-      # This triggers the updated() lifecycle in the JavaScript ClipPlayerController,
-      # which detects the state change and automatically loads the video without
-      # requiring manual push_event calls or page refreshes.
-      temp_clip_info = %{
-        clip_id: clip_id,
-        url: path,
-        ready: true
-      }
-
-      {:noreply, assign(socket, temp_clip: temp_clip_info)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  @impl true
-  def handle_info(
-        %{
-          topic: "clips:" <> _clip_id,
-          event: "temp_error",
-          payload: %{error: error, clip_id: clip_id}
-        },
-        socket
-      ) do
-    # Send error event to JavaScript hook
-    {:noreply, push_event(socket, "temp_clip_error", %{clip_id: clip_id, error: error})}
   end
 
   # -------------------------------------------------------------------------
