@@ -53,7 +53,7 @@ export default {
 
       // Undo – ⌘/Ctrl+Z (UI-level only)
       if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
-        this.pushEvent("undo_last_action", {});
+        this.pushEvent("undo", {});
         e.preventDefault();
         return;
       }

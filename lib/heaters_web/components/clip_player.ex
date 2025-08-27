@@ -64,7 +64,7 @@ defmodule HeatersWeb.ClipPlayer do
   attr(:id, :string, default: nil)
   attr(:class, :string, default: "")
   attr(:controls, :boolean, default: true)
-  attr(:preload, :string, default: "metadata")
+  attr(:preload, :string, default: nil)
 
   def clip_player(assigns) do
     # Get video URL and player type for the clip
@@ -72,6 +72,14 @@ defmodule HeatersWeb.ClipPlayer do
 
     # Use a stable ID based on clip to prevent unnecessary DOM recreation
     video_id = assigns.id || "video-player-#{assigns.clip.id}"
+    
+    # Optimize preload strategy for virtual clips
+    preload_strategy = 
+      case {player_type, assigns.preload} do
+        {"virtual_clip", nil} -> "metadata"  # Load metadata but not full video
+        {_, nil} -> "metadata"              # Default for other player types
+        {_, custom} -> custom               # User-specified override
+      end
 
     assigns =
       assigns
@@ -80,6 +88,7 @@ defmodule HeatersWeb.ClipPlayer do
       |> assign(:clip_info, clip_info)
       |> assign(:video_id, video_id)
       |> assign(:clip_key, "clip-#{assigns.clip.id}")
+      |> assign(:preload_strategy, preload_strategy)
 
     ~H"""
     <figure class="video-player-container" id={"video-container-#{@clip.id}"} role="img" aria-label={"Video clip player for clip #{@clip.id}"}>
@@ -90,7 +99,7 @@ defmodule HeatersWeb.ClipPlayer do
             class={["video-player", @class]}
             controls={@controls}
             muted
-            preload={@preload}
+            preload={@preload_strategy}
             playsinline
             crossorigin="anonymous"
             phx-hook="ClipPlayer"
