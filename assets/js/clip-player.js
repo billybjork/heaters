@@ -143,6 +143,12 @@ export default {
       });
     }
     this.eventHandlers = null;
+    
+    // Clean up click handler
+    if (this.clickHandler && this.video) {
+      this.video.removeEventListener('click', this.clickHandler);
+    }
+    this.clickHandler = null;
   },
 
   /**
@@ -208,6 +214,24 @@ export default {
     Object.entries(this.eventHandlers).forEach(([event, handler]) => {
       this.video.addEventListener(event, handler);
     });
+    
+    // Add click handler for pause/unpause functionality
+    this.clickHandler = (e) => {
+      // Prevent default behavior and event propagation
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // Toggle play/pause state
+      if (this.video.paused) {
+        this.video.play().catch(e => {
+          console.log('[ClipPlayer] Play failed:', e.message);
+        });
+      } else {
+        this.video.pause();
+      }
+    };
+    
+    this.video.addEventListener('click', this.clickHandler);
   },
 
   /**

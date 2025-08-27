@@ -5,6 +5,11 @@
  * Uses simplified server-side coordinate calculations to eliminate client-side
  * brittleness while maintaining frame-accurate navigation.
  * 
+ * Features:
+ * - Progressive navigation acceleration: 1x → 2x → 4x → 8x → 16x frame steps
+ * - Smart repeat detection within 300ms window
+ * - Automatic reset when changing directions or pausing
+ * 
  * KEY INSIGHT: All complex frame calculations now happen server-side using
  * authoritative database FPS data. Client only sends relative time offsets.
  */
@@ -17,6 +22,15 @@ export default class FrameNavigator {
     this.seekInProgress = false;
     this.clipInfo = null;
     this._seekAttempts = 0;
+    
+    // Progressive navigation acceleration
+    this._navigationAcceleration = {
+      lastDirection: null,
+      repeatCount: 0,
+      lastNavigationTime: 0,
+      accelerationThreshold: 300, // ms - time window for repeat detection
+      accelerationLevels: [1, 2, 4, 8, 16] // frame steps per navigation
+    };
   }
 
   /**
@@ -24,6 +38,13 @@ export default class FrameNavigator {
    */
   enterSplitMode(clipInfo) {
     console.log('[FrameNavigator] Entering split mode');
+    
+    // Defensive check for video element
+    if (!this.video) {
+      console.error('[FrameNavigator] Cannot enter split mode - video element is null');
+      return;
+    }
+    
     this.splitModeActive = true;
     this.clipInfo = clipInfo;
     this._seekAttempts = 0;
@@ -44,6 +65,18 @@ export default class FrameNavigator {
     this.seekInProgress = false;
     this.clipInfo = null;
     this._seekAttempts = 0;
+    
+    // Reset navigation acceleration
+    this._navigationAcceleration.lastDirection = null;
+    this._navigationAcceleration.repeatCount = 0;
+    this._navigationAcceleration.lastNavigationTime = 0;
+    
+    // Resume playback when exiting split mode (user expectation)
+    if (this.video && this.video.paused) {
+      this.video.play().catch(e => {
+        console.log('[FrameNavigator] Auto-play after split mode failed:', e.message);
+      });
+    }
     
     // Notify LiveView of split mode change  
     this.pushEvent('split_mode_changed', { active: false });
@@ -82,7 +115,17 @@ export default class FrameNavigator {
     // Reset attempt counter on successful seek
     this._seekAttempts = 0;
     
-    // Check if video is ready for seeking
+    // Calculate accelerated frame count based on repeat navigation
+    const acceleratedFrameCount = this._calculateAcceleratedFrameCount(direction, frameCount);
+    console.log(`[FrameNavigator] Navigating ${acceleratedFrameCount} frames ${direction} (repeat count: ${this._navigationAcceleration.repeatCount})`);
+    frameCount = acceleratedFrameCount;
+    
+    // Check if video element exists and is ready for seeking
+    if (!this.video) {
+      console.error('[FrameNavigator] Frame navigation failed - video element is null');
+      return;
+    }
+    
     if (this.video.readyState < 2) {
       console.log('[FrameNavigator] Frame navigation ignored - video not ready for seeking');
       return;
@@ -177,6 +220,35 @@ export default class FrameNavigator {
     };
     
     this.video.addEventListener('seeked', onSeeked);
+  }
+
+  /**
+   * Calculate accelerated frame count for rapid navigation
+   * Implements progressive speed-up when holding arrow keys
+   */
+  _calculateAcceleratedFrameCount(direction, baseFrameCount) {
+    const now = Date.now();
+    const acc = this._navigationAcceleration;
+    
+    // Check if this is a repeat in the same direction within the threshold
+    const isRepeat = acc.lastDirection === direction && 
+                    (now - acc.lastNavigationTime) <= acc.accelerationThreshold;
+    
+    if (isRepeat) {
+      // Increase repeat count and accelerate
+      acc.repeatCount = Math.min(acc.repeatCount + 1, acc.accelerationLevels.length - 1);
+    } else {
+      // Reset acceleration for new direction or after pause
+      acc.repeatCount = 0;
+    }
+    
+    // Update tracking state
+    acc.lastDirection = direction;
+    acc.lastNavigationTime = now;
+    
+    // Calculate accelerated frame count
+    const multiplier = acc.accelerationLevels[acc.repeatCount];
+    return baseFrameCount * multiplier;
   }
 
   /**

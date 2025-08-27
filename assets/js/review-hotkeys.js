@@ -4,6 +4,13 @@
  * Handles keyboard shortcuts for review actions (approve, archive, group, merge, etc.)
  * and integrates with FrameNavigator for split mode operations.
  * 
+ * Key bindings:
+ * - Space: pause/unpause video
+ * - Left/Right arrows: enter split mode and navigate frames
+ * - Enter: commit armed action or split in split mode  
+ * - Escape: exit split mode
+ * - A/R/G/M/U: arm review actions (approve/archive/group/merge/undo)
+ * 
  * This module focuses purely on keyboard event handling and action dispatch.
  * Frame navigation and coordinate calculations are handled by FrameNavigator.
  */
@@ -26,6 +33,12 @@ export default {
     
     this.setupEventHandlers();
     this.setupSplitModeListener();
+    this.connectToClipPlayer();
+  },
+
+  updated() {
+    console.log('[ReviewHotkeys] Updated - reconnecting to ClipPlayer');
+    // Re-establish connection to new ClipPlayer instance
     this.connectToClipPlayer();
   },
 
@@ -123,14 +136,16 @@ export default {
       }
     }
 
-    // Space: toggle split mode
+    // Space: toggle pause/unpause
     if (e.key === ' ') {
-      if (this.frameNavigator) {
-        if (this.frameNavigator.isSplitModeActive()) {
-          this.frameNavigator.exitSplitMode();
+      const videoElement = document.querySelector('video[phx-hook="ClipPlayer"]');
+      if (videoElement) {
+        if (videoElement.paused) {
+          videoElement.play().catch(e => {
+            console.log('[ReviewHotkeys] Play failed:', e.message);
+          });
         } else {
-          const clipInfo = this._getClipInfo();
-          this.frameNavigator.enterSplitMode(clipInfo);
+          videoElement.pause();
         }
         e.preventDefault();
         return;
