@@ -86,15 +86,19 @@ defmodule HeatersWeb.ReviewLive do
         # Trigger background prefetch for next clips
         trigger_background_prefetch([cur | Enum.take(fut, 2)])
 
-        assign(socket,
-          current: cur,
-          future: fut,
-          history: [],
-          page_state: :reviewing,
-          temp_clip: %{},
-          pending_actions: %{},
-          split_mode: false
-        )
+        socket =
+          assign(socket,
+            current: cur,
+            future: fut,
+            history: [],
+            page_state: :reviewing,
+            temp_clip: %{},
+            pending_actions: %{},
+            split_mode: false
+          )
+
+        # Update URL to include the clip ID parameter for the first clip
+        update_url_for_current_clip(socket)
     end
   end
 
