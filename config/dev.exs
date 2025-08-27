@@ -90,6 +90,12 @@ config :heaters, HeatersWeb.Endpoint,
 # Do not include metadata nor timestamps in development logs
 config :logger, :console, format: "[$level] $message\n"
 
+# Suppress harmless LiveReloader debug noise (duplicate channel joins are normal in development)
+config :logger,
+  compile_time_purge_matching: [
+    [module: Phoenix.LiveReloader.Socket, level_lower_than: :info]
+  ]
+
 # Ecto query logging is disabled in the database sections above for cleaner logs
 # To re-enable query logging, change `log: false` to `log: :debug` in both database configs
 
@@ -123,7 +129,9 @@ config :heaters, Oban,
   plugins: [
     {Oban.Plugins.Cron,
      crontab: [
-       {"* * * * *", Heaters.Pipeline.Dispatcher}
+       {"* * * * *", Heaters.Pipeline.Dispatcher},
+       # Every 5 minutes, clean up temp clip cache
+       {"*/5 * * * *", Heaters.Storage.PlaybackCache.CleanupWorker}
      ]}
   ],
   queues: [
@@ -132,7 +140,9 @@ config :heaters, Oban,
     # Reduced from 8 - only 1 concurrent video processing
     media_processing: 1,
     # Keep dispatcher and light operations
-    background_jobs: 2
+    background_jobs: 2,
+    # For temp clip generation (background prefetch)
+    temp_clips: 2
   ]
 
 # Enable development-specific routes if you have them

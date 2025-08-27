@@ -17,8 +17,6 @@
 
 export default {
   mounted() {
-    console.log('[ReviewHotkeys] Mounted');
-    
     this.keyMap = {
       'a': 'approve',
       'r': 'archive', 
@@ -37,13 +35,11 @@ export default {
   },
 
   updated() {
-    console.log('[ReviewHotkeys] Updated - reconnecting to ClipPlayer');
     // Re-establish connection to new ClipPlayer instance
     this.connectToClipPlayer();
   },
 
   destroyed() {
-    console.log('[ReviewHotkeys] Destroyed');
     document.removeEventListener('keydown', this._onKeyDown);
     document.removeEventListener('keyup', this._onKeyUp);
   },
@@ -66,7 +62,11 @@ export default {
 
       // Undo – ⌘/Ctrl+Z (UI-level only)
       if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
-        this.pushEvent("undo", {});
+        try {
+          this.pushEvent("undo", {});
+        } catch (error) {
+          console.log('[ReviewHotkeys] Could not send undo event:', error.message);
+        }
         e.preventDefault();
         return;
       }
@@ -209,22 +209,43 @@ export default {
    */
   setFrameNavigator(frameNavigator) {
     this.frameNavigator = frameNavigator;
-    console.log('[ReviewHotkeys] FrameNavigator connected');
   },
 
   /**
    * Connect to ClipPlayer's FrameNavigator (called after mount)
    */
   connectToClipPlayer() {
-    // Give ClipPlayer a moment to initialize, then connect
-    setTimeout(() => {
+    // Clear existing connection
+    this.frameNavigator = null;
+    
+    // Try immediate connection first
+    const videoElement = document.querySelector('video[phx-hook="ClipPlayer"]');
+    if (videoElement?._clipPlayer?.getFrameNavigator) {
+      this.frameNavigator = videoElement._clipPlayer.getFrameNavigator();
+      return;
+    }
+    
+    // If not found, watch for video element to appear
+    let attempts = 0;
+    const maxAttempts = 20; // 10 seconds total
+    
+    const tryConnect = () => {
+      attempts++;
       const videoElement = document.querySelector('video[phx-hook="ClipPlayer"]');
+      
       if (videoElement?._clipPlayer?.getFrameNavigator) {
         this.frameNavigator = videoElement._clipPlayer.getFrameNavigator();
-        console.log('[ReviewHotkeys] Connected to FrameNavigator');
-      } else {
-        console.warn('[ReviewHotkeys] Could not find ClipPlayer FrameNavigator');
+        return;
       }
-    }, 100);
+      
+      if (attempts < maxAttempts) {
+        setTimeout(tryConnect, 500);
+      } else {
+        console.warn('[ReviewHotkeys] Could not find ClipPlayer after ' + attempts + ' attempts');
+      }
+    };
+    
+    // Start trying
+    setTimeout(tryConnect, 100);
   }
 };

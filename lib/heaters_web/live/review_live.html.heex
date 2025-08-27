@@ -18,20 +18,10 @@
       <% else %>
 
         <article class="stack-center gap-4">
-          <%!-- Current clip player --%>
-          <%= if @current do %>
-            <.clip_player clip={@current} id={"video-player-#{@current.id}"} />
-            
-            <%!-- Browser prefetch optimization: loads next clip metadata in background for instant transitions --%>
-            <%= if length(@future) > 0 do %>
-              <% next_clip = hd(@future) %>
-              <% next_clip_url = HeatersWeb.ClipPlayer.clip_video_url(next_clip) %>
-              <%= if next_clip_url do %>
-                <link rel="prefetch" href={next_clip_url} as="fetch" crossorigin="anonymous">
+          <%!-- Clip player component --%>
+            <%= if @current do %>
+              <.clip_player clip={@current} temp_clip={@temp_clip} id={"video-player-#{@current.id}"} />
               <% end %>
-            <% end %>
-          <% end %>
-          
 
                 <!-- Action buttons ------------------------------------------------ -->
                 <%= if @current do %>

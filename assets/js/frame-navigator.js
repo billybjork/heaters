@@ -37,8 +37,6 @@ export default class FrameNavigator {
    * Enter split mode - enables frame-accurate navigation
    */
   enterSplitMode(clipInfo) {
-    console.log('[FrameNavigator] Entering split mode');
-    
     // Defensive check for video element
     if (!this.video) {
       console.error('[FrameNavigator] Cannot enter split mode - video element is null');
@@ -60,7 +58,6 @@ export default class FrameNavigator {
    * Exit split mode - returns to normal playback
    */
   exitSplitMode() {
-    console.log('[FrameNavigator] Exiting split mode');
     this.splitModeActive = false;
     this.seekInProgress = false;
     this.clipInfo = null;
@@ -78,8 +75,12 @@ export default class FrameNavigator {
       });
     }
     
-    // Notify LiveView of split mode change  
-    this.pushEvent('split_mode_changed', { active: false });
+    // Notify LiveView of split mode change (with error handling)
+    try {
+      this.pushEvent('split_mode_changed', { active: false });
+    } catch (error) {
+      console.log('[FrameNavigator] Could not notify LiveView of split mode change:', error.message);
+    }
   }
 
   /**
@@ -98,7 +99,6 @@ export default class FrameNavigator {
    */
   navigateFrames(direction, frameCount = 1) {
     if (!this.splitModeActive) {
-      console.log('[FrameNavigator] Frame navigation ignored - not in split mode');
       return;
     }
     
@@ -117,7 +117,6 @@ export default class FrameNavigator {
     
     // Calculate accelerated frame count based on repeat navigation
     const acceleratedFrameCount = this._calculateAcceleratedFrameCount(direction, frameCount);
-    console.log(`[FrameNavigator] Navigating ${acceleratedFrameCount} frames ${direction} (repeat count: ${this._navigationAcceleration.repeatCount})`);
     frameCount = acceleratedFrameCount;
     
     // Check if video element exists and is ready for seeking
@@ -127,7 +126,6 @@ export default class FrameNavigator {
     }
     
     if (this.video.readyState < 2) {
-      console.log('[FrameNavigator] Frame navigation ignored - video not ready for seeking');
       return;
     }
 
@@ -149,7 +147,6 @@ export default class FrameNavigator {
       targetTime = this.video.currentTime - (frameTime * frameCount);
     }
     
-    console.log(`[FrameNavigator] Stepping ${direction}: ${this.video.currentTime.toFixed(3)}s → ${targetTime.toFixed(3)}s (${frameTime.toFixed(4)}s per frame)`);
     
     this.seekToTime(targetTime);
   }
@@ -163,7 +160,6 @@ export default class FrameNavigator {
    */
   commitSplit() {
     if (!this.splitModeActive) {
-      console.log('[FrameNavigator] Split commit ignored - not in split mode');
       return;
     }
 
@@ -175,13 +171,6 @@ export default class FrameNavigator {
     const timeOffsetSeconds = currentTime - clipStartTime;
     const clipDuration = clipEndTime - clipStartTime;
     
-    console.log(`[FrameNavigator] Simplified split calculation:
-  Video time: ${currentTime.toFixed(3)}s (absolute source time)
-  Clip start: ${clipStartTime}s
-  Clip end: ${clipEndTime}s  
-  Time offset from clip start: ${timeOffsetSeconds.toFixed(3)}s
-  Clip duration: ${clipDuration.toFixed(3)}s`);
-
     // Basic bounds checking (server will do authoritative validation)
     if (timeOffsetSeconds <= 0.01) {
       console.warn('[FrameNavigator] Split too close to clip start, skipping');

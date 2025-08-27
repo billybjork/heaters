@@ -20,21 +20,11 @@ defmodule HeatersWeb.Router do
     get("/", PageController, :home)
     live("/review", ReviewLive)
     live("/query", QueryLive)
-    post("/submit_video", MediaController, :create_video)
+    post("/submit_video", MediaController, :create)
+
+    # Serve temporary clip files with HTTP Range support
+    get("/temp/:filename", MediaController, :serve_temp_file)
   end
-
-  # Virtual clip routes for review interface
-  scope "/_virtual_clip", HeatersWeb do
-    pipe_through(:browser)
-
-    # Stream virtual clip with timing metadata (JSON endpoint for ClipPlayer)
-    get("/stream", MediaController, :stream_virtual_clip)
-
-    # CORS-safe proxy for CloudFront video streaming  
-    get("/proxy", MediaController, :proxy_video)
-  end
-
-  # Video streaming handled by MediaController for dynamic clip playback
 
   # Other scopes may use custom stacks.
   # scope "/api", HeatersWeb do

@@ -1,34 +1,22 @@
 defmodule Heaters.Storage.S3.ClipUrls do
   @moduledoc """
-  Unified URL generation for all clip video streaming formats.
+  Unified URL generation for clip video streaming.
 
-  This module consolidates URL generation for both exported clips and virtual clips,
-  providing a single interface for all clip video streaming needs in the review interface.
+  Provides a single interface for all clip video streaming needs in the review interface,
+  automatically determining the best approach based on clip state and available resources.
 
   ## Supported Formats
 
-  - **Exported Clips**: Direct URLs to pre-rendered clip files stored on S3/CloudFront
-  - **Virtual Clips**: Streaming URLs that use HTTP Range requests for instant playback
-
-  ## Architecture
-
-  The module automatically determines the best streaming approach:
-  1. If clip has exported file → use direct S3/CloudFront URL
-  2. If no exported file but proxy available → use virtual clip streaming
-  3. Otherwise → return error indicating clip needs processing
+  - **Exported Clips**: Direct S3/CloudFront URLs for pre-rendered clip files
+  - **Temp Clips**: Generated temp files using FFmpeg stream copy with HTTP Range support
 
   ## Usage
 
-      # Auto-detect best format for clip
-      {:ok, url, :direct_s3} = ClipUrls.get_clip_url(clip, source_video)
-      {:ok, url, :virtual_clip} = ClipUrls.get_clip_url(clip, source_video)
+      # Get best available video URL for clip
+      {:ok, url, player_type} = ClipUrls.get_video_url(clip, source_video)
 
       # Check streaming support
       true = ClipUrls.streamable?(clip, source_video)
-
-      # Direct format-specific calls
-      {:ok, url, :direct_s3} = ClipUrls.get_exported_clip_url(clip, source_video)
-      {:ok, url, :virtual_clip} = ClipUrls.get_virtual_clip_url(clip, source_video)
   """
 
   require Logger
@@ -52,49 +40,45 @@ defmodule Heaters.Storage.S3.ClipUrls do
   @type clip_url_result :: {:ok, String.t(), atom()} | {:error, String.t()}
 
   @doc """
-  Get best available video URL for a clip.
+  Primary interface for getting video URLs for clips.
 
-  Automatically selects the optimal streaming format:
-  - Exported clips: Direct S3/CloudFront URLs for pre-rendered files
-  - Virtual clips: HTTP Range streaming for instant playback
+  Automatically selects the optimal streaming format based on clip state:
+  - Exported clips: Direct S3/CloudFront URLs 
+  - Non-exported clips: Temp clip generation for instant playback
 
   ## Parameters
-
-  - `clip`: Clip struct with clip_filepath and timing information
-  - `source_video`: Source video struct with proxy file path and FPS data
+  - `clip`: Clip struct with timing information and optional clip_filepath
+  - `source_video`: Source video struct with file paths and FPS data
 
   ## Returns
-
-  - `{:ok, url, :direct_s3}` - Direct URL to exported clip file
-  - `{:ok, url, :virtual_clip}` - Virtual clip streaming URL
-  - `{:error, reason}` - No streaming format available
-
-  ## Examples
-
-      # Clip with exported file
-      {:ok, url, :direct_s3} = ClipUrls.get_clip_url(clip, source_video)
-
-      # Clip without exported file but with proxy
-      {:ok, url, :virtual_clip} = ClipUrls.get_clip_url(clip, source_video)
+  - `{:ok, url, player_type}` - Success with URL and player type
+  - `{:loading, nil}` - Temp clip generation needed
+  - `{:error, reason}` - No streaming options available
   """
-  @spec get_clip_url(clip_data(), source_video_data()) :: clip_url_result()
-  def get_clip_url(clip, source_video) do
+  @spec get_video_url(clip_data(), source_video_data()) ::
+          {:ok, String.t(), atom()} | {:loading, nil} | {:error, String.t()}
+  def get_video_url(%{clip_filepath: filepath} = clip, source_video) when not is_nil(filepath) do
+    # Clip with exported file - use direct S3/CloudFront URL
     case get_exported_clip_url(clip, source_video) do
-      {:ok, url, :direct_s3} ->
-        # Exported clip available - use direct URL
-        {:ok, url, :direct_s3}
-
-      {:error, _} ->
-        # No exported clip - try virtual clip streaming
-        get_virtual_clip_url(clip, source_video)
+      {:ok, url, player_type} -> {:ok, url, player_type}
+      {:error, reason} -> {:error, reason}
     end
+  end
+
+  def get_video_url(%{clip_filepath: nil} = clip, source_video) do
+    # Clip without exported file - use temp clip generation
+    build_temp_clip_url(clip, source_video)
+  end
+
+  def get_video_url(clip, _source_video) do
+    {:error, "Invalid clip structure: #{inspect(Map.keys(clip))}"}
   end
 
   @doc """
   Check if a clip supports any form of video streaming.
 
   Returns true if the clip can be streamed using either exported files
-  or virtual clip streaming.
+  or temp clip generation.
 
   ## Parameters
 
@@ -111,7 +95,7 @@ defmodule Heaters.Storage.S3.ClipUrls do
   """
   @spec streamable?(clip_data(), source_video_data()) :: boolean()
   def streamable?(clip, source_video) do
-    exported_clip_streamable?(clip, source_video) or virtual_clip_streamable?(clip, source_video)
+    exported_clip_streamable?(clip, source_video) or temp_clip_streamable?(clip, source_video)
   end
 
   ## Exported Clip URLs
@@ -163,70 +147,86 @@ defmodule Heaters.Storage.S3.ClipUrls do
 
   def exported_clip_streamable?(_, _), do: false
 
-  ## Virtual Clip URLs
+  ## Temp Clip URLs
 
-  @doc """
-  Generate virtual clip URL for efficient clip playback.
+  # Private function for playback cache URL generation
+  defp build_temp_clip_url(clip, source_video) do
+    if Application.get_env(:heaters, :app_env) == "development" do
+      # Development: Check if temp file already exists, avoid blocking FFmpeg generation
+      case check_existing_temp_file(clip) do
+        {:ok, file_url} ->
+          {:ok, file_url, :ffmpeg_stream}
 
-  Creates a URL that streams video segments directly from CloudFront proxy files
-  using HTTP Range requests and client-side time clamping. This eliminates the need
-  for temp file generation while maintaining frame-accurate timing.
-
-  ## Parameters
-
-  - `clip`: Clip struct with timing and frame information
-  - `source_video`: Source video struct with proxy file path and FPS data
-
-  ## Returns
-
-  - `{:ok, url, :virtual_clip}` - Success with virtual clip URL
-  - `{:error, reason}` - Failure with error description
-
-  ## Virtual URL Format
-
-  Virtual clip URLs encode timing information and proxy file references:
-  `/_virtual_clip/stream?video_id=123&start=10.5&end=25.7&fps=25.0`
-
-  The client-side player uses this metadata to:
-  - Stream from the source proxy file using HTTP 206 requests
-  - Display a virtual timeline (0-based duration)  
-  - Maintain frame-accurate navigation for split/merge operations
-  """
-  @spec get_virtual_clip_url(clip_data(), source_video_data()) :: clip_url_result()
-  def get_virtual_clip_url(clip, source_video) do
-    with :ok <- validate_virtual_clip_requirements(clip, source_video),
-         {:ok, proxy_url} <- get_proxy_url(source_video) do
-      virtual_url = build_virtual_clip_url(clip, source_video, proxy_url)
-      {:ok, virtual_url, :virtual_clip}
+        :not_found ->
+          # Return loading state - background generation will handle creation
+          {:loading, nil}
+      end
     else
-      {:error, reason} -> {:error, reason}
+      # Production: Check for exported clip or queue export
+      build_production_clip_url(clip, source_video)
     end
   end
 
+  # Check if a temp file already exists for this clip
+  defp check_existing_temp_file(clip) do
+    tmp_dir = System.tmp_dir!()
+
+    # Look for existing files matching this clip's pattern
+    case File.ls(tmp_dir) do
+      {:ok, files} ->
+        matching_files =
+          files
+          |> Enum.filter(&String.match?(&1, ~r/^clip_#{clip.id}_\d+\.mp4$/))
+          |> Enum.map(&Path.join(tmp_dir, &1))
+          |> Enum.filter(&File.regular?/1)
+
+        case matching_files do
+          [file_path | _] ->
+            # Found existing file, return URL
+            filename = Path.basename(file_path)
+            timestamp = System.system_time(:second)
+            {:ok, "/temp/#{filename}?t=#{timestamp}"}
+
+          [] ->
+            :not_found
+        end
+
+      {:error, _} ->
+        :not_found
+    end
+  end
+
+  defp build_production_clip_url(%{export_key: export_key} = _clip, _source_video)
+       when not is_nil(export_key) do
+    # Clip already exported - return presigned URL
+    bucket_name = get_bucket_name()
+
+    case ExAws.S3.presigned_url(ExAws.Config.new(:s3), :get, bucket_name, export_key,
+           expires_in: 86400 * 30
+         ) do
+      {:ok, url} -> {:ok, url, :direct_s3}
+      {:error, reason} -> {:error, "Failed to generate presigned URL: #{inspect(reason)}"}
+    end
+  end
+
+  defp build_production_clip_url(%{id: _clip_id} = _clip, _source_video) do
+    # Clip not yet exported - queue export job (will be implemented in later phases)
+    # For now, return loading state
+    {:loading, nil}
+  end
+
+  defp get_bucket_name do
+    Application.get_env(:heaters, :s3_bucket) || "default-bucket"
+  end
+
   @doc """
-  Check if a clip supports virtual clip streaming.
+  Check if a clip supports temp clip generation.
 
-  Returns true if the clip has all requirements for virtual clip playback:
-  - Source video has proxy file available
-  - Clip has valid timing information
-  - FPS data available for frame-accurate operations
-
-  ## Parameters
-
-  - `clip`: Clip struct to check
-  - `source_video`: Associated source video struct
-
-  ## Examples
-
-      # Clip with valid proxy file and timing
-      true = virtual_clip_streamable?(clip, %{proxy_filepath: "path/to/proxy.mp4", fps: 25.0})
-
-      # Clip missing proxy file
-      false = virtual_clip_streamable?(clip, %{proxy_filepath: nil, fps: 25.0})
+  Returns true if the source video has a proxy file and clip has valid timing.
   """
-  @spec virtual_clip_streamable?(clip_data(), source_video_data()) :: boolean()
-  def virtual_clip_streamable?(clip, source_video) do
-    case validate_virtual_clip_requirements(clip, source_video) do
+  @spec temp_clip_streamable?(clip_data(), source_video_data()) :: boolean()
+  def temp_clip_streamable?(clip, source_video) do
+    case validate_temp_clip_requirements(clip, source_video) do
       :ok -> true
       {:error, _} -> false
     end
@@ -287,16 +287,16 @@ defmodule Heaters.Storage.S3.ClipUrls do
 
   ## Private Implementation
 
-  # Validate that clip and source video have all requirements for virtual clip playback
-  @spec validate_virtual_clip_requirements(clip_data(), source_video_data()) ::
+  # Validate that clip and source video have all requirements for temp clip generation
+  @spec validate_temp_clip_requirements(clip_data(), source_video_data()) ::
           :ok | {:error, String.t()}
-  defp validate_virtual_clip_requirements(clip, source_video) do
+  defp validate_temp_clip_requirements(clip, source_video) do
     cond do
       is_nil(source_video.proxy_filepath) ->
-        {:error, "Source video has no proxy file for virtual clip streaming"}
+        {:error, "Source video has no proxy file for temp clip generation"}
 
       is_nil(clip.start_time_seconds) or is_nil(clip.end_time_seconds) ->
-        {:error, "Clip missing timing information for virtual clip"}
+        {:error, "Clip missing timing information for temp clip"}
 
       clip.end_time_seconds <= clip.start_time_seconds ->
         {:error, "Clip has invalid timing (end <= start)"}
@@ -309,48 +309,8 @@ defmodule Heaters.Storage.S3.ClipUrls do
     end
   end
 
-  # Get the proxy URL for the source video
-  @spec get_proxy_url(source_video_data()) :: {:ok, String.t()}
-  defp get_proxy_url(%{proxy_filepath: proxy_filepath} = _source_video) do
-    generate_signed_cloudfront_url(proxy_filepath)
-  end
 
-  # Build the virtual clip URL with embedded timing and metadata
-  @spec build_virtual_clip_url(clip_data(), source_video_data(), String.t()) :: String.t()
-  defp build_virtual_clip_url(clip, source_video, proxy_url) do
-    # Calculate duration for virtual timeline
-    duration_seconds = clip.end_time_seconds - clip.start_time_seconds
-
-    # Build query parameters with timing metadata
-    params = %{
-      "video_id" => source_video.id,
-      "clip_id" => clip.id,
-      "proxy_url" => proxy_url,
-      "start" => Float.to_string(clip.start_time_seconds),
-      "end" => Float.to_string(clip.end_time_seconds),
-      "duration" => Float.to_string(duration_seconds),
-      "fps" => Float.to_string(source_video.fps),
-      "start_frame" => Integer.to_string(clip.start_frame),
-      "end_frame" => Integer.to_string(clip.end_frame),
-      # Add timestamp for cache busting
-      "t" => Integer.to_string(System.system_time(:second))
-    }
-
-    query_string = URI.encode_query(params)
-
-    Logger.debug("""
-    ClipUrls: Generated virtual clip URL
-      Clip ID: #{clip.id}
-      Source Video ID: #{source_video.id}  
-      Timing: #{clip.start_time_seconds}s - #{clip.end_time_seconds}s (#{Float.round(duration_seconds, 2)}s)
-      Frames: #{clip.start_frame} - #{clip.end_frame}
-      FPS: #{source_video.fps}
-    """)
-
-    "/_virtual_clip/stream?#{query_string}"
-  end
-
-  # CloudFront URL utilities (shared between exported and virtual clips)
+  # CloudFront URL utilities (shared between exported and temp clips)
 
   defp extract_s3_key(s3_path) do
     case String.starts_with?(s3_path, "s3://") do
@@ -410,9 +370,5 @@ defmodule Heaters.Storage.S3.ClipUrls do
     # In development, this will be nil unless CLOUDFRONT_DEV_DOMAIN is set
     # In production, this would be your CloudFront distribution domain
     Application.get_env(:heaters, :cloudfront_domain)
-  end
-
-  defp get_bucket_name do
-    Application.get_env(:heaters, :s3_bucket) || "default-bucket"
   end
 end

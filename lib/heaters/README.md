@@ -107,21 +107,21 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 - **Intelligent Preloading**: Browser prefetch with metadata caching for instant transitions
 - **Optimized Network Usage**: Request deduplication and proper event cleanup prevent performance issues
 
-### Virtual Clip Architecture (Optimized)
+### Temp Clip Architecture
 
-Virtual clips provide instant playback of video segments using HTTP Range requests with intelligent caching and prefetching, eliminating temp file generation while maintaining frame-accurate navigation and split operations.
+Temp clips provide instant playback of video segments using small generated files (2-5MB) with FFmpeg stream copy for frame-accurate navigation and split operations. This approach eliminates the performance issues of large virtual streams while maintaining perfect seeking capabilities.
 
-#### Performance Optimizations
+#### Key Features
 
-- **Intelligent Metadata Caching**: Client-side cache (max 10 entries) for virtual clip metadata to eliminate duplicate network requests
-- **Request Deduplication**: Prevents multiple simultaneous requests for the same clip metadata
-- **Browser Prefetching**: Automatic prefetch of next clip's JSON metadata for near-instant transitions
-- **Event Handler Cleanup**: Proper cleanup prevents stale time references during clip transitions
-- **Debounced Time Corrections**: 300ms cooldown with tolerance buffers eliminates excessive correction loops
+- **FFmpeg Stream Copy**: Instant generation from all-I proxy files with zero re-encoding
+- **Small File Size**: Typically 2-5MB temp files vs 28+GB virtual streams  
+- **HTTP Range Support**: 206 Partial Content responses enable frame-accurate seeking
+- **Background Generation**: Oban workers with PubSub reactive updates to LiveView
+- **Automatic Cleanup**: Scheduled LRU eviction and disk space monitoring
 
 #### Coordinate System Design
 
-**Key Insight**: Complex coordinate translations have been moved server-side to eliminate client-side brittleness and improve maintainability.
+**Key Insight**: Complex coordinate translations moved server-side to eliminate client-side brittleness.
 
 1. **Source Video Coordinates (Database Authority)**
    - Time: `0s` to `video.duration_seconds` (e.g., 50s total video)
@@ -129,11 +129,11 @@ Virtual clips provide instant playback of video segments using HTTP Range reques
    - Used by: Database storage, cut definitions, server-side calculations
 
 2. **Video Element Coordinates (Client Playback)**
-   - `video.currentTime` remains absolute source video time
+   - `video.currentTime` uses absolute source video time for temp clips
    - Used by: HTML video element, seeking operations, frame navigation
 
-3. **Virtual UI Coordinates (Display Only)**
-   - Virtual timeline shows `0s` to `clip.duration_seconds`
+3. **Clip UI Coordinates (Display Only)**
+   - Timeline shows `0s` to `clip.duration_seconds`
    - Used by: UI timeline display, progress bars, user interaction
 
 #### Split Operation Flow
@@ -154,28 +154,13 @@ absolute_frame = round(absolute_time_seconds * source_video.fps)
 
 #### Architecture Benefits
 
+- **Small Files**: 2-5MB vs 28+GB eliminates network performance issues
+- **Perfect Seeking**: Stream copy from all-I proxy preserves frame accuracy
+- **Instant Generation**: FFmpeg stream copy completes in milliseconds
+- **Background Processing**: Non-blocking generation with reactive UI updates
 - **Single Source of Truth**: All frame calculations use database FPS data
 - **Reduced Brittleness**: No client-side coordinate translation complexity
 - **Better Debugging**: Server-side calculations are logged and traceable
-- **Maintained Precision**: Frame-accurate operations preserved
-- **Simplified Code**: 60+ lines of complex coordinate math → 6 lines of time offset
-- **Near-Instant Loading**: Prefetched metadata enables sub-50ms clip transitions
-- **Network Efficiency**: Intelligent caching reduces duplicate requests by ~70%
-- **Stable Playback**: Debounced corrections eliminate rapid correction cascades
-
-#### Safe Modifications
-
-- Virtual controls UI and timeline display
-- Progress bar ranges and visual presentation  
-- Seeking debouncing and performance optimizations
-- Client-side frame navigation timing
-
-#### Protected Elements
-
-- Database clip coordinates (start_time_seconds, start_frame) 
-- Server-side frame calculation logic
-- `video.currentTime` absolute positioning
-- HTTP Range request streaming mechanics
 
 ### Frontend Architecture (LiveView 1.1)
 - **Colocated Hooks**: JavaScript code embedded directly in Phoenix components

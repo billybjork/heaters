@@ -18,10 +18,22 @@ defmodule HeatersWeb.ClipPlayer do
 
   ## Usage
 
-      <.clip_player clip={@current_clip} />
+      <.clip_player clip={@current_clip} temp_clip={@temp_clip} />
 
   The component automatically determines the appropriate video URL and player type
-  based on the clip's properties using virtual subclips when needed.
+  based on the clip's properties and generates files as needed.
+
+  ## Reactive Pattern
+
+  The `temp_clip` attribute enables Phoenix LiveView reactive updates:
+  - LiveView stores temp clip state separately in assigns
+  - When background jobs complete, PubSub updates trigger assign changes
+  - Component automatically detects URL changes and updates player
+  - JavaScript ClipPlayer hook handles transitions via updated() lifecycle
+  - No manual refresh or push_event calls required
+
+  This eliminates the need for manual event listeners and provides a clean,
+  idiomatic Phoenix LiveView reactive pattern for real-time video updates.
 
   ## JavaScript Hook Integration
 
@@ -39,7 +51,6 @@ defmodule HeatersWeb.ClipPlayer do
 
   use Phoenix.Component
   alias Heaters.Storage.S3.ClipUrls
-  require Logger
 
   @doc """
   Renders a clip player component.
@@ -47,42 +58,37 @@ defmodule HeatersWeb.ClipPlayer do
   ## Attributes
 
   - `clip` - The clip to play (required)
+  - `temp_clip` - Temp clip state from LiveView reactive updates (optional)
   - `id` - HTML id for the video element (optional, defaults to "video-player")
   - `class` - Additional CSS classes (optional)
   - `controls` - Show video controls (optional, defaults to true)
   - `preload` - Video preload strategy (optional, defaults to "metadata")
 
-  ## Virtual Clip Integration
+  ## Reactive Pattern
 
-  The component automatically uses virtual clips for instant playback:
-  - Direct HTTP Range requests to CloudFront for clip segments
-  - No temp file generation or background processing needed
-  - Frame-accurate navigation using database FPS data
-  - JavaScript ClipPlayer hook handles video control and split mode integration
+  The `temp_clip` attribute enables Phoenix LiveView reactive updates:
+  - LiveView stores temp clip state separately in assigns
+  - When background jobs complete, PubSub updates trigger assign changes
+  - Component automatically detects URL changes and updates player
+  - JavaScript ClipPlayerController handles transitions via updated() lifecycle
+  - No manual refresh or push_event calls required
+
+  This eliminates the need for manual event listeners and provides a clean,
+  idiomatic Phoenix LiveView reactive pattern for real-time video updates.
   """
   attr(:clip, :map, required: true)
+  attr(:temp_clip, :map, default: %{})
   attr(:id, :string, default: nil)
   attr(:class, :string, default: "")
   attr(:controls, :boolean, default: true)
-  attr(:preload, :string, default: nil)
+  attr(:preload, :string, default: "metadata")
 
   def clip_player(assigns) do
-    # Get video URL and player type for the clip
-    {video_url, player_type, clip_info} = get_video_data(assigns.clip)
+    # Get video URL and player type, passing temp clip info from LiveView assigns
+    {video_url, player_type, clip_info} = get_video_data(assigns.clip, assigns.temp_clip)
 
     # Use a stable ID based on clip to prevent unnecessary DOM recreation
     video_id = assigns.id || "video-player-#{assigns.clip.id}"
-
-    # Optimize preload strategy for virtual clips
-    preload_strategy =
-      case {player_type, assigns.preload} do
-        # Load metadata but not full video
-        {"virtual_clip", nil} -> "metadata"
-        # Default for other player types
-        {_, nil} -> "metadata"
-        # User-specified override
-        {_, custom} -> custom
-      end
 
     assigns =
       assigns
@@ -91,7 +97,6 @@ defmodule HeatersWeb.ClipPlayer do
       |> assign(:clip_info, clip_info)
       |> assign(:video_id, video_id)
       |> assign(:clip_key, "clip-#{assigns.clip.id}")
-      |> assign(:preload_strategy, preload_strategy)
 
     ~H"""
     <figure class="video-player-container" id={"video-container-#{@clip.id}"} role="img" aria-label={"Video clip player for clip #{@clip.id}"}>
@@ -102,7 +107,7 @@ defmodule HeatersWeb.ClipPlayer do
             class={["video-player", @class]}
             controls={@controls}
             muted
-            preload={@preload_strategy}
+            preload={@preload}
             playsinline
             crossorigin="anonymous"
             phx-hook="ClipPlayer"
@@ -110,7 +115,6 @@ defmodule HeatersWeb.ClipPlayer do
             data-video-url={@video_url}
             data-player-type={@player_type}
             data-clip-info={Jason.encode!(@clip_info)}
-            data-virtual-clip={@player_type == "virtual_clip"}
           >
             <p role="alert">Your browser doesn't support HTML5 video playback. Please update your browser or use a modern browser that supports HTML5 video.</p>
           </video>
@@ -141,45 +145,77 @@ defmodule HeatersWeb.ClipPlayer do
   end
 
   # Helper function to get video data for the component
-  defp get_video_data(clip) do
+  defp get_video_data(clip, temp_clip \\ %{}) do
     # Load source video if not already loaded
     source_video =
-      case Map.get(clip, :source_video) do
-        %{} = sv ->
+      case clip do
+        %{source_video: %{} = sv} ->
           sv
 
-        _ ->
-          # Fallback source video structure - NEVER assume FPS
-          Logger.warning(
-            "ClipPlayer: Clip #{clip.id} missing source_video association - frame navigation will be disabled"
-          )
+        %{source_video_id: id} when not is_nil(id) ->
+          # In a real app, you'd load this from the database
+          # For now, assume it's preloaded or handle the error case
+          %{proxy_filepath: nil}
 
-          %{
-            proxy_filepath: nil,
-            fps: nil
-          }
+        _ ->
+          %{proxy_filepath: nil}
       end
 
-    # Use the best available clip URL (exported or virtual)
-    case ClipUrls.get_clip_url(clip, source_video) do
-      {:ok, url, player_type} ->
-        clip_info = build_clip_info(clip, player_type)
-        {url, Atom.to_string(player_type), clip_info}
+    # Check if temp clip is ready (reactive update from LiveView assigns)
+    case temp_clip do
+      %{clip_id: clip_id, url: url, ready: true} when clip_id == clip.id and not is_nil(url) ->
+        clip_info = build_clip_info(clip, :ffmpeg_stream)
+        {url, "ffmpeg_stream", clip_info}
 
-      {:error, reason} ->
-        Logger.error("ClipUrls failed: #{reason}")
-        {nil, "error", %{}}
+      _ ->
+        # Fall back to normal video URL generation
+        case ClipUrls.get_video_url(clip, source_video) do
+          {:ok, url, player_type} ->
+            clip_info = build_clip_info(clip, player_type)
+            {url, to_string(player_type), clip_info}
+
+          {:loading, nil} ->
+            # Return loading state - temp clip needs generation
+            clip_info = build_clip_info(clip, :loading)
+            {nil, "loading", clip_info}
+
+          {:error, _reason} ->
+            # Return loading state if no exported file available but proxy exists
+            if not is_nil(source_video.proxy_filepath) do
+              clip_info = build_clip_info(clip, :loading)
+              {nil, "loading", clip_info}
+            else
+              {nil, "error", %{}}
+            end
+        end
     end
   end
 
   # Build clip information for the JavaScript player
-  defp build_clip_info(clip, player_type) do
+  # Each clip is treated as a standalone file
+  defp build_clip_info(%{clip_filepath: nil} = clip, :loading) do
     # Get fps from source video for precise frame navigation
     fps = get_source_video_fps(clip)
 
-    # Build clip info based on the determined player type
     %{
-      has_exported_file: player_type == :direct_s3,
+      has_exported_file: false,
+      is_loading: true,
+      clip_id: clip.id,
+      start_frame: clip.start_frame,
+      end_frame: clip.end_frame,
+      start_time_seconds: clip.start_time_seconds,
+      end_time_seconds: clip.end_time_seconds,
+      duration_seconds: clip.end_time_seconds - clip.start_time_seconds,
+      fps: fps
+    }
+  end
+
+  defp build_clip_info(%{clip_filepath: nil} = clip, _player_type) do
+    # Get fps from source video for precise frame navigation
+    fps = get_source_video_fps(clip)
+
+    %{
+      has_exported_file: false,
       is_loading: false,
       clip_id: clip.id,
       start_frame: clip.start_frame,
@@ -187,26 +223,27 @@ defmodule HeatersWeb.ClipPlayer do
       start_time_seconds: clip.start_time_seconds,
       end_time_seconds: clip.end_time_seconds,
       duration_seconds: clip.end_time_seconds - clip.start_time_seconds,
-      fps: fps,
-      player_type: player_type
+      fps: fps
     }
   end
 
-  # Helper to extract FPS from source video - NEVER assume FPS values
-  defp get_source_video_fps(clip) do
-    case Map.get(clip, :source_video) do
-      %{fps: fps} when is_number(fps) and fps > 0 ->
-        fps
+  defp build_clip_info(%{clip_filepath: _filepath} = clip, _player_type) do
+    # Get fps from source video for precise frame navigation
+    fps = get_source_video_fps(clip)
 
-      _ ->
-        # CRITICAL: Log missing FPS but don't assume - let JavaScript handle gracefully
-        Logger.warning(
-          "ClipPlayer: Source video missing FPS data for clip #{clip.id} - frame navigation may be impaired"
-        )
-
-        nil
-    end
+    %{
+      has_exported_file: true,
+      is_loading: false,
+      clip_id: clip.id,
+      start_frame: clip.start_frame,
+      end_frame: clip.end_frame,
+      fps: fps
+    }
   end
+
+  # Extract FPS from source video with fallback
+  defp get_source_video_fps(%{source_video: %{fps: fps}}) when is_number(fps) and fps > 0, do: fps
+  defp get_source_video_fps(_clip), do: 30.0
 
   @doc """
   Helper function to get clip video URL for preloading.

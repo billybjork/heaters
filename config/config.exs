@@ -12,7 +12,9 @@ config :heaters, Oban,
     {Oban.Plugins.Cron,
      crontab: [
        # Every 60 seconds, run the Dispatcher worker
-       {"* * * * *", Heaters.Pipeline.Dispatcher}
+       {"* * * * *", Heaters.Pipeline.Dispatcher},
+       # Every 5 minutes, clean up temp clip cache
+       {"*/5 * * * *", Heaters.Storage.PlaybackCache.CleanupWorker}
      ]}
   ],
   queues: [
@@ -23,6 +25,8 @@ config :heaters, Oban,
     background_jobs: 2,
     # For clip exports
     exports: 5,
+    # For temp clip generation (background prefetch)
+    temp_clips: 3,
     # For maintenance tasks (cleanup, monitoring)
     maintenance: 1
   ]

@@ -315,6 +315,27 @@ defmodule Heaters.Processing.Support.FFmpeg.Config do
           # Clean timestamps
           avoid_negative_ts: "make_zero"
         }
+      },
+
+      # Temp playback clips using stream copy for instant generation
+      temp_playback: %{
+        purpose: "Temporary playback clips using stream copy for instant generation",
+        optimization: "Fast stream copy from proxy files for temp clip cache",
+        video: %{
+          # Stream copy for maximum speed and zero quality loss
+          codec: "copy"
+        },
+        audio: %{
+          # Stream copy audio to preserve original quality
+          codec: "copy"
+        },
+        container: "mp4",
+        web_optimization: %{
+          # Optimize for instant playback
+          movflags: "+faststart",
+          # Clean timestamps for clipped segments
+          avoid_negative_ts: "make_zero"
+        }
       }
     }
   end
