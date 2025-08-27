@@ -5,8 +5,10 @@ import { Socket } from "phoenix"
 import { LiveSocket } from "phoenix_live_view"
 
 import { HoverPlay, ThumbHoverPlayer } from "./hover-play";
-import ClipPlayer from "./clip-player";
-import ReviewHotkeys from "./review-hotkeys";
+
+// Optimized video review system with virtual clip streaming
+import ClipPlayer from "./clip-player";     // Handles video playback with debounced time corrections & metadata caching
+import ReviewHotkeys from "./review-hotkeys"; // Keyboard shortcuts with frame-accurate navigation support
 
 // Pull the CSRF token from the page
 let csrfToken = document

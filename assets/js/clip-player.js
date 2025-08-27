@@ -1,10 +1,17 @@
 /**
- * ClipPlayer Hook - Simplified video playback with modular architecture
+ * ClipPlayer Hook - Optimized video playback with virtual clip streaming
  * 
  * Core responsibilities:
- * - Video loading and playback management
+ * - Video loading and playback management with proper cleanup
+ * - Virtual clip streaming via HTTP Range requests (206 Partial Content)
  * - Integration with FrameNavigator and VirtualControls
- * - LiveView event handling
+ * - LiveView event handling with stale reference prevention
+ * 
+ * Performance optimizations:
+ * - Intelligent metadata caching to prevent duplicate requests
+ * - Debounced time corrections (300ms cooldown) to eliminate feedback loops
+ * - Proper event handler cleanup to prevent stale time references
+ * - Tolerance buffers (0.1s) to reduce excessive boundary corrections
  * 
  * Complex responsibilities moved to separate modules:
  * - Frame navigation → FrameNavigator
@@ -15,11 +22,11 @@
 import FrameNavigator from './frame-navigator';
 import VirtualControls from './virtual-controls';
 
-// Simple cache for virtual clip metadata to avoid re-fetching
-const virtualClipCache = new Map();
-const maxCacheSize = 10;
+// Intelligent caching system to optimize network requests
+const virtualClipCache = new Map();  // Cache metadata responses to avoid re-fetching
+const maxCacheSize = 10;             // LRU eviction when cache exceeds limit
 
-// Track in-flight requests to prevent duplicates
+// Request deduplication: prevent multiple parallel requests to same endpoint
 const pendingRequests = new Map();
 
 export default {
@@ -46,9 +53,9 @@ export default {
     this.playerType = null;
     this.virtualClip = null;
     
-    // Debouncing for time corrections
+    // Debouncing for time corrections to prevent feedback loops
     this.lastCorrectionTime = 0;
-    this.correctionCooldown = 300; // ms - increased for better loop stability
+    this.correctionCooldown = 300; // ms - prevents time correction cascades that cause excessive looping
     
     // Make accessible to ReviewHotkeys
     this.video._clipPlayer = this;
@@ -127,6 +134,7 @@ export default {
 
   /**
    * Clean up existing event handlers to prevent stale references
+   * CRITICAL: Prevents previous clips' time handlers from interfering with new clips
    */
   cleanupEventHandlers() {
     if (this.eventHandlers && this.video) {

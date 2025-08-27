@@ -216,7 +216,7 @@ defmodule HeatersWeb.ReviewLive do
 
   # Direct ClipPlayer control - no LiveView events needed
 
-  # DEPRECATED: Legacy frame-based split handler
+  # Server-side split handler: coordinates calculated on server for accuracy
 
   @impl true
   def handle_event(
@@ -226,32 +226,35 @@ defmodule HeatersWeb.ReviewLive do
       ) do
     # First, persist any pending actions from previous clips
     socket = persist_all_pending_actions(socket)
-    
+
     # Use the new server-side approach for coordinate calculation
     result = ClipActions.request_split_at_time_offset(clip, time_offset_seconds)
-    
+
     case result do
       {_next_clip, metadata} when is_map(metadata) ->
         Logger.info("Review: Simplified split succeeded - #{inspect(metadata)}")
-        
+
         socket =
           socket
           |> assign(flash_action: "split", split_mode: false)
           |> push_history(clip)
           |> advance_queue()
           |> refill_future()
-          |> put_flash(:info, "Split clip #{clip.id} at #{Float.round(time_offset_seconds, 2)}s offset")
+          |> put_flash(
+            :info,
+            "Split clip #{clip.id} at #{Float.round(time_offset_seconds, 2)}s offset"
+          )
           |> update_url_for_current_clip()
 
         {:noreply, socket}
 
       {:error, reason} ->
         Logger.warning("Review: Simplified split failed - #{reason}")
-        
-        socket = 
+
+        socket =
           socket
           |> put_flash(:error, "Split failed: #{reason}")
-        
+
         {:noreply, socket}
     end
   end

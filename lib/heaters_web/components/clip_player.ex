@@ -72,13 +72,16 @@ defmodule HeatersWeb.ClipPlayer do
 
     # Use a stable ID based on clip to prevent unnecessary DOM recreation
     video_id = assigns.id || "video-player-#{assigns.clip.id}"
-    
+
     # Optimize preload strategy for virtual clips
-    preload_strategy = 
+    preload_strategy =
       case {player_type, assigns.preload} do
-        {"virtual_clip", nil} -> "metadata"  # Load metadata but not full video
-        {_, nil} -> "metadata"              # Default for other player types
-        {_, custom} -> custom               # User-specified override
+        # Load metadata but not full video
+        {"virtual_clip", nil} -> "metadata"
+        # Default for other player types
+        {_, nil} -> "metadata"
+        # User-specified override
+        {_, custom} -> custom
       end
 
     assigns =
@@ -147,7 +150,10 @@ defmodule HeatersWeb.ClipPlayer do
 
         _ ->
           # Fallback source video structure - NEVER assume FPS
-          Logger.warning("ClipPlayer: Clip #{clip.id} missing source_video association - frame navigation will be disabled")
+          Logger.warning(
+            "ClipPlayer: Clip #{clip.id} missing source_video association - frame navigation will be disabled"
+          )
+
           %{
             proxy_filepath: nil,
             fps: nil
@@ -189,11 +195,15 @@ defmodule HeatersWeb.ClipPlayer do
   # Helper to extract FPS from source video - NEVER assume FPS values
   defp get_source_video_fps(clip) do
     case Map.get(clip, :source_video) do
-      %{fps: fps} when is_number(fps) and fps > 0 -> 
+      %{fps: fps} when is_number(fps) and fps > 0 ->
         fps
-      _ -> 
+
+      _ ->
         # CRITICAL: Log missing FPS but don't assume - let JavaScript handle gracefully
-        Logger.warning("ClipPlayer: Source video missing FPS data for clip #{clip.id} - frame navigation may be impaired")
+        Logger.warning(
+          "ClipPlayer: Source video missing FPS data for clip #{clip.id} - frame navigation may be impaired"
+        )
+
         nil
     end
   end

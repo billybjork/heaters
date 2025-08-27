@@ -59,7 +59,7 @@ article.stack-center {
     box-sizing: border-box;
 }
 
-/* Streaming video loading spinner ----------------------------------------- */
+/* Virtual clip streaming loading spinner ---------------------------------- */
 .streaming-video-loading {
     position: absolute;
     top: 50%;

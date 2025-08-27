@@ -97,49 +97,49 @@ defmodule HeatersWeb.MediaController do
     end_time = parse_float(params["end"], 10.0)
     duration = parse_float(params["duration"], end_time - start_time)
     fps = parse_float(params["fps"], nil)
-    
+
     # CRITICAL: FPS must be provided from database - never assume values
     if is_nil(fps) or fps <= 0 do
       Logger.error("MediaController: Missing or invalid FPS parameter for virtual clip streaming")
+
       conn
       |> put_status(:bad_request)
       |> json(%{error: "Invalid fps parameter - frame-accurate operations require database FPS"})
     else
+      # Extract IDs for logging
+      video_id = parse_int(params["video_id"], 0)
+      clip_id = parse_int(params["clip_id"], 0)
+      start_frame = parse_int(params["start_frame"], 0)
+      end_frame = parse_int(params["end_frame"], 0)
 
-    # Extract IDs for logging
-    video_id = parse_int(params["video_id"], 0)
-    clip_id = parse_int(params["clip_id"], 0)
-    start_frame = parse_int(params["start_frame"], 0)
-    end_frame = parse_int(params["end_frame"], 0)
+      # Get proxy URL
+      proxy_url = params["proxy_url"] || ""
 
-    # Get proxy URL
-    proxy_url = params["proxy_url"] || ""
+      if proxy_url == "" do
+        conn
+        |> put_status(:bad_request)
+        |> json(%{error: "Missing proxy_url parameter"})
+      else
+        Logger.info("""
+        MediaController: Streaming virtual clip #{clip_id} from video #{video_id}
+          Timing: #{start_time}s - #{end_time}s (#{Float.round(duration, 2)}s duration)
+          Frames: #{start_frame} - #{end_frame} @ #{fps}fps
+          Proxy: #{String.slice(proxy_url, 0, 80)}...
+        """)
 
-    if proxy_url == "" do
-      conn
-      |> put_status(:bad_request)
-      |> json(%{error: "Missing proxy_url parameter"})
-    else
-      Logger.info("""
-      MediaController: Streaming virtual clip #{clip_id} from video #{video_id}
-        Timing: #{start_time}s - #{end_time}s (#{Float.round(duration, 2)}s duration)
-        Frames: #{start_frame} - #{end_frame} @ #{fps}fps
-        Proxy: #{String.slice(proxy_url, 0, 80)}...
-      """)
-
-      # Return JSON response with virtual clip metadata
-      # This will be consumed by the ClipPlayer component
-      conn
-      |> put_resp_content_type("application/json")
-      |> json(%{
-        type: "virtual_clip",
-        proxy_url: url(conn, ~p"/_virtual_clip/proxy?url=#{URI.encode_www_form(proxy_url)}"),
-        clip_id: clip_id,
-        start_time: start_time,
-        end_time: end_time,
-        duration: duration
-      })
-    end
+        # Return JSON response with virtual clip metadata
+        # This will be consumed by the ClipPlayer component
+        conn
+        |> put_resp_content_type("application/json")
+        |> json(%{
+          type: "virtual_clip",
+          proxy_url: url(conn, ~p"/_virtual_clip/proxy?url=#{URI.encode_www_form(proxy_url)}"),
+          clip_id: clip_id,
+          start_time: start_time,
+          end_time: end_time,
+          duration: duration
+        })
+      end
     end
   end
 

@@ -22,7 +22,7 @@
           <%= if @current do %>
             <.clip_player clip={@current} id={"video-player-#{@current.id}"} />
             
-            <%!-- Prefetch next clip metadata for instant loading --%>
+            <%!-- Browser prefetch optimization: loads next clip metadata in background for instant transitions --%>
             <%= if length(@future) > 0 do %>
               <% next_clip = hd(@future) %>
               <% next_clip_url = HeatersWeb.ClipPlayer.clip_video_url(next_clip) %>
