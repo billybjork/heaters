@@ -110,28 +110,29 @@ defmodule Heaters.Processing.DetectScenes.Worker do
     end
   end
 
-  defp check_scene_detection_complete(source_video) do
-    cond do
-      # Missing proxy file - cannot proceed
-      is_nil(source_video.proxy_filepath) ->
-        {:error, "No proxy file available - encoding not complete"}
+  # Pattern matching clauses for scene detection completion check
+  # Missing proxy file - cannot proceed
+  defp check_scene_detection_complete(%Video{proxy_filepath: nil}) do
+    {:error, "No proxy file available - encoding not complete"}
+  end
 
-      # Already marked as not needing splicing
-      source_video.needs_splicing == false ->
-        :complete
+  # Already marked as not needing splicing
+  defp check_scene_detection_complete(%Video{needs_splicing: false}) do
+    :complete
+  end
 
-      # Check if virtual clips already exist
-      virtual_clips_exist?(source_video.id) ->
-        Logger.info(
-          "DetectScenesWorker: Virtual clips already exist for video #{source_video.id}, marking complete"
-        )
+  # Default case: check if virtual clips already exist
+  defp check_scene_detection_complete(%Video{id: source_video_id}) do
+    if virtual_clips_exist?(source_video_id) do
+      Logger.info(
+        "DetectScenesWorker: Virtual clips already exist for video #{source_video_id}, marking complete"
+      )
 
-        # Update needs_splicing to false if virtual clips exist but flag not set
-        StateManager.mark_scene_detection_complete(source_video.id)
-        :complete
-
-      true ->
-        :needs_processing
+      # Update needs_splicing to false if virtual clips exist but flag not set
+      StateManager.mark_scene_detection_complete(source_video_id)
+      :complete
+    else
+      :needs_processing
     end
   end
 
@@ -331,10 +332,8 @@ defmodule Heaters.Processing.DetectScenes.Worker do
     end)
     |> Enum.uniq_by(& &1["frame_number"])
     |> Enum.sort_by(& &1["frame_number"])
-    # Remove the final cut point (end of video)
-    |> Enum.reverse()
-    |> tl()
-    |> Enum.reverse()
+    # Remove the final cut point (end of video) - drop last element
+    |> Enum.drop(-1)
   end
 
   defp convert_segments_to_cut_points(_), do: []

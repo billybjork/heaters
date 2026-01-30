@@ -4,6 +4,73 @@ defmodule Heaters.Processing.Download.Core do
 
   This module handles the initial download phase: video submission and download.
   Splice operations are handled separately by the Videos.Operations.Splice module.
+
+  ## State Machine Diagram (Source Video - Download Phase)
+
+  ```
+                       ┌─────────────────┐
+                       │                 │
+                       ▼                 │ retry
+                ┌─────────────┐         │
+   submit/1 ──▶ │     new     │─────────┼───────────────┐
+                └──────┬──────┘         │               │
+                       │                │               │
+             start_downloading/1        │               │
+                       │                │               │
+                       ▼                │               │
+                ┌─────────────┐         │               │
+       ┌───────▶│ downloading │─────────┘               │
+       │        └──────┬──────┘                         │
+       │               │                                │
+       │    complete_downloading/2                      │
+       │               │                                │
+       │               ▼                                │
+       │        ┌─────────────┐                         │
+       │        │  downloaded │◀────────────────────────┘
+       │        └──────┬──────┘        (recovery)
+       │               │
+       │               │ (chains to Encode Worker)
+       │               ▼
+       │
+       │ mark_failed/3
+       │
+       │        ┌─────────────────┐
+       └────────│ download_failed │
+                └─────────────────┘
+  ```
+
+  ## Full Pipeline State Flow
+
+  ```
+  Source Video States:
+  ═══════════════════
+
+  :new ──▶ :downloading ──▶ :downloaded ──▶ :encoding ──▶ :encoded
+    │           │                              │             │
+    │           ▼                              ▼             │
+    │    :download_failed              :encoding_failed     │
+    │                                                       │
+    │                                                       ▼
+    │                                            :detecting_scenes
+    │                                                       │
+    │                                                       ▼
+    │                                            :detect_scenes_failed
+    │                                                  OR
+    │                                            :encoded (needs_splicing=false)
+    │                                                       │
+    └───────────────────────────────────────────────────────┘
+                     (creates clips in :pending_review)
+  ```
+
+  ## State Transitions
+
+  | From State        | To State          | Function                 | Trigger                |
+  |-------------------|-------------------|--------------------------|------------------------|
+  | (none)            | `:new`            | `submit/1`               | User submits URL       |
+  | `:new`            | `:downloading`    | `start_downloading/1`    | Worker starts          |
+  | `:downloading`    | `:downloaded`     | `complete_downloading/2` | yt-dlp + S3 done       |
+  | `:downloading`    | `:download_failed`| `mark_failed/3`          | yt-dlp/S3 error        |
+  | `:download_failed`| `:downloading`    | `start_downloading/1`    | Retry attempt          |
   """
 
   alias Heaters.Repo

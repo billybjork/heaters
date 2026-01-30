@@ -98,7 +98,9 @@ defmodule Heaters.Media.Artifacts do
   """
   @spec create_artifacts(integer(), String.t() | atom(), list(map())) ::
           {:ok, list(Artifact.t())} | {:error, any()}
-  def create_artifacts(clip_id, artifact_type, artifacts_data) when is_list(artifacts_data) do
+  def create_artifacts(clip_id, artifact_type, artifacts_data)
+      when is_integer(clip_id) and (is_binary(artifact_type) or is_atom(artifact_type)) and
+             is_list(artifacts_data) do
     Logger.info(
       "Artifacts: Creating #{length(artifacts_data)} #{artifact_type} artifacts for clip_id: #{clip_id}"
     )

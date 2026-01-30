@@ -5,10 +5,81 @@ defmodule Heaters.Processing.Export.StateManager do
   This module handles clip state transitions specific to the export process.
   Export converts virtual clips to physical clips using the gold master.
 
-  ## State Flow
-  - virtual clips in :review_approved → :exporting via `start_export_batch/1`
-  - :exporting → :exported (is_virtual = false) via `complete_export/2`
-  - any state → :export_failed via `mark_export_failed/2`
+  ## State Machine Diagram (Clip States)
+
+  ```
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │                         REVIEW WORKFLOW                                   │
+  │                                                                           │
+  │    ┌─────────────────┐                                                   │
+  │    │ pending_review  │──────┬──────────────┬──────────────┐              │
+  │    └────────┬────────┘      │              │              │              │
+  │             │         skip  │        archive│        approve              │
+  │             │               ▼              ▼              │              │
+  │             │     ┌─────────────┐  ┌─────────────┐       │              │
+  │             │     │review_skipped│  │review_archived│      │              │
+  │             │     └─────────────┘  └─────────────┘       │              │
+  │             │                                             │              │
+  │             │ merge/split                                 │              │
+  │             ▼                                             ▼              │
+  │    ┌─────────────────┐                          ┌─────────────────┐     │
+  │    │    archived     │                          │ review_approved │     │
+  │    └─────────────────┘                          └────────┬────────┘     │
+  │                                                          │              │
+  └──────────────────────────────────────────────────────────┼──────────────┘
+                                                             │
+                                               start_export_batch/1
+                                                             │
+                                                             ▼
+                              ┌─────────────────┐     ┌─────────────┐
+                              │                 │     │  exporting  │
+                              │                 │     └──────┬──────┘
+                              ▼                 │            │
+                       ┌─────────────┐         │  complete_export/2
+              ┌───────▶│export_failed│─────────┘            │
+              │        └─────────────┘  retry                │
+              │               ▲                              ▼
+              │               │                       ┌─────────────┐
+   mark_export_failed/2       │                       │  exported   │
+              │               │                       └──────┬──────┘
+              │               │                              │
+              │        ┌──────┴──────┐                       │ (chained)
+              └────────│  exporting  │                       ▼
+                       └─────────────┘              ┌─────────────────┐
+                                                    │   keyframing    │
+                                                    └────────┬────────┘
+                                                             │
+                                                             ▼
+                                                    ┌─────────────────┐
+                                                    │   keyframed     │
+                                                    └────────┬────────┘
+                                                             │
+                                                             ▼
+                                                    ┌─────────────────┐
+                                                    │   embedding     │
+                                                    └────────┬────────┘
+                                                             │
+                                                             ▼
+                                                    ┌─────────────────┐
+                                                    │    embedded     │
+                                                    └─────────────────┘
+  ```
+
+  ## State Transitions (Export Phase)
+
+  | From State         | To State        | Function               | Trigger                    |
+  |--------------------|-----------------|------------------------|----------------------------|
+  | `:review_approved` | `:exporting`    | `start_export_batch/1` | Export worker starts       |
+  | `:exporting`       | `:exported`     | `complete_export/2`    | FFmpeg stream copy done    |
+  | `:exporting`       | `:export_failed`| `mark_export_failed/2` | FFmpeg error               |
+  | `:export_failed`   | `:exporting`    | `start_export_batch/1` | Retry attempt              |
+
+  ## Key Invariants
+
+  - Only virtual clips (`clip_filepath = nil`) can be exported
+  - Clips must be in `:review_approved` state to start export
+  - Export uses stream copy (no re-encoding) from proxy for speed
+  - `clip_filepath` is set when export completes
 
   ## Responsibilities
   - Export-specific state transitions

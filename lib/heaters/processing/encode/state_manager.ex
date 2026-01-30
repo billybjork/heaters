@@ -5,10 +5,45 @@ defmodule Heaters.Processing.Encode.StateManager do
   This module handles video state transitions specific to the encoding process.
   Encoding creates master and proxy files from the source video.
 
-  ## State Flow
-  - :downloaded → :encoding via `start_encoding/1`
-  - :encoding → :encoded via `complete_encoding/2`
-  - any state → :encoding_failed via `mark_encoding_failed/2`
+  ## State Machine Diagram
+
+  ```
+                              ┌─────────────────┐
+                              │                 │
+                              ▼                 │ retry
+                       ┌─────────────┐         │
+                       │  downloaded │─────────┼───────────────┐
+                       └──────┬──────┘         │               │
+                              │                │               │
+                    start_encoding/1           │               │
+                              │                │               │
+                              ▼                │               │
+                       ┌─────────────┐         │               │
+             ┌────────▶│  encoding   │─────────┘               │
+             │         └──────┬──────┘                         │
+             │                │                                │
+             │     complete_encoding/2                         │
+             │                │                                │
+             │                ▼                                │
+             │         ┌─────────────┐                         │
+             │         │   encoded   │◀────────────────────────┘
+             │         └─────────────┘        (recovery)
+             │
+             │ mark_encoding_failed/2
+             │
+             │         ┌─────────────────┐
+             └─────────│ encoding_failed │
+                       └─────────────────┘
+  ```
+
+  ## State Transitions
+
+  | From State        | To State          | Function                | Trigger                    |
+  |-------------------|-------------------|-------------------------|----------------------------|
+  | `:downloaded`     | `:encoding`       | `start_encoding/1`      | Encode worker starts       |
+  | `:encoding`       | `:encoded`        | `complete_encoding/2`   | FFmpeg completes           |
+  | `:encoding`       | `:encoding_failed`| `mark_encoding_failed/2`| FFmpeg error               |
+  | `:encoding_failed`| `:encoding`       | `start_encoding/1`      | Retry attempt              |
 
   ## Responsibilities
   - Encoding-specific state transitions
