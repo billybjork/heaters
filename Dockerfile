@@ -14,10 +14,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   nodejs \
   npm \
   python3 \
-  python3-pip \
-  python3-venv \
   curl \
   && rm -rf /var/lib/apt/lists/*
+
+# Install uv for fast Python package management
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
 
 # Install Rust for rambo compilation BEFORE installing Elixir dependencies
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -29,7 +31,7 @@ RUN rustc --version && cargo --version
 WORKDIR /app
 
 # --- Set up Python Virtual Environment in the build stage ---
-RUN python3 -m venv /opt/venv
+RUN uv venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Install Elixir tools
@@ -42,7 +44,7 @@ RUN mix deps.compile
 
 # Install Python dependencies into the venv
 COPY py/requirements.txt ./py/requirements.txt
-RUN pip install --no-cache-dir -r py/requirements.txt
+RUN uv pip install --no-cache -r py/requirements.txt
 
 # Copy the rest of the application source
 COPY . .
