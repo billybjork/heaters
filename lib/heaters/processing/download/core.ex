@@ -5,62 +5,7 @@ defmodule Heaters.Processing.Download.Core do
   This module handles the initial download phase: video submission and download.
   Splice operations are handled separately by the Videos.Operations.Splice module.
 
-  ## State Machine Diagram (Source Video - Download Phase)
-
-  ```
-                       ┌─────────────────┐
-                       │                 │
-                       ▼                 │ retry
-                ┌─────────────┐         │
-   submit/1 ──▶ │     new     │─────────┼───────────────┐
-                └──────┬──────┘         │               │
-                       │                │               │
-             start_downloading/1        │               │
-                       │                │               │
-                       ▼                │               │
-                ┌─────────────┐         │               │
-       ┌───────▶│ downloading │─────────┘               │
-       │        └──────┬──────┘                         │
-       │               │                                │
-       │    complete_downloading/2                      │
-       │               │                                │
-       │               ▼                                │
-       │        ┌─────────────┐                         │
-       │        │  downloaded │◀────────────────────────┘
-       │        └──────┬──────┘        (recovery)
-       │               │
-       │               │ (chains to Encode Worker)
-       │               ▼
-       │
-       │ mark_failed/3
-       │
-       │        ┌─────────────────┐
-       └────────│ download_failed │
-                └─────────────────┘
-  ```
-
-  ## Full Pipeline State Flow
-
-  ```
-  Source Video States:
-  ═══════════════════
-
-  :new ──▶ :downloading ──▶ :downloaded ──▶ :encoding ──▶ :encoded
-    │           │                              │             │
-    │           ▼                              ▼             │
-    │    :download_failed              :encoding_failed     │
-    │                                                       │
-    │                                                       ▼
-    │                                            :detecting_scenes
-    │                                                       │
-    │                                                       ▼
-    │                                            :detect_scenes_failed
-    │                                                  OR
-    │                                            :encoded (needs_splicing=false)
-    │                                                       │
-    └───────────────────────────────────────────────────────┘
-                     (creates clips in :pending_review)
-  ```
+  See `Heaters.Pipeline.Config` for the complete pipeline state machine diagram.
 
   ## State Transitions
 

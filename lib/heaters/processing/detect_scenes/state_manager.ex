@@ -5,40 +5,7 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
   This module handles state transitions specific to the scene detection process.
   Scene detection creates virtual clips from encoded videos using the proxy file.
 
-  ## State Machine Diagram
-
-  ```
-                              ┌─────────────────┐
-                              │                 │
-                              ▼                 │ retry
-                       ┌─────────────┐         │
-                       │   encoded   │─────────┼───────────────┐
-                       │ needs_splicing=true   │               │
-                       └──────┬──────┘         │               │
-                              │                │               │
-               start_scene_detection/1         │               │
-                              │                │               │
-                              ▼                │               │
-                   ┌──────────────────┐        │               │
-          ┌──────▶│ detecting_scenes │────────┘               │
-          │        └────────┬─────────┘                        │
-          │                 │                                  │
-          │    complete_scene_detection/1                      │
-          │                 │                                  │
-          │                 ▼                                  │
-          │          ┌─────────────┐                           │
-          │          │   encoded   │◀──────────────────────────┘
-          │          │ needs_splicing=false     (recovery)
-          │          └─────────────┘
-          │                 │
-          │                 │ (clips now in :pending_review)
-          │                 ▼
-          │ mark_scene_detection_failed/2
-          │
-          │    ┌───────────────────────┐
-          └────│ detect_scenes_failed  │
-               └───────────────────────┘
-  ```
+  See `Heaters.Pipeline.Config` for the complete pipeline state machine diagram.
 
   ## State Transitions
 
@@ -55,11 +22,6 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
   - `needs_splicing = false` indicates scene detection is complete
   - Clips are created in `:pending_review` state when scene detection completes
   - `proxy_filepath` must exist before scene detection can start
-
-  ## Responsibilities
-  - Scene detection state transitions
-  - Scene detection failure handling with retry count
-  - State validation for scene detection workflow
   """
 
   alias Heaters.Repo

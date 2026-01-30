@@ -5,36 +5,7 @@ defmodule Heaters.Processing.Encode.StateManager do
   This module handles video state transitions specific to the encoding process.
   Encoding creates master and proxy files from the source video.
 
-  ## State Machine Diagram
-
-  ```
-                              ┌─────────────────┐
-                              │                 │
-                              ▼                 │ retry
-                       ┌─────────────┐         │
-                       │  downloaded │─────────┼───────────────┐
-                       └──────┬──────┘         │               │
-                              │                │               │
-                    start_encoding/1           │               │
-                              │                │               │
-                              ▼                │               │
-                       ┌─────────────┐         │               │
-             ┌────────▶│  encoding   │─────────┘               │
-             │         └──────┬──────┘                         │
-             │                │                                │
-             │     complete_encoding/2                         │
-             │                │                                │
-             │                ▼                                │
-             │         ┌─────────────┐                         │
-             │         │   encoded   │◀────────────────────────┘
-             │         └─────────────┘        (recovery)
-             │
-             │ mark_encoding_failed/2
-             │
-             │         ┌─────────────────┐
-             └─────────│ encoding_failed │
-                       └─────────────────┘
-  ```
+  See `Heaters.Pipeline.Config` for the complete pipeline state machine diagram.
 
   ## State Transitions
 
@@ -44,11 +15,6 @@ defmodule Heaters.Processing.Encode.StateManager do
   | `:encoding`       | `:encoded`        | `complete_encoding/2`   | FFmpeg completes           |
   | `:encoding`       | `:encoding_failed`| `mark_encoding_failed/2`| FFmpeg error               |
   | `:encoding_failed`| `:encoding`       | `start_encoding/1`      | Retry attempt              |
-
-  ## Responsibilities
-  - Encoding-specific state transitions
-  - Encoding failure handling with retry count
-  - State validation for encoding workflow
   """
 
   alias Heaters.Repo

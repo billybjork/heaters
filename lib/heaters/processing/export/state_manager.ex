@@ -5,67 +5,9 @@ defmodule Heaters.Processing.Export.StateManager do
   This module handles clip state transitions specific to the export process.
   Export converts virtual clips to physical clips using the gold master.
 
-  ## State Machine Diagram (Clip States)
+  See `Heaters.Pipeline.Config` for the complete pipeline state machine diagram.
 
-  ```
-  ┌──────────────────────────────────────────────────────────────────────────┐
-  │                         REVIEW WORKFLOW                                   │
-  │                                                                           │
-  │    ┌─────────────────┐                                                   │
-  │    │ pending_review  │──────┬──────────────┬──────────────┐              │
-  │    └────────┬────────┘      │              │              │              │
-  │             │         skip  │        archive│        approve              │
-  │             │               ▼              ▼              │              │
-  │             │     ┌─────────────┐  ┌─────────────┐       │              │
-  │             │     │review_skipped│  │review_archived│      │              │
-  │             │     └─────────────┘  └─────────────┘       │              │
-  │             │                                             │              │
-  │             │ merge/split                                 │              │
-  │             ▼                                             ▼              │
-  │    ┌─────────────────┐                          ┌─────────────────┐     │
-  │    │    archived     │                          │ review_approved │     │
-  │    └─────────────────┘                          └────────┬────────┘     │
-  │                                                          │              │
-  └──────────────────────────────────────────────────────────┼──────────────┘
-                                                             │
-                                               start_export_batch/1
-                                                             │
-                                                             ▼
-                              ┌─────────────────┐     ┌─────────────┐
-                              │                 │     │  exporting  │
-                              │                 │     └──────┬──────┘
-                              ▼                 │            │
-                       ┌─────────────┐         │  complete_export/2
-              ┌───────▶│export_failed│─────────┘            │
-              │        └─────────────┘  retry                │
-              │               ▲                              ▼
-              │               │                       ┌─────────────┐
-   mark_export_failed/2       │                       │  exported   │
-              │               │                       └──────┬──────┘
-              │               │                              │
-              │        ┌──────┴──────┐                       │ (chained)
-              └────────│  exporting  │                       ▼
-                       └─────────────┘              ┌─────────────────┐
-                                                    │   keyframing    │
-                                                    └────────┬────────┘
-                                                             │
-                                                             ▼
-                                                    ┌─────────────────┐
-                                                    │   keyframed     │
-                                                    └────────┬────────┘
-                                                             │
-                                                             ▼
-                                                    ┌─────────────────┐
-                                                    │   embedding     │
-                                                    └────────┬────────┘
-                                                             │
-                                                             ▼
-                                                    ┌─────────────────┐
-                                                    │    embedded     │
-                                                    └─────────────────┘
-  ```
-
-  ## State Transitions (Export Phase)
+  ## State Transitions
 
   | From State         | To State        | Function               | Trigger                    |
   |--------------------|-----------------|------------------------|----------------------------|
@@ -80,12 +22,6 @@ defmodule Heaters.Processing.Export.StateManager do
   - Clips must be in `:review_approved` state to start export
   - Export uses stream copy (no re-encoding) from proxy for speed
   - `clip_filepath` is set when export completes
-
-  ## Responsibilities
-  - Export-specific state transitions
-  - Export failure handling with retry count
-  - Batch operations for efficiency
-  - Virtual to physical clip transitions
   """
 
   alias Heaters.Repo

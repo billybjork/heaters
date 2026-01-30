@@ -8,14 +8,47 @@ defmodule Heaters.Pipeline.Config do
   - Test pipeline configuration independently
   - Maintain consistent logging and error handling patterns
 
-  Each stage is defined as a map with either:
-  - `query` + `build` functions for database queries that enqueue jobs
-  - `call` function for direct operations (like database maintenance tasks)
+  ## State Machines
 
-  The `label` field provides human-readable descriptions for logging.
+  There are two primary entities with distinct lifecycles:
 
-  Enhanced Virtual Clips Pipeline Flow:
-  download → encode → detect_scenes → persist_cache → rolling_export → keyframes → embeddings
+  ### Source Video States
+
+  ```
+  :new → :downloading → :downloaded → :encoding → :encoded → :detecting_scenes → :encoded
+    │         │              │            │                         │         (needs_splicing=false)
+    │         ▼              │            ▼                         ▼
+    │   :download_failed     │     :encoding_failed         :detect_scenes_failed
+    │         │              │            │                         │
+    └─────────┴──────────────┴────────────┴─────────────────────────┘
+                                  (retry paths)
+  ```
+
+  Scene detection creates clips in `:pending_review` state.
+
+  ### Clip States
+
+  ```
+  :pending_review ──┬── approve ──▶ :review_approved ──▶ :exporting ──▶ :exported
+                    │                                         │              │
+                    ├── skip ────▶ :review_skipped            ▼              ▼
+                    │                                   :export_failed   :keyframing
+                    ├── archive ─▶ :review_archived                          │
+                    │                                                        ▼
+                    └── merge/split ▶ :archived                         :keyframed
+                                     (original clip)                         │
+                                                                             ▼
+                                                                        :embedding
+                                                                             │
+                                                                             ▼
+                                                                        :embedded
+  ```
+
+  ## Pipeline Stages
+
+  ```
+  download → encode → detect_scenes → persist_cache → [HUMAN REVIEW] → export → keyframes → embeddings
+  ```
 
   ## Resumable Processing
 
@@ -26,11 +59,11 @@ defmodule Heaters.Pipeline.Config do
   ## Virtual Clip Review Actions
 
   Review actions are handled directly in the UI with instant cut point operations:
-  - review_approved → export (continues through pipeline)
-  - review_skipped → terminal state (no further processing)
-  - review_archived → terminal state (marked for archival)
-  - cut point operations → instant database updates (add/remove/move cuts)
-  - group actions → both clips advance to review_approved
+  - `approve` → triggers export (continues through pipeline)
+  - `skip` → terminal state (no further processing)
+  - `archive` → terminal state (marked for archival)
+  - `merge/split` → cut point operations archive original, create new clips
+  - `group` → both clips advance to `:review_approved`
 
   ## Export Architecture
 
@@ -39,11 +72,17 @@ defmodule Heaters.Pipeline.Config do
   - Resource sharing optimizes master downloads
   - Clips become available immediately after export (no waiting for full batch)
 
-  ## State Transitions (Centralized in this module)
+  ## State Transitions
 
   State transitions are configured in this module via `next_stage` entries and executed by
   `maybe_chain_next_job/2`. All workers call `maybe_chain_next_job/2` to trigger
   their next stage when the configured `condition` evaluates to true.
+
+  See individual state managers for transition details:
+  - `Download.Core` - download phase
+  - `Encode.StateManager` - encoding phase
+  - `DetectScenes.StateManager` - scene detection phase
+  - `Export.StateManager` - export and downstream processing
   """
 
   alias Heaters.Pipeline.Queries, as: PipelineQueries
