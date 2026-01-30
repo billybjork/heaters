@@ -5,15 +5,16 @@ defmodule Heaters.Processing.Encode.StateManager do
   This module handles video state transitions specific to the encoding process.
   Encoding creates master and proxy files from the source video.
 
-  ## State Flow
-  - :downloaded → :encoding via `start_encoding/1`
-  - :encoding → :encoded via `complete_encoding/2`
-  - any state → :encoding_failed via `mark_encoding_failed/2`
+  See `Heaters.Pipeline.Config` for the complete pipeline state machine diagram.
 
-  ## Responsibilities
-  - Encoding-specific state transitions
-  - Encoding failure handling with retry count
-  - State validation for encoding workflow
+  ## State Transitions
+
+  | From State        | To State          | Function                | Trigger                    |
+  |-------------------|-------------------|-------------------------|----------------------------|
+  | `:downloaded`     | `:encoding`       | `start_encoding/1`      | Encode worker starts       |
+  | `:encoding`       | `:encoded`        | `complete_encoding/2`   | FFmpeg completes           |
+  | `:encoding`       | `:encoding_failed`| `mark_encoding_failed/2`| FFmpeg error               |
+  | `:encoding_failed`| `:encoding`       | `start_encoding/1`      | Retry attempt              |
   """
 
   alias Heaters.Repo

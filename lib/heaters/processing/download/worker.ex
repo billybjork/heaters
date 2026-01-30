@@ -246,56 +246,59 @@ defmodule Heaters.Processing.Download.Worker do
   defp safe_string_to_atom(key), do: key
 
   # Handle download completion when using temp cache
+  # Uses pattern matching to validate required paths before proceeding
   defp handle_temp_cache_download_completion(source_video_id, metadata) do
-    # Python task returns local path when using temp cache
-    local_path = Map.get(metadata, :local_filepath)
-
-    # Generate S3 path using the real title from yt-dlp metadata and the original timestamp
     title = get_in(metadata, [:metadata, :title]) || "video_#{source_video_id}"
     timestamp = get_in(metadata, [:metadata, :timestamp]) || generate_timestamp()
-
     s3_key = Heaters.Storage.S3.Paths.generate_original_path(title, timestamp, ".mp4")
 
-    if local_path && s3_key do
-      Logger.info("DownloadWorker: Starting native Elixir S3 upload for #{s3_key}")
-
-      # Upload to S3 using native Elixir with progress reporting
-      case S3.upload_file_with_progress(local_path, s3_key,
-             operation_name: "Download",
-             storage_class: "STANDARD"
-           ) do
-        {:ok, ^s3_key} ->
-          Logger.info("DownloadWorker: Successfully uploaded to S3: #{s3_key}")
-
-          # Cache the downloaded file for encoding stage
-          case TempCache.put(s3_key, local_path) do
-            {:ok, _cached_path} ->
-              Logger.info("DownloadWorker: Cached download result for pipeline chaining")
-              # Update database with correct S3 path that was actually uploaded and cached
-              updated_metadata = Map.put(metadata, :filepath, s3_key)
-              Core.complete_downloading(source_video_id, updated_metadata)
-
-            {:error, reason} ->
-              Logger.warning(
-                "DownloadWorker: Failed to cache download result: #{inspect(reason)}"
-              )
-
-              # Still proceed since S3 upload succeeded - update with correct S3 path
-              updated_metadata = Map.put(metadata, :filepath, s3_key)
-              Core.complete_downloading(source_video_id, updated_metadata)
-          end
-
-        {:error, upload_reason} ->
-          Logger.error("DownloadWorker: S3 upload failed: #{inspect(upload_reason)}")
-          {:error, "S3 upload failed: #{inspect(upload_reason)}"}
-      end
+    with {:ok, local_path} <- extract_local_path(metadata),
+         :ok <- Logger.info("DownloadWorker: Starting native Elixir S3 upload for #{s3_key}"),
+         {:ok, ^s3_key} <- upload_to_s3(local_path, s3_key) do
+      Logger.info("DownloadWorker: Successfully uploaded to S3: #{s3_key}")
+      cache_and_complete(source_video_id, metadata, s3_key, local_path)
     else
-      Logger.error(
-        "DownloadWorker: Missing required paths - local_path: #{inspect(local_path)}, s3_key: #{inspect(s3_key)}"
-      )
+      {:error, :missing_local_path} ->
+        Logger.error(
+          "DownloadWorker: Missing local_filepath in metadata: #{inspect(Map.keys(metadata))}"
+        )
 
-      {:error, "Missing required file paths from Python download task"}
+        {:error, "Missing required file paths from Python download task"}
+
+      {:error, upload_reason} ->
+        Logger.error("DownloadWorker: S3 upload failed: #{inspect(upload_reason)}")
+        {:error, "S3 upload failed: #{inspect(upload_reason)}"}
     end
+  end
+
+  # Extract local path from metadata, returning error tuple if missing
+  defp extract_local_path(%{local_filepath: local_path}) when is_binary(local_path) do
+    {:ok, local_path}
+  end
+
+  defp extract_local_path(_metadata), do: {:error, :missing_local_path}
+
+  # Upload file to S3 with progress reporting
+  defp upload_to_s3(local_path, s3_key) do
+    S3.upload_file_with_progress(local_path, s3_key,
+      operation_name: "Download",
+      storage_class: "STANDARD"
+    )
+  end
+
+  # Cache the file and complete the download, handling cache failures gracefully
+  defp cache_and_complete(source_video_id, metadata, s3_key, local_path) do
+    case TempCache.put(s3_key, local_path) do
+      {:ok, _cached_path} ->
+        Logger.info("DownloadWorker: Cached download result for pipeline chaining")
+
+      {:error, reason} ->
+        Logger.warning("DownloadWorker: Failed to cache download result: #{inspect(reason)}")
+    end
+
+    # Update database with correct S3 path (proceed regardless of cache success)
+    updated_metadata = Map.put(metadata, :filepath, s3_key)
+    Core.complete_downloading(source_video_id, updated_metadata)
   end
 
   # Generate timestamp for unique file naming (matches S3.Paths format)

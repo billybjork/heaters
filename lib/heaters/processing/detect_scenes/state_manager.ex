@@ -5,15 +5,23 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
   This module handles state transitions specific to the scene detection process.
   Scene detection creates virtual clips from encoded videos using the proxy file.
 
-  ## State Flow
-  - videos with proxy_filepath and needs_splicing = true → :detecting_scenes
-  - :detecting_scenes → needs_splicing = false via `complete_scene_detection/1`
-  - any state → :detect_scenes_failed via `mark_scene_detection_failed/2`
+  See `Heaters.Pipeline.Config` for the complete pipeline state machine diagram.
 
-  ## Responsibilities
-  - Scene detection state transitions
-  - Scene detection failure handling with retry count
-  - State validation for scene detection workflow
+  ## State Transitions
+
+  | From State           | To State               | Function                        | Trigger                |
+  |----------------------|------------------------|---------------------------------|------------------------|
+  | `:encoded` (splicing)| `:detecting_scenes`    | `start_scene_detection/1`       | Worker starts          |
+  | `:detecting_scenes`  | `:encoded` (no splicing)| `complete_scene_detection/1`   | Cuts created           |
+  | `:detecting_scenes`  | `:detect_scenes_failed`| `mark_scene_detection_failed/2` | Python/OpenCV error    |
+  | `:detect_scenes_failed`| `:detecting_scenes`  | `start_scene_detection/1`       | Retry attempt          |
+
+  ## Key Invariants
+
+  - `needs_splicing = true` indicates scene detection is needed
+  - `needs_splicing = false` indicates scene detection is complete
+  - Clips are created in `:pending_review` state when scene detection completes
+  - `proxy_filepath` must exist before scene detection can start
   """
 
   alias Heaters.Repo

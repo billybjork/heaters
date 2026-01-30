@@ -4,6 +4,18 @@ defmodule Heaters.Processing.Download.Core do
 
   This module handles the initial download phase: video submission and download.
   Splice operations are handled separately by the Videos.Operations.Splice module.
+
+  See `Heaters.Pipeline.Config` for the complete pipeline state machine diagram.
+
+  ## State Transitions
+
+  | From State        | To State          | Function                 | Trigger                |
+  |-------------------|-------------------|--------------------------|------------------------|
+  | (none)            | `:new`            | `submit/1`               | User submits URL       |
+  | `:new`            | `:downloading`    | `start_downloading/1`    | Worker starts          |
+  | `:downloading`    | `:downloaded`     | `complete_downloading/2` | yt-dlp + S3 done       |
+  | `:downloading`    | `:download_failed`| `mark_failed/3`          | yt-dlp/S3 error        |
+  | `:download_failed`| `:downloading`    | `start_downloading/1`    | Retry attempt          |
   """
 
   alias Heaters.Repo

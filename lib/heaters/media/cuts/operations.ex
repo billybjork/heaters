@@ -70,7 +70,9 @@ defmodule Heaters.Media.Cuts.Operations do
   """
   @spec add_cut(integer(), integer(), integer() | nil, keyword()) ::
           {:ok, {Clip.t(), Clip.t()}} | {:error, String.t()}
-  def add_cut(source_video_id, frame_number, user_id, opts \\ []) do
+  def add_cut(source_video_id, frame_number, user_id, opts \\ [])
+      when is_integer(source_video_id) and is_integer(frame_number) and
+             (is_integer(user_id) or is_nil(user_id)) do
     Logger.info("Adding cut at frame #{frame_number} for source_video_id #{source_video_id}")
 
     params = %{frame_number: frame_number, user_id: user_id}
@@ -113,7 +115,9 @@ defmodule Heaters.Media.Cuts.Operations do
   """
   @spec remove_cut(integer(), integer(), integer() | nil, keyword()) ::
           {:ok, Clip.t()} | {:error, String.t()}
-  def remove_cut(source_video_id, frame_number, user_id, opts \\ []) do
+  def remove_cut(source_video_id, frame_number, user_id, opts \\ [])
+      when is_integer(source_video_id) and is_integer(frame_number) and
+             (is_integer(user_id) or is_nil(user_id)) do
     Logger.info("Removing cut at frame #{frame_number} for source_video_id #{source_video_id}")
 
     params = %{frame_number: frame_number, user_id: user_id}
@@ -158,7 +162,9 @@ defmodule Heaters.Media.Cuts.Operations do
   """
   @spec move_cut(integer(), integer(), integer(), integer() | nil, keyword()) ::
           {:ok, {Clip.t(), Clip.t()}} | {:error, String.t()}
-  def move_cut(source_video_id, old_frame, new_frame, user_id, opts \\ []) do
+  def move_cut(source_video_id, old_frame, new_frame, user_id, opts \\ [])
+      when is_integer(source_video_id) and is_integer(old_frame) and is_integer(new_frame) and
+             (is_integer(user_id) or is_nil(user_id)) do
     Logger.info(
       "Moving cut from frame #{old_frame} to #{new_frame} for source_video_id #{source_video_id}"
     )
@@ -203,7 +209,8 @@ defmodule Heaters.Media.Cuts.Operations do
   """
   @spec create_initial_cuts(integer(), [map()], map()) ::
           {:ok, {[Cut.t()], [Clip.t()]}} | {:error, String.t()}
-  def create_initial_cuts(source_video_id, cut_points, metadata \\ %{}) do
+  def create_initial_cuts(source_video_id, cut_points, metadata \\ %{})
+      when is_integer(source_video_id) and is_list(cut_points) and is_map(metadata) do
     Logger.info(
       "Creating initial cuts from scene detection: #{length(cut_points)} cuts for source_video_id #{source_video_id}"
     )

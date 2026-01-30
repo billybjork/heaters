@@ -5,16 +5,23 @@ defmodule Heaters.Processing.Export.StateManager do
   This module handles clip state transitions specific to the export process.
   Export converts virtual clips to physical clips using the gold master.
 
-  ## State Flow
-  - virtual clips in :review_approved → :exporting via `start_export_batch/1`
-  - :exporting → :exported (is_virtual = false) via `complete_export/2`
-  - any state → :export_failed via `mark_export_failed/2`
+  See `Heaters.Pipeline.Config` for the complete pipeline state machine diagram.
 
-  ## Responsibilities
-  - Export-specific state transitions
-  - Export failure handling with retry count
-  - Batch operations for efficiency
-  - Virtual to physical clip transitions
+  ## State Transitions
+
+  | From State         | To State        | Function               | Trigger                    |
+  |--------------------|-----------------|------------------------|----------------------------|
+  | `:review_approved` | `:exporting`    | `start_export_batch/1` | Export worker starts       |
+  | `:exporting`       | `:exported`     | `complete_export/2`    | FFmpeg stream copy done    |
+  | `:exporting`       | `:export_failed`| `mark_export_failed/2` | FFmpeg error               |
+  | `:export_failed`   | `:exporting`    | `start_export_batch/1` | Retry attempt              |
+
+  ## Key Invariants
+
+  - Only virtual clips (`clip_filepath = nil`) can be exported
+  - Clips must be in `:review_approved` state to start export
+  - Export uses stream copy (no re-encoding) from proxy for speed
+  - `clip_filepath` is set when export completes
   """
 
   alias Heaters.Repo
