@@ -31,6 +31,7 @@ __pycache__/
 /cover/
 /doc/
 /heaters-*.tar
+erl_crash.dump
 
 # Local package/dependency files
 /.fetch
