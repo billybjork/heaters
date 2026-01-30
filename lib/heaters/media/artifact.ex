@@ -1,4 +1,8 @@
 defmodule Heaters.Media.Artifact do
+  @moduledoc """
+  Schema representing artifacts generated from clips, such as keyframes.
+  """
+
   use Heaters.Schema
 
   @type t() :: %__MODULE__{

@@ -45,8 +45,10 @@ defmodule Heaters.Processing.Support.FFmpeg.StreamClip do
   require Logger
 
   alias Heaters.Processing.Support.FFmpeg.Config
-  alias Heaters.Storage.S3.ClipUrls
   alias Heaters.Repo
+  alias Heaters.Storage.PipelineCache.TempCache
+  alias Heaters.Storage.S3.ClipUrls
+  alias Heaters.Storage.S3.Core, as: S3Core
 
   @ffmpeg_bin Application.compile_env(:heaters, :ffmpeg_bin, "/usr/bin/ffmpeg")
   @tmp_dir System.tmp_dir!()
@@ -123,16 +125,14 @@ defmodule Heaters.Processing.Support.FFmpeg.StreamClip do
 
   @spec get_profile_args(atom()) :: {:ok, [String.t()]} | {:error, String.t()}
   defp get_profile_args(profile) do
-    try do
-      args = Config.get_args(profile)
-      {:ok, args}
-    rescue
-      ArgumentError -> {:error, "Unknown FFmpeg profile: #{profile}"}
-    end
+    args = Config.get_args(profile)
+    {:ok, args}
+  rescue
+    ArgumentError -> {:error, "Unknown FFmpeg profile: #{profile}"}
   end
 
   @spec get_input_url(map()) :: {:ok, String.t()} | {:error, String.t()}
-  defp get_input_url(%{proxy_filepath: proxy_filepath}) when not is_nil(proxy_filepath) do
+  defp get_input_url(%{proxy_filepath: proxy_filepath}) when is_binary(proxy_filepath) do
     if Application.get_env(:heaters, :app_env) == "development" do
       # In development, try CloudFront URL first, fallback to local test file
       try do
@@ -303,14 +303,12 @@ defmodule Heaters.Processing.Support.FFmpeg.StreamClip do
       # Cache locally for downstream stages (e.g., Keyframe) to avoid immediate re-download
       # Best-effort: ignore caching errors to not block export
       try do
-        Heaters.Storage.PipelineCache.TempCache.put(s3_output_path, file_path)
+        TempCache.put(s3_output_path, file_path)
       rescue
         _ -> :ok
       end
 
-      case Heaters.Storage.S3.Core.upload_file(file_path, s3_output_path,
-             operation_name: operation_name
-           ) do
+      case S3Core.upload_file(file_path, s3_output_path, operation_name: operation_name) do
         {:ok, s3_key} ->
           Logger.debug("#{operation_name}: Uploaded to S3: #{s3_key}")
 

@@ -1,4 +1,8 @@
 defmodule Heaters.Media.Video do
+  @moduledoc """
+  Schema representing a source video in the processing pipeline.
+  """
+
   use Heaters.Schema
 
   @type t() :: %__MODULE__{

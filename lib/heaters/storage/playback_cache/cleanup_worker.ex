@@ -34,7 +34,7 @@ defmodule Heaters.Storage.PlaybackCache.CleanupWorker do
     try do
       # Get cache size once and pass it to avoid duplicate logs
       cache_size = get_cache_size()
-      
+
       stats = %{
         expired_cleaned: cleanup_expired_clips(),
         cache_size_bytes: cache_size,
@@ -141,56 +141,65 @@ defmodule Heaters.Storage.PlaybackCache.CleanupWorker do
     if current_size <= max_size do
       0
     else
+      evict_files_over_limit(current_size, max_size)
+    end
+  end
+
+  defp evict_files_over_limit(current_size, max_size) do
+    Logger.info(
+      "PlaybackCache.CleanupWorker: Cache size #{format_bytes(current_size)} exceeds limit #{format_bytes(max_size)}, starting LRU eviction"
+    )
+
+    files_by_access = get_files_sorted_by_access()
+
+    {_remaining_size, evicted_count} =
+      Enum.reduce_while(files_by_access, {current_size, 0}, fn file_info, acc ->
+        evict_file_if_over_limit(file_info, acc, max_size)
+      end)
+
+    if evicted_count > 0 do
       Logger.info(
-        "PlaybackCache.CleanupWorker: Cache size #{format_bytes(current_size)} exceeds limit #{format_bytes(max_size)}, starting LRU eviction"
+        "PlaybackCache.CleanupWorker: Evicted #{evicted_count} files due to cache size limit"
       )
+    end
 
-      clip_files = find_clip_files()
+    evicted_count
+  end
 
-      # Sort by access time (oldest first) for LRU eviction
-      files_by_access =
-        clip_files
-        |> Enum.map(fn file_path ->
-          case File.stat(file_path) do
-            {:ok, stat} -> {file_path, stat.atime, stat.size}
-            {:error, _} -> nil
-          end
-        end)
-        |> Enum.reject(&is_nil/1)
-        |> Enum.sort_by(fn {_path, atime, _size} -> atime end)
+  defp get_files_sorted_by_access do
+    find_clip_files()
+    |> Enum.map(&get_file_info/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.sort_by(fn {_path, atime, _size} -> atime end)
+  end
 
-      # Remove files until we're under the limit
-      {_remaining_size, evicted_count} =
-        Enum.reduce_while(files_by_access, {current_size, 0}, fn {file_path, _atime, file_size},
-                                                                 {size_acc, count_acc} ->
-          if size_acc > max_size do
-            case File.rm(file_path) do
-              :ok ->
-                Logger.debug(
-                  "PlaybackCache.CleanupWorker: Evicted file: #{Path.basename(file_path)} (#{format_bytes(file_size)})"
-                )
+  defp get_file_info(file_path) do
+    case File.stat(file_path) do
+      {:ok, stat} -> {file_path, stat.atime, stat.size}
+      {:error, _} -> nil
+    end
+  end
 
-                {:cont, {size_acc - file_size, count_acc + 1}}
+  defp evict_file_if_over_limit({file_path, _atime, file_size}, {size_acc, count_acc}, max_size) do
+    if size_acc <= max_size do
+      {:halt, {size_acc, count_acc}}
+    else
+      evict_single_file(file_path, file_size, size_acc, count_acc)
+    end
+  end
 
-              {:error, reason} ->
-                Logger.warning(
-                  "PlaybackCache.CleanupWorker: Failed to evict #{file_path}: #{reason}"
-                )
-
-                {:cont, {size_acc, count_acc}}
-            end
-          else
-            {:halt, {size_acc, count_acc}}
-          end
-        end)
-
-      if evicted_count > 0 do
-        Logger.info(
-          "PlaybackCache.CleanupWorker: Evicted #{evicted_count} files due to cache size limit"
+  defp evict_single_file(file_path, file_size, size_acc, count_acc) do
+    case File.rm(file_path) do
+      :ok ->
+        Logger.debug(
+          "PlaybackCache.CleanupWorker: Evicted file: #{Path.basename(file_path)} (#{format_bytes(file_size)})"
         )
-      end
 
-      evicted_count
+        {:cont, {size_acc - file_size, count_acc + 1}}
+
+      {:error, reason} ->
+        Logger.warning("PlaybackCache.CleanupWorker: Failed to evict #{file_path}: #{reason}")
+        {:cont, {size_acc, count_acc}}
     end
   end
 
@@ -253,28 +262,31 @@ defmodule Heaters.Storage.PlaybackCache.CleanupWorker do
   defp parse_df_output(output) do
     # Parse df output to extract available bytes
     # Example output: "/dev/disk1s1  488245288  350823392  136765632    73%    /System/Volumes/Data"
-    lines = String.split(output, "\n", trim: true)
-
-    case lines do
-      [_header | [data_line | _]] ->
-        # Split by whitespace and get the 4th column (available KB)
-        case String.split(data_line, ~r/\s+/, trim: true) do
-          [_filesystem, _total, _used, available_kb | _] ->
-            case Integer.parse(available_kb) do
-              # Convert KB to bytes
-              {kb, ""} -> kb * 1024
-              _ -> 0
-            end
-
-          _ ->
-            0
-        end
-
-      _ ->
-        0
-    end
+    output
+    |> String.split("\n", trim: true)
+    |> extract_data_line()
+    |> extract_available_kb()
   rescue
     _ -> 0
+  end
+
+  defp extract_data_line([_header, data_line | _]), do: data_line
+  defp extract_data_line(_), do: nil
+
+  defp extract_available_kb(nil), do: 0
+
+  defp extract_available_kb(data_line) do
+    case String.split(data_line, ~r/\s+/, trim: true) do
+      [_filesystem, _total, _used, available_kb | _] -> parse_kb_to_bytes(available_kb)
+      _ -> 0
+    end
+  end
+
+  defp parse_kb_to_bytes(available_kb) do
+    case Integer.parse(available_kb) do
+      {kb, ""} -> kb * 1024
+      _ -> 0
+    end
   end
 
   defp log_cache_statistics(stats) do

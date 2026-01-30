@@ -86,13 +86,13 @@ defmodule Heaters.Pipeline.Config do
   """
 
   alias Heaters.Pipeline.Queries, as: PipelineQueries
-  alias Heaters.Processing.Download.Worker, as: DownloadWorker
-  alias Heaters.Processing.Encode.Worker, as: EncodeWorker
   alias Heaters.Processing.DetectScenes.Worker, as: DetectScenesWorker
-  alias Heaters.Storage.PipelineCache.PersistCache.Worker, as: PersistCacheWorker
-  alias Heaters.Processing.Keyframe.Worker, as: KeyframeWorker
+  alias Heaters.Processing.Download.Worker, as: DownloadWorker
   alias Heaters.Processing.Embed.Worker, as: EmbeddingWorker
+  alias Heaters.Processing.Encode.Worker, as: EncodeWorker
   alias Heaters.Processing.Export.Worker, as: ExportWorker
+  alias Heaters.Processing.Keyframe.Worker, as: KeyframeWorker
+  alias Heaters.Storage.PipelineCache.PersistCache.Worker, as: PersistCacheWorker
   require Logger
 
   # Centralized defaults for post-review stages
@@ -344,29 +344,36 @@ defmodule Heaters.Pipeline.Config do
   @spec maybe_chain_next_job(module(), any()) :: :ok | {:error, any()}
   def maybe_chain_next_job(current_worker, item) do
     case find_next_stage_for_worker(current_worker) do
-      {:ok, %{worker: next_worker, condition: condition_fn, args: args_fn}} ->
-        condition_result = condition_fn.(item)
-
-        if condition_result do
-          args = args_fn.(item)
-
-          # Execute immediately via Task for performance
-          Task.start(fn ->
-            string_args = for {key, value} <- args, into: %{}, do: {to_string(key), value}
-            next_worker.handle_work(string_args)
-          end)
-
-          Logger.info(
-            "PipelineConfig: Chained #{inspect(current_worker)} → #{inspect(next_worker)} for item #{item.id}"
-          )
-
-          :ok
-        else
-          :ok
-        end
+      {:ok, next_stage_config} ->
+        execute_chain_if_condition_met(current_worker, item, next_stage_config)
 
       {:error, :not_found} ->
         :ok
     end
+  end
+
+  defp execute_chain_if_condition_met(current_worker, item, %{
+         worker: next_worker,
+         condition: condition_fn,
+         args: args_fn
+       }) do
+    if condition_fn.(item) do
+      execute_chained_worker(current_worker, item, next_worker, args_fn.(item))
+    else
+      :ok
+    end
+  end
+
+  defp execute_chained_worker(current_worker, item, next_worker, args) do
+    Task.start(fn ->
+      string_args = for {key, value} <- args, into: %{}, do: {to_string(key), value}
+      next_worker.handle_work(string_args)
+    end)
+
+    Logger.info(
+      "PipelineConfig: Chained #{inspect(current_worker)} → #{inspect(next_worker)} for item #{item.id}"
+    )
+
+    :ok
   end
 end

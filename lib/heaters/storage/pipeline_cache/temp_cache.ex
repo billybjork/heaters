@@ -236,8 +236,8 @@ defmodule Heaters.Storage.PipelineCache.TempCache do
   Clean up expired cache entries.
   Called automatically by TempManager.
   """
-  @spec cleanup_expired() :: :ok
-  def cleanup_expired() do
+  @spec cleanup_expired :: :ok
+  def cleanup_expired do
     case ensure_cache_dir() do
       {:ok, cache_dir} ->
         cache_dir
@@ -252,7 +252,7 @@ defmodule Heaters.Storage.PipelineCache.TempCache do
 
   ## Private Functions
 
-  defp ensure_cache_dir() do
+  defp ensure_cache_dir do
     # Use a shared persistent cache directory instead of job-specific temp dirs
     # This allows sharing cached files between different worker processes
     cache_dir = Path.join(System.tmp_dir!(), "heaters_shared_cache")

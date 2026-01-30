@@ -31,7 +31,9 @@ defmodule Heaters.Storage.PlaybackCache.Worker do
     max_attempts: 1,
     unique: [period: 60]
 
+  alias Heaters.Media.Clip
   alias Heaters.Repo
+  alias Heaters.Storage.PlaybackCache.TempClip
   require Logger
 
   @impl Oban.Worker
@@ -39,10 +41,10 @@ defmodule Heaters.Storage.PlaybackCache.Worker do
     Logger.info("PlaybackCache.Worker: Starting async generation for clip #{clip_id}")
 
     clip =
-      Repo.get!(Heaters.Media.Clip, clip_id)
+      Repo.get!(Clip, clip_id)
       |> Repo.preload(:source_video)
 
-    case Heaters.Storage.PlaybackCache.TempClip.build(clip) do
+    case TempClip.build(clip) do
       {:ok, "/temp/" <> filename} ->
         Logger.info("PlaybackCache.Worker: Successfully generated temp clip #{filename}")
 

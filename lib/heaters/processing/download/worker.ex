@@ -24,13 +24,13 @@ defmodule Heaters.Processing.Download.Worker do
     unique: [period: 600, fields: [:args], keys: [:source_video_id]]
 
   alias Heaters.Media.Videos
-  alias Heaters.Processing.Support.PythonRunner, as: PyRunner
-  alias Heaters.Storage.PipelineCache.TempCache
-  alias Heaters.Processing.Download.{Core, YtDlpConfig}
-  alias Heaters.Processing.Support.ResultBuilder
-  alias Heaters.Storage.S3.Core, as: S3
-
   alias Heaters.Pipeline.WorkerBehavior
+  alias Heaters.Processing.Download.{Core, YtDlpConfig}
+  alias Heaters.Processing.Support.PythonRunner, as: PyRunner
+  alias Heaters.Processing.Support.ResultBuilder
+  alias Heaters.Storage.PipelineCache.TempCache
+  alias Heaters.Storage.S3.Core, as: S3
+  alias Heaters.Storage.S3.Paths, as: S3Paths
 
   require Logger
 
@@ -61,15 +61,16 @@ defmodule Heaters.Processing.Download.Worker do
 
   @impl WorkerBehavior
   def handle_work(%{"source_video_id" => source_video_id} = args) do
-    with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
-      case check_idempotency(source_video) do
-        :ok ->
-          handle_ingest_work(args)
+    case Videos.get_source_video(source_video_id) do
+      {:ok, source_video} ->
+        case check_idempotency(source_video) do
+          :ok ->
+            handle_ingest_work(args)
 
-        {:error, :already_processed} ->
-          WorkerBehavior.handle_already_processed("Source video", source_video_id)
-      end
-    else
+          {:error, :already_processed} ->
+            WorkerBehavior.handle_already_processed("Source video", source_video_id)
+        end
+
       {:error, :not_found} ->
         WorkerBehavior.handle_not_found("Source video", source_video_id)
     end
@@ -79,103 +80,87 @@ defmodule Heaters.Processing.Download.Worker do
     Logger.info("DownloadWorker: Starting download for source_video_id: #{source_video_id}")
 
     with {:ok, source_video} <- Videos.get_source_video(source_video_id),
-         {:ok, updated_video} <- ensure_downloading_state(source_video) do
-      Logger.info(
-        "DownloadWorker: Running PyRunner for source_video_id: #{source_video_id}, URL: #{updated_video.original_url}"
-      )
-
-      # Python task receives complete configuration from Elixir
-      # All yt-dlp options, format strategies, and normalization config
-      # are provided by YtDlpConfig and FFmpegConfig modules
-      download_config = YtDlpConfig.get_download_config()
-
-      # Validate configuration before sending to Python
-      :ok = YtDlpConfig.validate_config!(download_config)
-
-      # Generate timestamp for consistent naming
-      timestamp = generate_timestamp()
-
-      py_args = %{
-        source_video_id: updated_video.id,
-        input_source: updated_video.original_url,
-        # Pass timestamp instead of pre-generated path - we'll generate the final path
-        # after we get the real title from yt-dlp
-        timestamp: timestamp,
-        # Always use temp cache - Elixir handles S3 upload with native operations
-        use_temp_cache: true,
-        # Complete yt-dlp configuration from YtDlpConfig (validated)
-        download_config: download_config,
-        # FFmpeg normalization arguments from FFmpegConfig
-        normalize_args: Heaters.Processing.Support.FFmpeg.Config.get_args(:download_normalization)
-      }
-
-      case PyRunner.run_python_task("download", py_args, timeout: :timer.minutes(20)) do
-        {:ok, result} ->
-          Logger.info(
-            "DownloadWorker: PyRunner succeeded for source_video_id: #{source_video_id}, result: #{inspect(result)}"
-          )
-
-          # Elixir handles the state transition and metadata update
-          # Convert string keys to atom keys for the metadata (recursively)
-          metadata = convert_keys_to_atoms(result)
-
-          # Always handle temp cache completion since Python no longer uploads to S3
-          # Python returns local_filepath and Elixir handles the S3 upload
-          completion_result = handle_temp_cache_download_completion(source_video_id, metadata)
-
-          case completion_result do
-            {:ok, updated_video} ->
-              Logger.info(
-                "DownloadWorker: Successfully completed download for source_video_id: #{source_video_id}"
-              )
-
-              # Chain directly to next stage using centralized pipeline configuration
-              :ok = Heaters.Pipeline.Config.maybe_chain_next_job(__MODULE__, updated_video)
-              Logger.info("DownloadWorker: Successfully chained to next pipeline stage")
-
-              # Build structured result with rich metadata
-              download_result =
-                ResultBuilder.download_success(source_video_id, updated_video.filepath, %{
-                  title: updated_video.title,
-                  duration_seconds: updated_video.duration_seconds,
-                  file_size_bytes: get_file_size(result),
-                  format_info: get_format_info(result),
-                  quality_metrics: get_quality_metrics(result),
-                  metadata: metadata
-                })
-
-              # Log structured result for observability
-              ResultBuilder.log_result(__MODULE__, download_result)
-              download_result
-
-            {:error, reason} ->
-              Logger.error("DownloadWorker: Failed to update video metadata: #{inspect(reason)}")
-              ResultBuilder.download_error(source_video_id, reason)
-          end
-
-        {:error, reason} ->
-          # If the python script fails, we use the new state management to record the error
-          Logger.error(
-            "DownloadWorker: PyRunner failed for source_video_id: #{source_video_id}, reason: #{inspect(reason)}"
-          )
-
-          case Core.mark_failed(updated_video, :download_failed, reason) do
-            {:ok, _} ->
-              {:error, reason}
-
-            {:error, db_error} ->
-              Logger.error("DownloadWorker: Failed to mark video as failed: #{inspect(db_error)}")
-              {:error, reason}
-          end
-      end
+         {:ok, updated_video} <- ensure_downloading_state(source_video),
+         py_args = build_download_py_args(updated_video),
+         {:ok, result} <- execute_python_download(source_video_id, py_args, updated_video) do
+      process_download_result(source_video_id, result)
     else
       {:error, reason} ->
         Logger.error(
-          "DownloadWorker: Failed to prepare for download for source video #{source_video_id}: #{inspect(reason)}"
+          "DownloadWorker: Failed for source video #{source_video_id}: #{inspect(reason)}"
         )
 
         {:error, reason}
     end
+  end
+
+  defp build_download_py_args(video) do
+    Logger.info(
+      "DownloadWorker: Running PyRunner for source_video_id: #{video.id}, URL: #{video.original_url}"
+    )
+
+    download_config = YtDlpConfig.get_download_config()
+    :ok = YtDlpConfig.validate_config!(download_config)
+
+    %{
+      source_video_id: video.id,
+      input_source: video.original_url,
+      timestamp: generate_timestamp(),
+      use_temp_cache: true,
+      download_config: download_config,
+      normalize_args: Heaters.Processing.Support.FFmpeg.Config.get_args(:download_normalization)
+    }
+  end
+
+  defp execute_python_download(source_video_id, py_args, video) do
+    case PyRunner.run_python_task("download", py_args, timeout: :timer.minutes(20)) do
+      {:ok, result} ->
+        Logger.info("DownloadWorker: PyRunner succeeded for source_video_id: #{source_video_id}")
+        {:ok, result}
+
+      {:error, reason} ->
+        Logger.error(
+          "DownloadWorker: PyRunner failed for source_video_id: #{source_video_id}: #{inspect(reason)}"
+        )
+
+        Core.mark_failed(video, :download_failed, reason)
+        {:error, reason}
+    end
+  end
+
+  defp process_download_result(source_video_id, result) do
+    metadata = convert_keys_to_atoms(result)
+
+    case handle_temp_cache_download_completion(source_video_id, metadata) do
+      {:ok, updated_video} ->
+        finalize_download_success(source_video_id, updated_video, result, metadata)
+
+      {:error, reason} ->
+        Logger.error("DownloadWorker: Failed to update video metadata: #{inspect(reason)}")
+        ResultBuilder.download_error(source_video_id, reason)
+    end
+  end
+
+  defp finalize_download_success(source_video_id, updated_video, result, metadata) do
+    Logger.info(
+      "DownloadWorker: Successfully completed download for source_video_id: #{source_video_id}"
+    )
+
+    :ok = Heaters.Pipeline.Config.maybe_chain_next_job(__MODULE__, updated_video)
+    Logger.info("DownloadWorker: Successfully chained to next pipeline stage")
+
+    download_result =
+      ResultBuilder.download_success(source_video_id, updated_video.filepath, %{
+        title: updated_video.title,
+        duration_seconds: updated_video.duration_seconds,
+        file_size_bytes: get_file_size(result),
+        format_info: get_format_info(result),
+        quality_metrics: get_quality_metrics(result),
+        metadata: metadata
+      })
+
+    ResultBuilder.log_result(__MODULE__, download_result)
+    download_result
   end
 
   # Helper function to ensure video is in downloading state, handling resumable processing
@@ -214,33 +199,33 @@ defmodule Heaters.Processing.Download.Worker do
 
   defp convert_keys_to_atoms(other), do: other
 
+  # Allowlist of known metadata keys from Python download task
+  @known_metadata_keys %{
+    "filepath" => :filepath,
+    "local_filepath" => :local_filepath,
+    "title" => :title,
+    "duration" => :duration,
+    "filesize" => :filesize,
+    "format_id" => :format_id,
+    "ext" => :ext,
+    "width" => :width,
+    "height" => :height,
+    "fps" => :fps,
+    "vcodec" => :vcodec,
+    "acodec" => :acodec,
+    "format" => :format,
+    "resolution" => :resolution,
+    "filesize_approx" => :filesize_approx,
+    "metadata" => :metadata,
+    "duration_seconds" => :duration_seconds,
+    "file_size_bytes" => :file_size_bytes,
+    "status" => :status
+  }
+
   # Safe atom conversion with allowlist for expected metadata keys
+  # Unknown keys remain as strings to avoid atom table pollution
   defp safe_string_to_atom(key) when is_binary(key) do
-    case key do
-      # Known metadata keys from Python download task
-      "filepath" -> :filepath
-      "local_filepath" -> :local_filepath
-      "title" -> :title
-      "duration" -> :duration
-      "filesize" -> :filesize
-      "format_id" -> :format_id
-      "ext" -> :ext
-      "width" -> :width
-      "height" -> :height
-      "fps" -> :fps
-      "vcodec" -> :vcodec
-      "acodec" -> :acodec
-      "format" -> :format
-      "resolution" -> :resolution
-      "filesize_approx" -> :filesize_approx
-      # Nested metadata structure
-      "metadata" -> :metadata
-      "duration_seconds" -> :duration_seconds
-      "file_size_bytes" -> :file_size_bytes
-      "status" -> :status
-      # Keep unknown keys as strings to avoid atom table pollution
-      _ -> key
-    end
+    Map.get(@known_metadata_keys, key, key)
   end
 
   defp safe_string_to_atom(key), do: key
@@ -250,7 +235,7 @@ defmodule Heaters.Processing.Download.Worker do
   defp handle_temp_cache_download_completion(source_video_id, metadata) do
     title = get_in(metadata, [:metadata, :title]) || "video_#{source_video_id}"
     timestamp = get_in(metadata, [:metadata, :timestamp]) || generate_timestamp()
-    s3_key = Heaters.Storage.S3.Paths.generate_original_path(title, timestamp, ".mp4")
+    s3_key = S3Paths.generate_original_path(title, timestamp, ".mp4")
 
     with {:ok, local_path} <- extract_local_path(metadata),
          :ok <- Logger.info("DownloadWorker: Starting native Elixir S3 upload for #{s3_key}"),

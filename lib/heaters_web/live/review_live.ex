@@ -5,9 +5,12 @@ defmodule HeatersWeb.ReviewLive do
   # Components / helpers
   import HeatersWeb.ClipPlayer, only: [clip_player: 1]
 
-  alias Heaters.Review.Queue, as: ClipReview
-  alias Heaters.Review.Actions, as: ClipActions
   alias Heaters.Media.Clip
+  alias Heaters.Media.Cuts
+  alias Heaters.Review.Actions, as: ClipActions
+  alias Heaters.Review.Queue, as: ClipReview
+  alias Heaters.Storage.PlaybackCache.Worker, as: PlaybackCacheWorker
+  alias Heaters.Storage.S3.ClipUrls
 
   require Logger
 
@@ -383,7 +386,7 @@ defmodule HeatersWeb.ReviewLive do
 
       # Pre-warm additional clips from the same source videos for sequential review
       # Only do this if we have clips to process (avoids unnecessary DB queries)
-      if length(clips_to_process) > 0 do
+      if clips_to_process != [] do
         trigger_sequential_prewarming(clips_to_process)
       end
     end
@@ -394,12 +397,12 @@ defmodule HeatersWeb.ReviewLive do
     # Check if this clip already has a temp file or generation in progress
     # by trying to generate the URL - if it fails or is loading, queue background generation.
     # Oban uniqueness constraints prevent duplicate jobs for the same clip.
-    case Heaters.Storage.S3.ClipUrls.get_video_url(clip, clip.source_video || %{}) do
+    case ClipUrls.get_video_url(clip, clip.source_video || %{}) do
       {:error, _reason} ->
         # Queue background generation via Oban worker (with uniqueness constraints)
         job_result =
           %{clip_id: clip.id}
-          |> Heaters.Storage.PlaybackCache.Worker.new()
+          |> PlaybackCacheWorker.new()
           |> Oban.insert()
 
         case job_result do
@@ -419,7 +422,7 @@ defmodule HeatersWeb.ReviewLive do
         # Temp clip needs to be generated - queue background generation (with uniqueness constraints)
         job_result =
           %{clip_id: clip.id}
-          |> Heaters.Storage.PlaybackCache.Worker.new()
+          |> PlaybackCacheWorker.new()
           |> Oban.insert()
 
         case job_result do
@@ -692,7 +695,7 @@ defmodule HeatersWeb.ReviewLive do
 
     # Check if there's a cut at the start of this clip
     cut_exists =
-      case Heaters.Media.Cuts.find_cut_at_frame(clip.source_video_id, clip.start_frame) do
+      case Cuts.find_cut_at_frame(clip.source_video_id, clip.start_frame) do
         {:ok, _cut} -> true
         {:error, :not_found} -> false
       end

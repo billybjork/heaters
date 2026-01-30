@@ -57,17 +57,17 @@ defmodule Heaters.Storage.S3.ClipUrls do
   """
   @spec get_video_url(clip_data(), source_video_data()) ::
           {:ok, String.t(), atom()} | {:loading, nil} | {:error, String.t()}
-  def get_video_url(%{clip_filepath: filepath} = clip, source_video) when not is_nil(filepath) do
+  def get_video_url(%{clip_filepath: nil} = clip, source_video) do
+    # Clip without exported file - use temp clip generation
+    build_temp_clip_url(clip, source_video)
+  end
+
+  def get_video_url(%{clip_filepath: filepath} = clip, source_video) when is_binary(filepath) do
     # Clip with exported file - use direct S3/CloudFront URL
     case get_exported_clip_url(clip, source_video) do
       {:ok, url, player_type} -> {:ok, url, player_type}
       {:error, reason} -> {:error, reason}
     end
-  end
-
-  def get_video_url(%{clip_filepath: nil} = clip, source_video) do
-    # Clip without exported file - use temp clip generation
-    build_temp_clip_url(clip, source_video)
   end
 
   def get_video_url(clip, _source_video) do
@@ -119,15 +119,15 @@ defmodule Heaters.Storage.S3.ClipUrls do
       {:error, reason} = get_exported_clip_url(%{clip_filepath: nil, ...}, source_video)
   """
   @spec get_exported_clip_url(clip_data(), source_video_data()) :: clip_url_result()
+  def get_exported_clip_url(%{clip_filepath: nil}, _source_video) do
+    {:error, "Clip has no exported file available"}
+  end
+
   def get_exported_clip_url(%{clip_filepath: filepath} = _clip, _source_video)
-      when not is_nil(filepath) do
+      when is_binary(filepath) do
     # Clip with exported file - has an actual file
     url = build_cloudfront_url(filepath)
     {:ok, url, :direct_s3}
-  end
-
-  def get_exported_clip_url(%{clip_filepath: nil}, _source_video) do
-    {:error, "Clip has no exported file available"}
   end
 
   def get_exported_clip_url(clip, _source_video) do
@@ -141,8 +141,10 @@ defmodule Heaters.Storage.S3.ClipUrls do
   Returns true if the clip has an exported file available.
   """
   @spec exported_clip_streamable?(clip_data(), source_video_data()) :: boolean()
+  def exported_clip_streamable?(%{clip_filepath: nil}, _source_video), do: false
+
   def exported_clip_streamable?(%{clip_filepath: clip_path}, _source_video)
-      when not is_nil(clip_path),
+      when is_binary(clip_path),
       do: true
 
   def exported_clip_streamable?(_, _), do: false
@@ -196,23 +198,23 @@ defmodule Heaters.Storage.S3.ClipUrls do
     end
   end
 
+  defp build_production_clip_url(%{export_key: nil} = _clip, _source_video) do
+    # Clip not yet exported - queue export job (will be implemented in later phases)
+    # For now, return loading state
+    {:loading, nil}
+  end
+
   defp build_production_clip_url(%{export_key: export_key} = _clip, _source_video)
-       when not is_nil(export_key) do
+       when is_binary(export_key) do
     # Clip already exported - return presigned URL
     bucket_name = get_bucket_name()
 
     case ExAws.S3.presigned_url(ExAws.Config.new(:s3), :get, bucket_name, export_key,
-           expires_in: 86400 * 30
+           expires_in: 86_400 * 30
          ) do
       {:ok, url} -> {:ok, url, :direct_s3}
       {:error, reason} -> {:error, "Failed to generate presigned URL: #{inspect(reason)}"}
     end
-  end
-
-  defp build_production_clip_url(%{id: _clip_id} = _clip, _source_video) do
-    # Clip not yet exported - queue export job (will be implemented in later phases)
-    # For now, return loading state
-    {:loading, nil}
   end
 
   defp get_bucket_name do
@@ -308,7 +310,6 @@ defmodule Heaters.Storage.S3.ClipUrls do
         :ok
     end
   end
-
 
   # CloudFront URL utilities (shared between exported and temp clips)
 

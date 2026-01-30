@@ -8,9 +8,9 @@ defmodule Heaters.Processing.Embed.Search do
   """
 
   import Ecto.Query, warn: false
-  alias Heaters.Repo
   alias Heaters.Media.Clip
   alias Heaters.Processing.Embed.Embedding
+  alias Heaters.Repo
 
   @doc "All available model names, generation strategies, and source videos for embedded clips"
   def embedded_filter_opts do
@@ -108,7 +108,7 @@ defmodule Heaters.Processing.Embed.Search do
     |> maybe_filter(m, g)
     |> join(:inner, [e], c in Clip, on: c.id == e.clip_id and c.ingest_state == :embedded)
     # only keep clips from the chosen source video, if any
-    |> (fn q -> if sv_id, do: where(q, [_, c], c.source_video_id == ^sv_id), else: q end).()
+    |> filter_by_source_video(sv_id)
     |> order_by_similarity(main_vec, asc?)
     |> offset(^((page - 1) * per))
     |> limit(^per)
@@ -143,9 +143,18 @@ defmodule Heaters.Processing.Embed.Search do
 
   defp maybe_filter(query, m, g) do
     query
-    |> (fn q -> if m, do: where(q, [e], e.model_name == ^m), else: q end).()
-    |> (fn q -> if g, do: where(q, [e], e.generation_strategy == ^g), else: q end).()
+    |> filter_by_model(m)
+    |> filter_by_strategy(g)
   end
+
+  defp filter_by_source_video(query, nil), do: query
+  defp filter_by_source_video(query, sv_id), do: where(query, [_, c], c.source_video_id == ^sv_id)
+
+  defp filter_by_model(query, nil), do: query
+  defp filter_by_model(query, m), do: where(query, [e], e.model_name == ^m)
+
+  defp filter_by_strategy(query, nil), do: query
+  defp filter_by_strategy(query, g), do: where(query, [e], e.generation_strategy == ^g)
 
   defp order_by_similarity(query, main_embedding, true = _asc?) do
     order_by(query, [e, _c], asc: fragment("? <=> ?", e.embedding, ^main_embedding))

@@ -1,18 +1,22 @@
 defmodule Heaters.Processing.Keyframe.Worker do
+  @moduledoc """
+  Worker for extracting keyframes from clips using FFmpeg.
+  """
+
   use Heaters.Pipeline.WorkerBehavior,
     queue: :media_processing,
     # 15 minutes, prevent duplicate keyframe jobs
     unique: [period: 900, fields: [:args]]
 
+  alias Heaters.Media.{Artifacts, Clips}
+  alias Heaters.Pipeline.Config, as: PipelineConfig
+  alias Heaters.Pipeline.WorkerBehavior
   alias Heaters.Processing.Keyframe.Strategy
   alias Heaters.Processing.Keyframe.Validation
   alias Heaters.Processing.Support.FFmpeg.Runner, as: FFmpegRunner
-  alias Heaters.Storage.S3.Paths, as: S3Paths
-  alias Heaters.Storage.S3.Core, as: S3Core
   alias Heaters.Storage.PipelineCache.TempCache
-  alias Heaters.Media.{Clips, Artifacts}
-  alias Heaters.Pipeline.WorkerBehavior
-  alias Heaters.Pipeline.Config, as: PipelineConfig
+  alias Heaters.Storage.S3.Core, as: S3Core
+  alias Heaters.Storage.S3.Paths, as: S3Paths
   require Logger
 
   @complete_states [
@@ -68,9 +72,8 @@ defmodule Heaters.Processing.Keyframe.Worker do
   # Idempotency check: Skip processing if already done or has keyframe artifacts
   defp check_idempotency(clip) do
     with :ok <- WorkerBehavior.check_complete_states(clip, @complete_states),
-         :ok <- check_artifact_exists_unless_retry(clip),
-         :ok <- check_keyframe_specific_states(clip) do
-      :ok
+         :ok <- check_artifact_exists_unless_retry(clip) do
+      check_keyframe_specific_states(clip)
     end
   end
 
@@ -145,16 +148,18 @@ defmodule Heaters.Processing.Keyframe.Worker do
       Enum.map(files, fn %{path: local_path, filename: filename, timestamp: ts, index: idx} ->
         s3_key = S3Paths.generate_artifact_path(clip.id, :keyframe, filename)
 
-        with {:ok, ^s3_key} <- S3Core.upload_file(local_path, s3_key, operation_name: "Keyframe") do
-          # Store in temp cache to allow next stage (embeddings) to read locally without S3
-          _ = TempCache.put(s3_key, local_path)
+        case S3Core.upload_file(local_path, s3_key, operation_name: "Keyframe") do
+          {:ok, ^s3_key} ->
+            # Store in temp cache to allow next stage (embeddings) to read locally without S3
+            _ = TempCache.put(s3_key, local_path)
 
-          %{
-            s3_key: s3_key,
-            metadata: %{timestamp: ts, index: idx, strategy: strategy_config.strategy}
-          }
-        else
-          {:error, reason} -> throw({:upload_error, reason})
+            %{
+              s3_key: s3_key,
+              metadata: %{timestamp: ts, index: idx, strategy: strategy_config.strategy}
+            }
+
+          {:error, reason} ->
+            throw({:upload_error, reason})
         end
       end)
 

@@ -168,44 +168,59 @@ defmodule HeatersWeb.MediaController do
   # Parse HTTP Range header specifications
   # Supports: "N-M", "N-", "-SUFFIX"
   defp parse_range_spec(spec, file_size) do
-    # Handle only the first range (ignore multi-range)
     first_range = spec |> String.split(",", parts: 2) |> hd()
 
-    with [start_part, end_part] <- String.split(first_range, "-", parts: 2) do
-      cond do
-        # Format: "N-M" (specific range)
-        start_part != "" and end_part != "" ->
-          with {start_pos, ""} <- Integer.parse(start_part),
-               {end_pos, ""} <- Integer.parse(end_part),
-               true <- start_pos >= 0 and end_pos >= start_pos and end_pos < file_size do
-            {:ok, {start_pos, end_pos}}
-          else
-            _ -> :error
-          end
+    case String.split(first_range, "-", parts: 2) do
+      [start_part, end_part] -> parse_range_parts(start_part, end_part, file_size)
+      _ -> :error
+    end
+  end
 
-        # Format: "N-" (from N to end)
-        start_part != "" and end_part == "" ->
-          with {start_pos, ""} <- Integer.parse(start_part),
-               true <- start_pos >= 0 and start_pos < file_size do
-            {:ok, {start_pos, file_size - 1}}
-          else
-            _ -> :error
-          end
+  # Format: "N-M" (specific range)
+  defp parse_range_parts(start_part, end_part, file_size)
+       when start_part != "" and end_part != "" do
+    parse_specific_range(start_part, end_part, file_size)
+  end
 
-        # Format: "-SUFFIX" (last SUFFIX bytes)
-        start_part == "" and end_part != "" ->
-          with {suffix_bytes, ""} <- Integer.parse(end_part),
-               true <- suffix_bytes > 0 do
-            start_pos = max(file_size - suffix_bytes, 0)
-            {:ok, {start_pos, file_size - 1}}
-          else
-            _ -> :error
-          end
+  # Format: "N-" (from N to end)
+  defp parse_range_parts(start_part, "", file_size) when start_part != "" do
+    parse_from_start_range(start_part, file_size)
+  end
 
-        # Invalid format
-        true ->
-          :error
-      end
+  # Format: "-SUFFIX" (last SUFFIX bytes)
+  defp parse_range_parts("", end_part, file_size) when end_part != "" do
+    parse_suffix_range(end_part, file_size)
+  end
+
+  defp parse_range_parts(_, _, _), do: :error
+
+  defp parse_specific_range(start_part, end_part, file_size) do
+    with {start_pos, ""} <- Integer.parse(start_part),
+         {end_pos, ""} <- Integer.parse(end_part),
+         true <- valid_specific_range?(start_pos, end_pos, file_size) do
+      {:ok, {start_pos, end_pos}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp valid_specific_range?(start_pos, end_pos, file_size) do
+    start_pos >= 0 and end_pos >= start_pos and end_pos < file_size
+  end
+
+  defp parse_from_start_range(start_part, file_size) do
+    with {start_pos, ""} <- Integer.parse(start_part),
+         true <- start_pos >= 0 and start_pos < file_size do
+      {:ok, {start_pos, file_size - 1}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp parse_suffix_range(end_part, file_size) do
+    with {suffix_bytes, ""} <- Integer.parse(end_part),
+         true <- suffix_bytes > 0 do
+      {:ok, {max(file_size - suffix_bytes, 0), file_size - 1}}
     else
       _ -> :error
     end

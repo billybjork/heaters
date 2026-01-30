@@ -23,6 +23,7 @@ defmodule Heaters.Storage.S3.Core do
   particularly for basic file operations and batch processing.
   """
 
+  alias ExAws.S3.Upload, as: S3Upload
   require Logger
 
   # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
@@ -100,35 +101,47 @@ defmodule Heaters.Storage.S3.Core do
   def download_file(s3_path, local_path, opts \\ []) do
     operation_name = Keyword.get(opts, :operation_name, "S3")
 
-    case get_bucket_name() do
-      {:ok, bucket_name} ->
-        s3_key = String.trim_leading(s3_path, "/")
-
-        Logger.info(
-          "#{operation_name}: Downloading s3://#{bucket_name}/#{s3_key} to #{local_path}"
-        )
-
-        case ExAws.S3.get_object(bucket_name, s3_key) |> ExAws.request() do
-          {:ok, %{body: body}} ->
-            case File.write(local_path, body) do
-              :ok ->
-                Logger.debug("#{operation_name}: Successfully downloaded to #{local_path}")
-                {:ok, local_path}
-
-              {:error, reason} ->
-                Logger.error("#{operation_name}: Failed to write file: #{inspect(reason)}")
-                {:error, "Failed to write downloaded file: #{inspect(reason)}"}
-            end
-
-          {:error, reason} ->
-            Logger.error("#{operation_name}: Failed to download from S3: #{inspect(reason)}")
-            {:error, "Failed to download from S3: #{inspect(reason)}"}
-        end
-
+    with {:ok, bucket_name} <- get_bucket_name(),
+         s3_key = String.trim_leading(s3_path, "/"),
+         :ok <- log_download_start(operation_name, bucket_name, s3_key, local_path),
+         {:ok, body} <- fetch_s3_object(bucket_name, s3_key, operation_name),
+         :ok <- write_downloaded_file(local_path, body, operation_name) do
+      {:ok, local_path}
+    else
       {:error, reason} ->
-        Logger.error("#{operation_name}: S3 bucket name not configured: #{inspect(reason)}")
+        log_download_error(operation_name, reason)
         {:error, reason}
     end
+  end
+
+  defp log_download_start(operation_name, bucket_name, s3_key, local_path) do
+    Logger.info("#{operation_name}: Downloading s3://#{bucket_name}/#{s3_key} to #{local_path}")
+    :ok
+  end
+
+  defp fetch_s3_object(bucket_name, s3_key, operation_name) do
+    case ExAws.S3.get_object(bucket_name, s3_key) |> ExAws.request() do
+      {:ok, %{body: body}} ->
+        {:ok, body}
+
+      {:error, reason} ->
+        {:error, "#{operation_name}: Failed to download from S3: #{inspect(reason)}"}
+    end
+  end
+
+  defp write_downloaded_file(local_path, body, operation_name) do
+    case File.write(local_path, body) do
+      :ok ->
+        Logger.debug("#{operation_name}: Successfully downloaded to #{local_path}")
+        :ok
+
+      {:error, reason} ->
+        {:error, "#{operation_name}: Failed to write file: #{inspect(reason)}"}
+    end
+  end
+
+  defp log_download_error(operation_name, reason) do
+    Logger.error("#{operation_name}: Download failed: #{inspect(reason)}")
   end
 
   @doc """
@@ -218,13 +231,11 @@ defmodule Heaters.Storage.S3.Core do
           "#{operation_name}: Uploading #{local_path} to s3://#{bucket_name}/#{clean_s3_key}"
         )
 
-        if not File.exists?(local_path) do
-          {:error, "Local file does not exist: #{local_path}"}
-        else
+        if File.exists?(local_path) do
           try do
             upload_options = build_upload_options(local_path, opts)
 
-            case ExAws.S3.Upload.stream_file(local_path)
+            case S3Upload.stream_file(local_path)
                  |> ExAws.S3.upload(bucket_name, clean_s3_key, upload_options)
                  |> ExAws.request() do
               {:ok, _result} ->
@@ -246,6 +257,8 @@ defmodule Heaters.Storage.S3.Core do
 
               {:error, "Exception during S3 upload: #{Exception.message(error)}"}
           end
+        else
+          {:error, "Local file does not exist: #{local_path}"}
         end
 
       {:error, reason} ->
@@ -336,19 +349,21 @@ defmodule Heaters.Storage.S3.Core do
     end
   end
 
+  @content_type_map %{
+    ".mp4" => "video/mp4",
+    ".mov" => "video/quicktime",
+    ".avi" => "video/x-msvideo",
+    ".webm" => "video/webm",
+    ".jpg" => "image/jpeg",
+    ".jpeg" => "image/jpeg",
+    ".png" => "image/png",
+    ".gif" => "image/gif",
+    ".webp" => "image/webp"
+  }
+
   defp guess_content_type(local_path) do
-    case Path.extname(local_path) |> String.downcase() do
-      ".mp4" -> "video/mp4"
-      ".mov" -> "video/quicktime"
-      ".avi" -> "video/x-msvideo"
-      ".webm" -> "video/webm"
-      ".jpg" -> "image/jpeg"
-      ".jpeg" -> "image/jpeg"
-      ".png" -> "image/png"
-      ".gif" -> "image/gif"
-      ".webp" -> "image/webp"
-      _ -> nil
-    end
+    extension = Path.extname(local_path) |> String.downcase()
+    Map.get(@content_type_map, extension)
   end
 
   defp get_header_value(headers, key, default) do
@@ -374,7 +389,7 @@ defmodule Heaters.Storage.S3.Core do
 
     deleted_count = length(deleted_objects)
 
-    if length(errors) > 0 do
+    if errors != [] do
       Logger.warning("S3 deletion had #{length(errors)} errors")
 
       Enum.each(errors, fn error ->
@@ -513,9 +528,7 @@ defmodule Heaters.Storage.S3.Core do
       "#{operation_name}: Starting native Elixir upload with progress reporting: #{local_path} -> s3://bucket/#{clean_s3_key}"
     )
 
-    if not File.exists?(local_path) do
-      {:error, "Local file does not exist: #{local_path}"}
-    else
+    if File.exists?(local_path) do
       case get_bucket_name() do
         {:ok, bucket_name} ->
           upload_with_native_progress_and_retry(
@@ -532,6 +545,8 @@ defmodule Heaters.Storage.S3.Core do
           Logger.error("#{operation_name}: S3 bucket name not configured: #{inspect(reason)}")
           {:error, reason}
       end
+    else
+      {:error, "Local file does not exist: #{local_path}"}
     end
   end
 
@@ -591,7 +606,7 @@ defmodule Heaters.Storage.S3.Core do
         upload_options =
           build_upload_options_with_progress(local_path, storage_class, progress_agent)
 
-        case ExAws.S3.Upload.stream_file(local_path)
+        case S3Upload.stream_file(local_path)
              |> ExAws.S3.upload(bucket_name, s3_key, upload_options)
              |> ExAws.request() do
           {:ok, _result} ->
@@ -733,27 +748,25 @@ defmodule Heaters.Storage.S3.Core do
           {:ok, any()} | {:error, any()}
   defp retry_with_exponential_backoff(max_retries, attempt, operation_fn)
        when attempt <= max_retries do
-    try do
-      case operation_fn.(attempt) do
-        {:ok, result} ->
-          {:ok, result}
+    case operation_fn.(attempt) do
+      {:ok, result} ->
+        {:ok, result}
 
-        {:error, _reason} when attempt < max_retries ->
-          # Exponential backoff: 2s, 4s, 8s
-          delay = (2000 * :math.pow(2, attempt - 1)) |> round()
-          Logger.info("Retrying upload after #{delay}ms...")
-          Process.sleep(delay)
-          retry_with_exponential_backoff(max_retries, attempt + 1, operation_fn)
+      {:error, _reason} when attempt < max_retries ->
+        # Exponential backoff: 2s, 4s, 8s
+        delay = (2000 * :math.pow(2, attempt - 1)) |> round()
+        Logger.info("Retrying upload after #{delay}ms...")
+        Process.sleep(delay)
+        retry_with_exponential_backoff(max_retries, attempt + 1, operation_fn)
 
-        {:error, reason} ->
-          Logger.error("Upload failed after #{max_retries} attempts")
-          {:error, reason}
-      end
-    catch
-      {:permanent_error, reason} ->
-        Logger.error("Permanent error during upload: #{reason}")
+      {:error, reason} ->
+        Logger.error("Upload failed after #{max_retries} attempts")
         {:error, reason}
     end
+  catch
+    {:permanent_error, reason} ->
+      Logger.error("Permanent error during upload: #{reason}")
+      {:error, reason}
   end
 
   defp retry_with_exponential_backoff(_max_retries, _attempt, _operation_fn) do

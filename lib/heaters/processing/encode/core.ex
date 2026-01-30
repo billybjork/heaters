@@ -32,8 +32,8 @@ defmodule Heaters.Processing.Encode.Core do
   alias Heaters.Processing.Encode.{
     FileOperations,
     MetadataExtraction,
-    VideoProcessing,
-    OutputHandling
+    OutputHandling,
+    VideoProcessing
   }
 
   @type encode_result :: {:ok, EncodeResult.t()} | {:error, String.t()}

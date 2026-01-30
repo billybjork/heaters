@@ -29,8 +29,9 @@ defmodule Heaters.Media.Videos do
   """
 
   import Ecto.Query, warn: false
-  alias Heaters.Repo
   alias Heaters.Media.Video
+  alias Heaters.Processing.Download.Worker, as: DownloadWorker
+  alias Heaters.Repo
   require Logger
 
   # ---------------------------------------------------------------------------
@@ -118,7 +119,7 @@ defmodule Heaters.Media.Videos do
 
   @spec enqueue_download_job(Video.t()) :: {:ok, Oban.Job.t()} | {:error, String.t()}
   defp enqueue_download_job(%Video{} = source_video) do
-    job = Heaters.Processing.Download.Worker.new(%{source_video_id: source_video.id})
+    job = DownloadWorker.new(%{source_video_id: source_video.id})
 
     case Oban.insert(job) do
       {:ok, job} ->
@@ -196,8 +197,8 @@ defmodule Heaters.Media.Videos do
 
   @spec format_changeset_errors(Ecto.Changeset.t()) :: String.t()
   defp format_changeset_errors(changeset) do
-    changeset.errors
-    |> Enum.map(fn {field, {message, _}} -> "#{field}: #{message}" end)
-    |> Enum.join(", ")
+    Enum.map_join(changeset.errors, ", ", fn {field, {message, _}} ->
+      "#{field}: #{message}"
+    end)
   end
 end

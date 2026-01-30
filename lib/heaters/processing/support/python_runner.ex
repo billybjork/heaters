@@ -51,7 +51,7 @@ defmodule Heaters.Processing.Support.PythonRunner do
   # Dialyzer suppressions required due to external system dependencies.
   #
   # CRITICAL: PyRunner requires specific environment variables to be configured:
-  # - DEV_DATABASE_URL (or PROD_DATABASE_URL in production)  
+  # - DEV_DATABASE_URL (or PROD_DATABASE_URL in production)
   # - DEV_S3_BUCKET_NAME (or PROD_S3_BUCKET_NAME in production)
   #
   # When these environment variables are NOT set, PyRunner will ALWAYS fail in build_env/0
@@ -60,12 +60,12 @@ defmodule Heaters.Processing.Support.PythonRunner do
   # This is intentional fail-fast behavior - PyRunner operations should not proceed
   # with incomplete configuration as they would produce inconsistent results.
   #
-  # In properly configured environments (development with .env or production), 
+  # In properly configured environments (development with .env or production),
   # these functions WILL succeed and return {:ok, result} patterns.
   #
   # Additional external system dependencies that Dialyzer cannot statically verify:
   # 1. Python executable exists and is runnable
-  # 2. Working directory and script paths are valid  
+  # 2. Working directory and script paths are valid
   # 3. Port.open/2 will succeed with the runtime environment
   # 4. External Python processes will behave predictably
   #

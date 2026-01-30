@@ -146,48 +146,51 @@ defmodule HeatersWeb.ClipPlayer do
 
   # Helper function to get video data for the component
   defp get_video_data(clip, temp_clip \\ %{}) do
-    # Load source video if not already loaded
-    source_video =
-      case clip do
-        %{source_video: %{} = sv} ->
-          sv
+    source_video = extract_source_video(clip)
 
-        %{source_video_id: id} when not is_nil(id) ->
-          # In a real app, you'd load this from the database
-          # For now, assume it's preloaded or handle the error case
-          %{proxy_filepath: nil}
+    if temp_clip_ready?(temp_clip, clip.id) do
+      build_temp_clip_response(clip, temp_clip.url)
+    else
+      build_url_response(clip, source_video)
+    end
+  end
 
-        _ ->
-          %{proxy_filepath: nil}
-      end
+  defp extract_source_video(%{source_video: %{} = sv}), do: sv
 
-    # Check if temp clip is ready (reactive update from LiveView assigns)
-    case temp_clip do
-      %{clip_id: clip_id, url: url, ready: true} when clip_id == clip.id and not is_nil(url) ->
-        clip_info = build_clip_info(clip, :ffmpeg_stream)
-        {url, "ffmpeg_stream", clip_info}
+  defp extract_source_video(%{source_video_id: id}) when is_integer(id),
+    do: %{proxy_filepath: nil}
 
-      _ ->
-        # Fall back to normal video URL generation
-        case ClipUrls.get_video_url(clip, source_video) do
-          {:ok, url, player_type} ->
-            clip_info = build_clip_info(clip, player_type)
-            {url, to_string(player_type), clip_info}
+  defp extract_source_video(_), do: %{proxy_filepath: nil}
 
-          {:loading, nil} ->
-            # Return loading state - temp clip needs generation
-            clip_info = build_clip_info(clip, :loading)
-            {nil, "loading", clip_info}
+  defp temp_clip_ready?(%{clip_id: clip_id, url: url, ready: true}, id)
+       when clip_id == id and not is_nil(url),
+       do: true
 
-          {:error, _reason} ->
-            # Return loading state if no exported file available but proxy exists
-            if not is_nil(source_video.proxy_filepath) do
-              clip_info = build_clip_info(clip, :loading)
-              {nil, "loading", clip_info}
-            else
-              {nil, "error", %{}}
-            end
-        end
+  defp temp_clip_ready?(_, _), do: false
+
+  defp build_temp_clip_response(clip, url) do
+    clip_info = build_clip_info(clip, :ffmpeg_stream)
+    {url, "ffmpeg_stream", clip_info}
+  end
+
+  defp build_url_response(clip, source_video) do
+    case ClipUrls.get_video_url(clip, source_video) do
+      {:ok, url, player_type} ->
+        {url, to_string(player_type), build_clip_info(clip, player_type)}
+
+      {:loading, nil} ->
+        {nil, "loading", build_clip_info(clip, :loading)}
+
+      {:error, _reason} ->
+        build_error_or_loading_response(clip, source_video)
+    end
+  end
+
+  defp build_error_or_loading_response(clip, source_video) do
+    if is_binary(source_video.proxy_filepath) do
+      {nil, "loading", build_clip_info(clip, :loading)}
+    else
+      {nil, "error", %{}}
     end
   end
 

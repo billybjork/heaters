@@ -40,44 +40,40 @@ defmodule Heaters.Processing.Support.FFmpeg.Runner do
   """
   @spec create_video_clip(String.t(), String.t(), float(), float(), keyword()) :: ffmpeg_result()
   def create_video_clip(input_path, output_path, start_time, end_time, opts \\ []) do
-    try do
-      # Get encoding profile configuration
-      profile = Keyword.get(opts, :profile, :keyframe_extraction)
-      config = Config.get_profile_config(profile)
+    # Get encoding profile configuration
+    profile = Keyword.get(opts, :profile, :keyframe_extraction)
+    config = Config.get_profile_config(profile)
 
-      # Convert float times to strings for FFmpex compatibility
-      start_time_str = Float.to_string(start_time)
-      duration = end_time - start_time
-      duration_str = Float.to_string(duration)
+    # Convert float times to strings for FFmpex compatibility
+    start_time_str = Float.to_string(start_time)
+    duration = end_time - start_time
+    duration_str = Float.to_string(duration)
 
-      Logger.debug(
-        "FFmpegRunner: Creating video clip with profile #{profile} - start_time=#{start_time}, duration=#{duration}"
-      )
+    Logger.debug(
+      "FFmpegRunner: Creating video clip with profile #{profile} - start_time=#{start_time}, duration=#{duration}"
+    )
 
-      # Additional validation for very short clips
-      if duration < 1.0 do
-        Logger.debug(
-          "FFmpegRunner: Creating short clip (#{duration}s) - using profile: #{profile}"
-        )
-      end
-
-      command =
-        FFmpex.new_command()
-        |> add_input_file(input_path)
-        |> add_file_option(option_ss(start_time_str))
-        |> add_output_file(output_path)
-        |> add_file_option(option_t(duration_str))
-        |> add_file_option(option_map("0:v:0?"))
-        |> add_file_option(option_map("0:a:0?"))
-        |> add_profile_encoding_options(config)
-        |> add_global_option(option_y())
-
-      execute_and_get_file_size(command, output_path)
-    rescue
-      e ->
-        Logger.error("FFmpegRunner: Exception creating video clip: #{inspect(e)}")
-        {:error, "Exception creating video clip: #{inspect(e)}"}
+    # Additional validation for very short clips
+    if duration < 1.0 do
+      Logger.debug("FFmpegRunner: Creating short clip (#{duration}s) - using profile: #{profile}")
     end
+
+    command =
+      FFmpex.new_command()
+      |> add_input_file(input_path)
+      |> add_file_option(option_ss(start_time_str))
+      |> add_output_file(output_path)
+      |> add_file_option(option_t(duration_str))
+      |> add_file_option(option_map("0:v:0?"))
+      |> add_file_option(option_map("0:a:0?"))
+      |> add_profile_encoding_options(config)
+      |> add_global_option(option_y())
+
+    execute_and_get_file_size(command, output_path)
+  rescue
+    e ->
+      Logger.error("FFmpegRunner: Exception creating video clip: #{inspect(e)}")
+      {:error, "Exception creating video clip: #{inspect(e)}"}
   end
 
   @doc """
@@ -95,42 +91,42 @@ defmodule Heaters.Processing.Support.FFmpeg.Runner do
   """
   @spec get_video_metadata(String.t()) :: metadata_result()
   def get_video_metadata(video_path) do
-    try do
-      {output, exit_code} =
-        System.cmd("ffprobe", [
-          "-v",
-          "error",
-          "-select_streams",
-          "v:0",
-          "-show_entries",
-          "stream=duration,r_frame_rate,nb_frames,width,height",
-          "-count_frames",
-          "-of",
-          "json",
-          video_path
-        ])
+    {output, exit_code} =
+      System.cmd("ffprobe", [
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=duration,r_frame_rate,nb_frames,width,height",
+        "-count_frames",
+        "-of",
+        "json",
+        video_path
+      ])
 
-      if exit_code == 0 do
-        case Jason.decode(output) do
-          {:ok, %{"streams" => [probe_data | _]}} ->
-            parse_video_metadata(probe_data)
+    if exit_code == 0 do
+      case Jason.decode(output) do
+        {:ok, %{"streams" => [probe_data | _]}} ->
+          parse_video_metadata(probe_data)
 
-          {:ok, %{"streams" => []}} ->
-            {:error, "ffprobe found no video streams in #{video_path}"}
+        {:ok, %{"streams" => []}} ->
+          {:error, "ffprobe found no video streams in #{video_path}"}
 
-          {:error, reason} ->
-            {:error, "Failed to parse ffprobe JSON output: #{inspect(reason)}"}
-        end
-      else
-        Logger.error("FFmpegRunner: FFprobe command failed with exit code #{exit_code}")
-        {:error, "FFprobe command failed with exit code #{exit_code}"}
+        {:error, reason} ->
+          {:error, "Failed to parse ffprobe JSON output: #{inspect(reason)}"}
       end
-    rescue
-      e ->
-        Logger.error("FFmpegRunner: Exception getting video metadata: #{Exception.message(e)}")
-        {:error, "Exception getting video metadata: #{Exception.message(e)}"}
+    else
+      Logger.error("FFmpegRunner: FFprobe command failed with exit code #{exit_code}")
+      {:error, "FFprobe command failed with exit code #{exit_code}"}
     end
+  rescue
+    e ->
+      Logger.error("FFmpegRunner: Exception getting video metadata: #{Exception.message(e)}")
+      {:error, "Exception getting video metadata: #{Exception.message(e)}"}
   end
+
+  @default_fps 30.0
 
   @doc """
   Extracts video frame rate using ffprobe.
@@ -146,59 +142,67 @@ defmodule Heaters.Processing.Support.FFmpeg.Runner do
   """
   @spec get_video_fps(String.t()) :: {:ok, float()} | {:error, any()}
   def get_video_fps(video_path) do
-    try do
-      {output, exit_code} =
-        System.cmd("ffprobe", [
-          "-v",
-          "error",
-          "-select_streams",
-          "v:0",
-          "-show_entries",
-          "stream=r_frame_rate",
-          "-of",
-          "csv=p=0",
-          video_path
-        ])
+    {output, exit_code} =
+      System.cmd("ffprobe", [
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=r_frame_rate",
+        "-of",
+        "csv=p=0",
+        video_path
+      ])
 
-      if exit_code == 0 do
-        fps_string = String.trim(output)
+    parse_fps_from_ffprobe(output, exit_code)
+  rescue
+    e ->
+      Logger.warning(
+        "FFmpegRunner: Exception getting FPS: #{inspect(e)}, defaulting to #{@default_fps}"
+      )
 
-        case String.split(fps_string, "/") do
-          [num_str, den_str] ->
-            with {num, ""} <- Integer.parse(num_str),
-                 {den, ""} <- Integer.parse(den_str),
-                 true <- den > 0 do
-              fps = num / den
-              Logger.info("FFmpegRunner: Detected video FPS: #{Float.round(fps, 3)}")
-              {:ok, fps}
-            else
-              _ ->
-                Logger.warning(
-                  "FFmpegRunner: Could not parse FPS from '#{fps_string}', defaulting to 30.0"
-                )
+      {:ok, @default_fps}
+  end
 
-                {:ok, 30.0}
-            end
+  defp parse_fps_from_ffprobe(_output, exit_code) when exit_code != 0 do
+    Logger.warning(
+      "FFmpegRunner: FFprobe command failed with exit code #{exit_code}, defaulting to #{@default_fps}"
+    )
 
-          _ ->
-            Logger.warning(
-              "FFmpegRunner: Could not parse FPS from '#{fps_string}', defaulting to 30.0"
-            )
+    {:ok, @default_fps}
+  end
 
-            {:ok, 30.0}
-        end
-      else
-        Logger.warning(
-          "FFmpegRunner: FFprobe command failed with exit code #{exit_code}, defaulting to 30.0"
-        )
+  defp parse_fps_from_ffprobe(output, _exit_code) do
+    fps_string = String.trim(output)
+    parse_fps_fraction(fps_string)
+  end
 
-        {:ok, 30.0}
-      end
-    rescue
-      e ->
-        Logger.warning("FFmpegRunner: Exception getting FPS: #{inspect(e)}, defaulting to 30.0")
-        {:ok, 30.0}
+  defp parse_fps_fraction(fps_string) do
+    case String.split(fps_string, "/") do
+      [num_str, den_str] -> parse_fps_parts(num_str, den_str, fps_string)
+      _ -> default_fps_with_warning(fps_string)
     end
+  end
+
+  defp parse_fps_parts(num_str, den_str, fps_string) do
+    with {num, ""} <- Integer.parse(num_str),
+         {den, ""} <- Integer.parse(den_str),
+         true <- den > 0 do
+      fps = num / den
+      Logger.info("FFmpegRunner: Detected video FPS: #{Float.round(fps, 3)}")
+      {:ok, fps}
+    else
+      _ -> default_fps_with_warning(fps_string)
+    end
+  end
+
+  defp default_fps_with_warning(fps_string) do
+    Logger.warning(
+      "FFmpegRunner: Could not parse FPS from '#{fps_string}', defaulting to #{@default_fps}"
+    )
+
+    {:ok, @default_fps}
   end
 
   ## Private helper functions

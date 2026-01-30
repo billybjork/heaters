@@ -24,9 +24,9 @@ defmodule Heaters.Processing.Export.StateManager do
   - `clip_filepath` is set when export completes
   """
 
-  alias Heaters.Repo
   alias Heaters.Media.Clip
   alias Heaters.Media.Clips
+  alias Heaters.Repo
   require Logger
 
   @doc """

@@ -42,9 +42,8 @@ defmodule Heaters.Processing.Keyframe.Validation do
   @spec validate_keyframe_requirements(map(), atom()) :: :ok | {:error, String.t()}
   def validate_keyframe_requirements(clip, strategy) do
     with :ok <- validate_keyframe_readiness(clip),
-         :ok <- validate_clip_has_video_file(clip),
-         :ok <- validate_strategy_compatibility(clip, strategy) do
-      :ok
+         :ok <- validate_clip_has_video_file(clip) do
+      validate_strategy_compatibility(clip, strategy)
     end
   end
 

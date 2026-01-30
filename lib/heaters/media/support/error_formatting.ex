@@ -69,9 +69,9 @@ defmodule Heaters.Media.Support.ErrorFormatting do
   @spec format_multiple_errors([{atom(), any()}]) :: String.t()
   def format_multiple_errors(errors) when is_list(errors) do
     error_messages =
-      errors
-      |> Enum.map(fn {error_type, details} -> format_domain_error(error_type, details) end)
-      |> Enum.join("; ")
+      Enum.map_join(errors, "; ", fn {error_type, details} ->
+        format_domain_error(error_type, details)
+      end)
 
     "Multiple errors: #{error_messages}"
   end

@@ -57,8 +57,7 @@ defmodule Heaters.Storage.S3.Adapter do
 
     all_keys =
       [clip.clip_filepath | artifact_keys]
-      |> Enum.reject(&is_nil/1)
-      |> Enum.reject(&(&1 == ""))
+      |> Enum.reject(fn key -> is_nil(key) or key == "" end)
 
     if Enum.empty?(all_keys) do
       Logger.info("No S3 keys to delete for clip #{clip.id}")
@@ -215,7 +214,7 @@ defmodule Heaters.Storage.S3.Adapter do
 
   # get_file_size function removed - no longer needed after legacy upload function removal
 
-  defp get_cdn_domain() do
+  defp get_cdn_domain do
     case Application.get_env(:heaters, :proxy_cdn_domain) do
       nil ->
         # Fallback to cloudfront domain for backwards compatibility

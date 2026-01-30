@@ -28,9 +28,9 @@ defmodule Heaters.Media.Cuts.Validation do
   """
 
   import Ecto.Query, warn: false
-  alias Heaters.Repo
   alias Heaters.Media.Cut
   alias Heaters.Media.Cuts
+  alias Heaters.Repo
 
   @doc """
   Validate a complete cut operation against all preconditions.
@@ -265,52 +265,36 @@ defmodule Heaters.Media.Cuts.Validation do
   def validate_minimum_distances(source_video_id, old_frame, new_frame) do
     cuts = Cuts.get_cuts_for_source(source_video_id)
     min_distance = Cuts.minimum_cut_distance()
-
-    # Filter out the cut we're moving
     other_cuts = Enum.reject(cuts, fn cut -> cut.frame_number == old_frame end)
+    {left_cut, right_cut} = find_nearest_cuts(other_cuts, new_frame)
 
-    # Check distance to nearest cuts
-    case find_nearest_cuts(other_cuts, new_frame) do
-      {nil, nil} ->
-        :ok
-
-      {left_cut, nil} ->
-        distance = new_frame - left_cut.frame_number
-
-        if distance >= min_distance do
-          :ok
-        else
-          {:error,
-           "New position too close to cut at frame #{left_cut.frame_number} (distance: #{distance}, minimum: #{min_distance})"}
-        end
-
-      {nil, right_cut} ->
-        distance = right_cut.frame_number - new_frame
-
-        if distance >= min_distance do
-          :ok
-        else
-          {:error,
-           "New position too close to cut at frame #{right_cut.frame_number} (distance: #{distance}, minimum: #{min_distance})"}
-        end
-
-      {left_cut, right_cut} ->
-        left_distance = new_frame - left_cut.frame_number
-        right_distance = right_cut.frame_number - new_frame
-
-        cond do
-          left_distance < min_distance ->
-            {:error,
-             "New position too close to cut at frame #{left_cut.frame_number} (distance: #{left_distance}, minimum: #{min_distance})"}
-
-          right_distance < min_distance ->
-            {:error,
-             "New position too close to cut at frame #{right_cut.frame_number} (distance: #{right_distance}, minimum: #{min_distance})"}
-
-          true ->
-            :ok
-        end
+    with :ok <- check_cut_distance(left_cut, new_frame, min_distance, :left) do
+      check_cut_distance(right_cut, new_frame, min_distance, :right)
     end
+  end
+
+  @spec check_cut_distance(Cut.t() | nil, integer(), integer(), :left | :right) ::
+          :ok | {:error, String.t()}
+  defp check_cut_distance(nil, _new_frame, _min_distance, _direction), do: :ok
+
+  defp check_cut_distance(cut, new_frame, min_distance, :left) do
+    distance = new_frame - cut.frame_number
+
+    if distance >= min_distance,
+      do: :ok,
+      else: {:error, distance_error_msg(cut.frame_number, distance, min_distance)}
+  end
+
+  defp check_cut_distance(cut, new_frame, min_distance, :right) do
+    distance = cut.frame_number - new_frame
+
+    if distance >= min_distance,
+      do: :ok,
+      else: {:error, distance_error_msg(cut.frame_number, distance, min_distance)}
+  end
+
+  defp distance_error_msg(frame_number, distance, min_distance) do
+    "New position too close to cut at frame #{frame_number} (distance: #{distance}, minimum: #{min_distance})"
   end
 
   @doc """
@@ -331,83 +315,89 @@ defmodule Heaters.Media.Cuts.Validation do
 
   ## Private Helper Functions
 
+  # Dispatch precondition checks to individual handler functions
   @spec run_single_precondition(tuple(), integer(), map()) :: :ok | {:error, String.t()}
-  defp run_single_precondition(precondition, source_video_id, params) do
-    case precondition do
-      {:cut_within_segment, error_msg} ->
-        case validate_cut_within_segment(source_video_id, params.frame_number) do
-          :ok -> :ok
-          {:error, _} -> {:error, error_msg}
-        end
+  defp run_single_precondition({:cut_within_segment, error_msg}, source_video_id, params) do
+    check_with_error_msg(
+      &validate_cut_within_segment/2,
+      [source_video_id, params.frame_number],
+      error_msg
+    )
+  end
 
-      {:minimum_segment_size, _min_frames, error_msg} ->
-        case validate_minimum_segment_size(source_video_id, params.frame_number) do
-          :ok -> :ok
-          {:error, _} -> {:error, error_msg}
-        end
+  defp run_single_precondition(
+         {:minimum_segment_size, _min_frames, error_msg},
+         source_video_id,
+         params
+       ) do
+    check_with_error_msg(
+      &validate_minimum_segment_size/2,
+      [source_video_id, params.frame_number],
+      error_msg
+    )
+  end
 
-      {:not_duplicate_cut, error_msg} ->
-        case validate_not_duplicate_cut(source_video_id, params.frame_number) do
-          :ok -> :ok
-          {:error, _} -> {:error, error_msg}
-        end
+  defp run_single_precondition({:not_duplicate_cut, error_msg}, source_video_id, params) do
+    check_with_error_msg(
+      &validate_not_duplicate_cut/2,
+      [source_video_id, params.frame_number],
+      error_msg
+    )
+  end
 
-      {:cut_exists, error_msg} ->
-        frame = Map.get(params, :frame_number) || Map.get(params, :old_frame)
+  defp run_single_precondition({:cut_exists, error_msg}, source_video_id, params) do
+    frame = Map.get(params, :frame_number) || Map.get(params, :old_frame)
+    check_with_error_msg(&validate_cut_exists/2, [source_video_id, frame], error_msg)
+  end
 
-        case validate_cut_exists(source_video_id, frame) do
-          :ok -> :ok
-          {:error, _} -> {:error, error_msg}
-        end
+  defp run_single_precondition({:has_adjacent_segments, error_msg}, source_video_id, params) do
+    frame = Map.get(params, :frame_number) || Map.get(params, :old_frame)
+    check_with_error_msg(&validate_has_adjacent_segments/2, [source_video_id, frame], error_msg)
+  end
 
-      {:has_adjacent_segments, error_msg} ->
-        frame = Map.get(params, :frame_number) || Map.get(params, :old_frame)
+  defp run_single_precondition({:not_boundary_cut, error_msg}, source_video_id, params) do
+    frame = Map.get(params, :frame_number) || Map.get(params, :old_frame)
+    check_with_error_msg(&validate_not_boundary_cut/2, [source_video_id, frame], error_msg)
+  end
 
-        case validate_has_adjacent_segments(source_video_id, frame) do
-          :ok -> :ok
-          {:error, _} -> {:error, error_msg}
-        end
+  defp run_single_precondition({:within_outer_bounds, error_msg}, source_video_id, params) do
+    check_with_error_msg(
+      &validate_within_outer_bounds/3,
+      [source_video_id, params.old_frame, params.new_frame],
+      error_msg
+    )
+  end
 
-      {:not_boundary_cut, error_msg} ->
-        frame = Map.get(params, :frame_number) || Map.get(params, :old_frame)
+  defp run_single_precondition(
+         {:minimum_distances, _min_distance, error_msg},
+         source_video_id,
+         params
+       ) do
+    check_with_error_msg(
+      &validate_minimum_distances/3,
+      [source_video_id, params.old_frame, params.new_frame],
+      error_msg
+    )
+  end
 
-        case validate_not_boundary_cut(source_video_id, frame) do
-          :ok -> :ok
-          {:error, _} -> {:error, error_msg}
-        end
+  defp run_single_precondition({:not_duplicate_position, error_msg}, source_video_id, params) do
+    check_with_error_msg(
+      &validate_not_duplicate_position/3,
+      [source_video_id, params.old_frame, params.new_frame],
+      error_msg
+    )
+  end
 
-      {:within_outer_bounds, error_msg} ->
-        case validate_within_outer_bounds(
-               source_video_id,
-               params.old_frame,
-               params.new_frame
-             ) do
-          :ok -> :ok
-          {:error, _} -> {:error, error_msg}
-        end
+  defp run_single_precondition(precondition, _source_video_id, _params) do
+    {:error, "Unknown precondition: #{inspect(precondition)}"}
+  end
 
-      {:minimum_distances, _min_distance, error_msg} ->
-        case validate_minimum_distances(
-               source_video_id,
-               params.old_frame,
-               params.new_frame
-             ) do
-          :ok -> :ok
-          {:error, _} -> {:error, error_msg}
-        end
-
-      {:not_duplicate_position, error_msg} ->
-        case validate_not_duplicate_position(
-               source_video_id,
-               params.old_frame,
-               params.new_frame
-             ) do
-          :ok -> :ok
-          {:error, _} -> {:error, error_msg}
-        end
-
-      _ ->
-        {:error, "Unknown precondition: #{inspect(precondition)}"}
+  # Helper to apply validation function and map error to configured message
+  @spec check_with_error_msg(function(), [term()], String.t()) :: :ok | {:error, String.t()}
+  defp check_with_error_msg(validator_fn, args, error_msg) do
+    case apply(validator_fn, args) do
+      :ok -> :ok
+      {:error, _} -> {:error, error_msg}
     end
   end
 

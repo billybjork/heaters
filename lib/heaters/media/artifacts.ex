@@ -40,10 +40,10 @@ defmodule Heaters.Media.Artifacts do
   and reducing duplication across different artifact generation workflows.
   """
 
-  alias Heaters.Repo
+  alias Heaters.Media.Artifact
   alias Heaters.Media.Clip
   alias Heaters.Media.Videos
-  alias Heaters.Media.Artifact
+  alias Heaters.Repo
   require Logger
 
   @doc """
@@ -183,21 +183,19 @@ defmodule Heaters.Media.Artifacts do
 
   @spec format_artifact_validation_errors(list()) :: String.t()
   defp format_artifact_validation_errors(errors) do
-    errors
-    |> Enum.map(fn {index, changeset_errors} ->
+    Enum.map_join(errors, "; ", fn {index, changeset_errors} ->
       error_messages =
-        changeset_errors
-        |> Enum.map(fn {field, {message, _}} -> "#{field}: #{message}" end)
-        |> Enum.join(", ")
+        Enum.map_join(changeset_errors, ", ", fn {field, {message, _}} ->
+          "#{field}: #{message}"
+        end)
 
       "Artifact #{index}: #{error_messages}"
     end)
-    |> Enum.join("; ")
   end
 
   @spec build_artifact_attrs(integer(), atom(), map()) :: map()
   defp build_artifact_attrs(clip_id, artifact_type, artifact_data) do
-    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    now = DateTime.utc_now(:second)
 
     %{
       clip_id: clip_id,

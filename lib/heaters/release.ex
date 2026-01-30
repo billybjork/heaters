@@ -1,4 +1,8 @@
 defmodule Heaters.Release do
+  @moduledoc """
+  Release tasks for database migrations in production.
+  """
+
   # This should match your OTP app name in mix.exs
   @app :heaters
 

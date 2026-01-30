@@ -11,9 +11,9 @@ defmodule Heaters.Pipeline.Dispatcher do
     queue: :background_jobs,
     unique: [period: 60]
 
+  alias Ecto.Multi
   alias Heaters.Pipeline.Config
   alias Heaters.Pipeline.WorkerBehavior
-  alias Ecto.Multi
   require Logger
 
   @impl WorkerBehavior
@@ -49,7 +49,7 @@ defmodule Heaters.Pipeline.Dispatcher do
 
       case result do
         # Handle list format [jobs] when some jobs were inserted
-        inserted_jobs when is_list(inserted_jobs) and length(inserted_jobs) > 0 ->
+        [_ | _] = inserted_jobs ->
           Logger.info(
             "Dispatcher[step #{step_num}]: Enqueued #{length(inserted_jobs)} new jobs for #{label}."
           )

@@ -24,10 +24,10 @@ defmodule Heaters.Pipeline.Queries do
   """
 
   import Ecto.Query, warn: false
-  alias Heaters.Repo
   alias Heaters.Media.Clip
   alias Heaters.Media.Video
   alias Heaters.Processing.Embed.Embedding
+  alias Heaters.Repo
 
   # ---------------------------------------------------------------------------
   # Video Processing Pipeline Queries
@@ -42,8 +42,8 @@ defmodule Heaters.Pipeline.Queries do
   ## Pipeline Usage
   Used by `Pipeline.Config` stage discovery for video ingest processing.
   """
-  @spec get_videos_needing_ingest() :: [Video.t()]
-  def get_videos_needing_ingest() do
+  @spec get_videos_needing_ingest :: [Video.t()]
+  def get_videos_needing_ingest do
     states = ["new", "downloading", "download_failed"]
 
     from(s in Video, where: s.ingest_state in ^states)
@@ -59,8 +59,8 @@ defmodule Heaters.Pipeline.Queries do
   ## Pipeline Usage
   Used by `Pipeline.Config` stage discovery for video encoding.
   """
-  @spec get_videos_needing_encoding() :: [Video.t()]
-  def get_videos_needing_encoding() do
+  @spec get_videos_needing_encoding :: [Video.t()]
+  def get_videos_needing_encoding do
     from(s in Video,
       where:
         (s.ingest_state == :downloaded or s.ingest_state == :encoding or
@@ -79,8 +79,8 @@ defmodule Heaters.Pipeline.Queries do
   ## Pipeline Usage
   Used by `Pipeline.Config` stage discovery for scene detection processing.
   """
-  @spec get_videos_needing_scene_detection() :: [Video.t()]
-  def get_videos_needing_scene_detection() do
+  @spec get_videos_needing_scene_detection :: [Video.t()]
+  def get_videos_needing_scene_detection do
     from(s in Video,
       where: not is_nil(s.proxy_filepath) and s.needs_splicing == true
     )
@@ -98,8 +98,8 @@ defmodule Heaters.Pipeline.Queries do
   ## Pipeline Usage
   Used by `Pipeline.Config` stage discovery for cache persistence processing.
   """
-  @spec get_videos_needing_cache_persistence() :: [Video.t()]
-  def get_videos_needing_cache_persistence() do
+  @spec get_videos_needing_cache_persistence :: [Video.t()]
+  def get_videos_needing_cache_persistence do
     from(s in Video,
       where:
         s.needs_splicing == false and
@@ -122,8 +122,8 @@ defmodule Heaters.Pipeline.Queries do
   ## Pipeline Usage
   Used by `Pipeline.Config` stage discovery for export processing.
   """
-  @spec get_virtual_clips_ready_for_export() :: [Clip.t()]
-  def get_virtual_clips_ready_for_export() do
+  @spec get_virtual_clips_ready_for_export :: [Clip.t()]
+  def get_virtual_clips_ready_for_export do
     from(c in Clip,
       where: is_nil(c.clip_filepath) and c.ingest_state == :review_approved
     )
@@ -139,8 +139,8 @@ defmodule Heaters.Pipeline.Queries do
   ## Pipeline Usage
   Used by `Pipeline.Config` for source video-based export batching.
   """
-  @spec get_source_videos_with_clips_ready_for_export() :: [integer()]
-  def get_source_videos_with_clips_ready_for_export() do
+  @spec get_source_videos_with_clips_ready_for_export :: [integer()]
+  def get_source_videos_with_clips_ready_for_export do
     from(c in Clip,
       where: is_nil(c.clip_filepath) and c.ingest_state == :review_approved,
       select: c.source_video_id,
@@ -162,8 +162,8 @@ defmodule Heaters.Pipeline.Queries do
   ## Pipeline Usage
   Used by `Pipeline.Config` stage discovery for keyframe processing.
   """
-  @spec get_clips_needing_keyframes() :: [Clip.t()]
-  def get_clips_needing_keyframes() do
+  @spec get_clips_needing_keyframes :: [Clip.t()]
+  def get_clips_needing_keyframes do
     states = ["exported", "keyframing", "keyframe_failed"]
 
     from(c in Clip, where: c.ingest_state in ^states)
@@ -183,8 +183,8 @@ defmodule Heaters.Pipeline.Queries do
   ## Pipeline Usage
   Used by `Pipeline.Config` stage discovery for embedding processing.
   """
-  @spec get_clips_needing_embeddings() :: [Clip.t()]
-  def get_clips_needing_embeddings() do
+  @spec get_clips_needing_embeddings :: [Clip.t()]
+  def get_clips_needing_embeddings do
     states = ["keyframed", "embedding", "embedding_failed"]
 
     from(c in Clip, where: c.ingest_state in ^states)

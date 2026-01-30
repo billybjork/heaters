@@ -24,9 +24,9 @@ defmodule Heaters.Processing.DetectScenes.StateManager do
   - `proxy_filepath` must exist before scene detection can start
   """
 
-  alias Heaters.Repo
   alias Heaters.Media.Video
   alias Heaters.Media.Videos
+  alias Heaters.Repo
   require Logger
 
   @doc """

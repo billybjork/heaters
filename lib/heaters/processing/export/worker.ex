@@ -59,12 +59,14 @@ defmodule Heaters.Processing.Export.Worker do
     # 30 minutes for large exports
     unique: [period: 1800, fields: [:args]]
 
-  alias Heaters.Repo
   alias Heaters.Media.Clip
-  alias Heaters.Processing.Export.StateManager
-  alias Heaters.Pipeline.WorkerBehavior
-  alias Heaters.Processing.Support.ResultBuilder
   alias Heaters.Pipeline.Config, as: PipelineConfig
+  alias Heaters.Pipeline.WorkerBehavior
+  alias Heaters.Processing.Export.Core, as: ExportCore
+  alias Heaters.Processing.Export.StateManager
+  alias Heaters.Processing.Support.ResultBuilder
+  alias Heaters.Repo
+  alias Heaters.Storage.S3.Paths, as: S3Paths
   require Logger
 
   # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
@@ -170,7 +172,7 @@ defmodule Heaters.Processing.Export.Worker do
 
     Logger.info("ExportWorker: Running efficient stream copy export with #{length(clips)} clips")
 
-    case Heaters.Processing.Export.Core.export_clips_efficient(
+    case ExportCore.export_clips_efficient(
            clips_data,
            source_video,
            operation_name: "ExportWorker",
@@ -190,7 +192,7 @@ defmodule Heaters.Processing.Export.Worker do
     Enum.map(clips, fn clip ->
       # Generate S3 output path using centralized path service (eliminates Python coupling)
       s3_output_path =
-        Heaters.Storage.S3.Paths.generate_clip_path(
+        S3Paths.generate_clip_path(
           clip.id,
           video_title || "clip_#{clip.id}",
           clip.clip_identifier

@@ -28,9 +28,9 @@ defmodule Heaters.Media.Support.ErrorHandling do
       Support.ErrorHandling.mark_failed(clip_id, "export_failed", {:s3_error, "Upload timeout"})
   """
 
-  alias Heaters.Repo
   alias Heaters.Media.Clip
   alias Heaters.Media.Clips
+  alias Heaters.Repo
   require Logger
 
   @doc """

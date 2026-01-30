@@ -86,37 +86,49 @@ defmodule Heaters.Processing.Encode.OutputHandling do
   def handle_immediate_upload_strategy(proxy_info, master_info, source_metadata, operation_name) do
     Logger.info("#{operation_name}: Using immediate upload strategy")
 
-    # Upload proxy
+    case upload_proxy(proxy_info, operation_name) do
+      {:ok, _} ->
+        result = build_base_result(proxy_info, source_metadata)
+        maybe_upload_master(result, master_info, operation_name)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp upload_proxy(proxy_info, operation_name) do
     case S3Core.upload_file(proxy_info.local_path, proxy_info.s3_path,
            operation_name: operation_name,
            storage_class: "STANDARD"
          ) do
-      {:ok, _} ->
-        result = %{
-          proxy_path: proxy_info.s3_path,
-          keyframe_offsets: proxy_info.keyframe_offsets,
-          metadata: source_metadata
-        }
+      {:ok, _} -> {:ok, :uploaded}
+      {:error, reason} -> {:error, "Failed to upload proxy: #{reason}"}
+    end
+  end
 
-        # Upload master if created
-        if master_info[:local_path] do
-          case S3Core.upload_file(master_info.local_path, master_info.s3_path,
-                 operation_name: operation_name,
-                 storage_class: "STANDARD"
-               ) do
-            {:ok, _} ->
-              result = Map.put(result, :master_path, master_info.s3_path)
-              {:ok, result}
+  defp build_base_result(proxy_info, source_metadata) do
+    %{
+      proxy_path: proxy_info.s3_path,
+      keyframe_offsets: proxy_info.keyframe_offsets,
+      metadata: source_metadata
+    }
+  end
 
-            {:error, reason} ->
-              {:error, "Failed to upload master: #{reason}"}
-          end
-        else
-          {:ok, result}
-        end
+  defp maybe_upload_master(result, master_info, operation_name) do
+    if master_info[:local_path] do
+      upload_master(result, master_info, operation_name)
+    else
+      {:ok, result}
+    end
+  end
 
-      {:error, reason} ->
-        {:error, "Failed to upload proxy: #{reason}"}
+  defp upload_master(result, master_info, operation_name) do
+    case S3Core.upload_file(master_info.local_path, master_info.s3_path,
+           operation_name: operation_name,
+           storage_class: "STANDARD"
+         ) do
+      {:ok, _} -> {:ok, Map.put(result, :master_path, master_info.s3_path)}
+      {:error, reason} -> {:error, "Failed to upload master: #{reason}"}
     end
   end
 end

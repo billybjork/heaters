@@ -68,7 +68,8 @@ defmodule Heaters.MixProject do
       {:ffmpex, "~> 0.11.0"},
       {:tidewave, "~> 0.4", only: :dev},
       {:dialyxir, "~> 1.4", only: [:dev], runtime: false},
-      {:stream_data, "~> 1.1", only: :test}
+      {:stream_data, "~> 1.1", only: :test},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
     ]
   end
 

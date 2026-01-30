@@ -23,8 +23,8 @@ defmodule Heaters.Review.Queue do
   """
 
   import Ecto.Query, warn: false
-  alias Heaters.Repo
   alias Heaters.Media.Clip
+  alias Heaters.Repo
 
   # -------------------------------------------------------------------------
   # Internal helpers

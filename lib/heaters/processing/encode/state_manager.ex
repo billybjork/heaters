@@ -17,9 +17,9 @@ defmodule Heaters.Processing.Encode.StateManager do
   | `:encoding_failed`| `:encoding`       | `start_encoding/1`      | Retry attempt              |
   """
 
-  alias Heaters.Repo
   alias Heaters.Media.Video
   alias Heaters.Media.Videos
+  alias Heaters.Repo
   require Logger
 
   @doc """

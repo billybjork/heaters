@@ -53,7 +53,7 @@ defmodule Heaters.Pipeline.WorkerBehavior do
 
       @impl Oban.Worker
       def perform(%Oban.Job{args: args}) do
-        Heaters.Pipeline.WorkerBehavior.execute_with_monitoring(
+        unquote(__MODULE__).execute_with_monitoring(
           __MODULE__,
           args
         )
@@ -172,29 +172,27 @@ defmodule Heaters.Pipeline.WorkerBehavior do
   Helper for enqueuing multiple jobs with error handling.
   """
   def enqueue_jobs(jobs, context_name) when is_list(jobs) do
-    try do
-      case Oban.insert_all(jobs) do
-        inserted_jobs when is_list(inserted_jobs) and length(inserted_jobs) > 0 ->
-          Logger.info("#{context_name}: Enqueued #{length(inserted_jobs)} jobs")
-          :ok
+    case Oban.insert_all(jobs) do
+      [_ | _] = inserted_jobs ->
+        Logger.info("#{context_name}: Enqueued #{length(inserted_jobs)} jobs")
+        :ok
 
-        [] ->
-          Logger.error("#{context_name}: Failed to enqueue jobs - no jobs inserted")
-          {:error, "No jobs were enqueued"}
+      [] ->
+        Logger.error("#{context_name}: Failed to enqueue jobs - no jobs inserted")
+        {:error, "No jobs were enqueued"}
 
-        %Ecto.Multi{} = multi ->
-          Logger.error(
-            "#{context_name}: Oban.insert_all returned Multi instead of jobs: #{inspect(multi)}"
-          )
+      %Ecto.Multi{} = multi ->
+        Logger.error(
+          "#{context_name}: Oban.insert_all returned Multi instead of jobs: #{inspect(multi)}"
+        )
 
-          {:error, "Unexpected Multi result from Oban.insert_all"}
-      end
-    rescue
-      error ->
-        error_message = "Failed to enqueue jobs: #{Exception.message(error)}"
-        Logger.error("#{context_name}: #{error_message}")
-        {:error, error_message}
+        {:error, "Unexpected Multi result from Oban.insert_all"}
     end
+  rescue
+    error ->
+      error_message = "Failed to enqueue jobs: #{Exception.message(error)}"
+      Logger.error("#{context_name}: #{error_message}")
+      {:error, error_message}
   end
 
   @doc """

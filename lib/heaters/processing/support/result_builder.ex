@@ -7,13 +7,13 @@ defmodule Heaters.Processing.Support.ResultBuilder do
   """
 
   alias Heaters.Processing.Support.Types.{
-    DownloadResult,
-    EncodeResult,
-    SceneDetectionResult,
-    ExportResult,
+    ArchiveResult,
     CachePersistResult,
+    DownloadResult,
     EmbeddingResult,
-    ArchiveResult
+    EncodeResult,
+    ExportResult,
+    SceneDetectionResult
   }
 
   @doc """
@@ -165,10 +165,7 @@ defmodule Heaters.Processing.Support.ResultBuilder do
   def log_result(worker_module, {:error, reason}) do
     require Logger
 
-    Logger.warning(
-      "#{worker_module}: Failed",
-      reason: inspect(reason)
-    )
+    Logger.warning("#{worker_module}: Failed - #{inspect(reason)}")
   end
 
   def log_result(_worker_module, :ok) do

@@ -38,13 +38,15 @@ defmodule Heaters.Processing.DetectScenes.Worker do
     queue: :media_processing,
     unique: [period: 900, fields: [:args]]
 
-  alias Heaters.Repo
+  alias Heaters.Media.Cuts.Operations, as: CutsOperations
   alias Heaters.Media.{Video, Videos}
-  alias Heaters.Processing.DetectScenes.StateManager
-  alias Heaters.Pipeline.WorkerBehavior
   alias Heaters.Pipeline.Config, as: PipelineConfig
+  alias Heaters.Pipeline.WorkerBehavior
+  alias Heaters.Processing.DetectScenes.StateManager
   alias Heaters.Processing.Support.PythonRunner, as: PyRunner
   alias Heaters.Processing.Support.ResultBuilder
+  alias Heaters.Repo
+  alias Heaters.Storage.PipelineCache.TempCache
   require Logger
 
   # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
@@ -74,9 +76,10 @@ defmodule Heaters.Processing.DetectScenes.Worker do
       "DetectScenesWorker: Starting scene detection for source_video_id: #{source_video_id}"
     )
 
-    with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
-      handle_scene_detection(source_video)
-    else
+    case Videos.get_source_video(source_video_id) do
+      {:ok, source_video} ->
+        handle_scene_detection(source_video)
+
       {:error, :not_found} ->
         WorkerBehavior.handle_not_found("Source video", source_video_id)
     end
@@ -170,14 +173,14 @@ defmodule Heaters.Processing.DetectScenes.Worker do
     temp_cache_key = "temp_#{source_video.id}_proxy"
 
     proxy_path_result =
-      case Heaters.Storage.PipelineCache.TempCache.get(temp_cache_key) do
+      case TempCache.get(temp_cache_key) do
         {:ok, cached_path} ->
           Logger.info("DetectScenesWorker: Using temp cached proxy: #{cached_path}")
           {:ok, cached_path, :cache_hit}
 
         {:error, _} ->
           # Fallback to S3 download if not in temp cache
-          Heaters.Storage.PipelineCache.TempCache.get_or_download(
+          TempCache.get_or_download(
             source_video.proxy_filepath,
             operation_name: "DetectScenesWorker"
           )
@@ -216,87 +219,78 @@ defmodule Heaters.Processing.DetectScenes.Worker do
            timeout: :timer.minutes(15)
          ) do
       {:ok, result} ->
-        Logger.info("DetectScenesWorker: Python scene detection completed successfully")
-
-        # Extract segments from Python scene detection and convert to cut points
-        segments = Map.get(result, "cut_points", [])
-        metadata = Map.get(result, "metadata", %{})
-
-        # Convert segments to actual cut points (boundaries between segments)
-        cut_points = convert_segments_to_cut_points(segments)
-
-        case Heaters.Media.Cuts.Operations.create_initial_cuts(
-               source_video.id,
-               cut_points,
-               metadata
-             ) do
-          {:ok, {_cuts, created_clips}} ->
-            Logger.info(
-              "DetectScenesWorker: Successfully created #{length(created_clips)} virtual clips"
-            )
-
-            case StateManager.complete_scene_detection(source_video.id) do
-              {:ok, final_video} ->
-                Logger.info(
-                  "DetectScenesWorker: Successfully completed scene detection for video #{source_video.id}"
-                )
-
-                # Chain directly to next stage using centralized pipeline configuration
-                :ok = PipelineConfig.maybe_chain_next_job(__MODULE__, final_video)
-                Logger.info("DetectScenesWorker: Successfully chained to next pipeline stage")
-
-                # Build structured result with scene detection metrics
-                scene_result =
-                  ResultBuilder.scene_detection_success(source_video.id, length(cut_points), %{
-                    clips_created: length(created_clips),
-                    scene_confidence_avg: calculate_average_confidence(metadata),
-                    detection_method: metadata["method"] || "correl",
-                    metadata: metadata
-                  })
-
-                # Log structured result for observability
-                ResultBuilder.log_result(__MODULE__, scene_result)
-                scene_result
-
-              {:error, reason} ->
-                Logger.error(
-                  "DetectScenesWorker: Failed to update video state: #{inspect(reason)}"
-                )
-
-                {:error, reason}
-            end
-
-          {:error, reason} ->
-            Logger.error("DetectScenesWorker: Failed to create virtual clips: #{inspect(reason)}")
-
-            case StateManager.mark_scene_detection_failed(source_video.id, reason) do
-              {:ok, _} ->
-                {:error, reason}
-
-              {:error, db_error} ->
-                Logger.error(
-                  "DetectScenesWorker: Failed to mark video as failed: #{inspect(db_error)}"
-                )
-
-                {:error, reason}
-            end
-        end
+        process_scene_detection_result(source_video, result)
 
       {:error, reason} ->
-        Logger.error("DetectScenesWorker: PyRunner failed: #{reason}")
-
-        case StateManager.mark_scene_detection_failed(source_video.id, reason) do
-          {:ok, _} ->
-            {:error, reason}
-
-          {:error, db_error} ->
-            Logger.error(
-              "DetectScenesWorker: Failed to mark video as failed: #{inspect(db_error)}"
-            )
-
-            {:error, reason}
-        end
+        handle_scene_detection_failure(source_video.id, reason, "PyRunner failed")
     end
+  end
+
+  defp process_scene_detection_result(source_video, result) do
+    Logger.info("DetectScenesWorker: Python scene detection completed successfully")
+
+    segments = Map.get(result, "cut_points", [])
+    metadata = Map.get(result, "metadata", %{})
+    cut_points = convert_segments_to_cut_points(segments)
+
+    case CutsOperations.create_initial_cuts(source_video.id, cut_points, metadata) do
+      {:ok, {_cuts, created_clips}} ->
+        complete_scene_detection_workflow(source_video, cut_points, created_clips, metadata)
+
+      {:error, reason} ->
+        handle_scene_detection_failure(source_video.id, reason, "Failed to create virtual clips")
+    end
+  end
+
+  defp complete_scene_detection_workflow(source_video, cut_points, created_clips, metadata) do
+    Logger.info("DetectScenesWorker: Successfully created #{length(created_clips)} virtual clips")
+
+    case StateManager.complete_scene_detection(source_video.id) do
+      {:ok, final_video} ->
+        finalize_scene_detection_success(
+          source_video.id,
+          final_video,
+          cut_points,
+          created_clips,
+          metadata
+        )
+
+      {:error, reason} ->
+        Logger.error("DetectScenesWorker: Failed to update video state: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  defp finalize_scene_detection_success(
+         source_video_id,
+         final_video,
+         cut_points,
+         created_clips,
+         metadata
+       ) do
+    Logger.info(
+      "DetectScenesWorker: Successfully completed scene detection for video #{source_video_id}"
+    )
+
+    :ok = PipelineConfig.maybe_chain_next_job(__MODULE__, final_video)
+    Logger.info("DetectScenesWorker: Successfully chained to next pipeline stage")
+
+    scene_result =
+      ResultBuilder.scene_detection_success(source_video_id, length(cut_points), %{
+        clips_created: length(created_clips),
+        scene_confidence_avg: calculate_average_confidence(metadata),
+        detection_method: metadata["method"] || "correl",
+        metadata: metadata
+      })
+
+    ResultBuilder.log_result(__MODULE__, scene_result)
+    scene_result
+  end
+
+  defp handle_scene_detection_failure(source_video_id, reason, context) do
+    Logger.error("DetectScenesWorker: #{context}: #{inspect(reason)}")
+    StateManager.mark_scene_detection_failed(source_video_id, reason)
+    {:error, reason}
   end
 
   # Convert scene detection segments to cut points.

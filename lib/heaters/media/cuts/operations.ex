@@ -38,9 +38,9 @@ defmodule Heaters.Media.Cuts.Operations do
   """
 
   import Ecto.Query, warn: false
-  alias Heaters.Repo
-  alias Heaters.Media.{Cut, Clip, Cuts}
+  alias Heaters.Media.{Clip, Cut, Cuts}
   alias Heaters.Media.Cuts.Validation
+  alias Heaters.Repo
   require Logger
 
   @doc """
@@ -736,7 +736,7 @@ defmodule Heaters.Media.Cuts.Operations do
            conflict_target: :clip_identifier,
            returning: true
          ) do
-      {:ok, %Clip{id: id} = clip} when not is_nil(id) ->
+      {:ok, %Clip{id: id} = clip} when is_integer(id) ->
         {:ok, clip}
 
       # Nothing inserted due to conflict; fetch existing row for idempotency

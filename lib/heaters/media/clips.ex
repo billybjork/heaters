@@ -30,8 +30,8 @@ defmodule Heaters.Media.Clips do
   """
 
   import Ecto.Query, warn: false
-  alias Heaters.Repo
   alias Heaters.Media.Clip
+  alias Heaters.Repo
 
   # ---------------------------------------------------------------------------
   # CRUD Operations
@@ -206,15 +206,13 @@ defmodule Heaters.Media.Clips do
   """
   @spec check_clips_exist_by_identifiers([String.t()]) :: {:ok, integer()} | {:error, any()}
   def check_clips_exist_by_identifiers(identifiers) when is_list(identifiers) do
-    try do
-      count =
-        from(c in Clip, where: c.clip_identifier in ^identifiers)
-        |> Repo.aggregate(:count, :id)
+    count =
+      from(c in Clip, where: c.clip_identifier in ^identifiers)
+      |> Repo.aggregate(:count, :id)
 
-      {:ok, count}
-    rescue
-      e -> {:error, Exception.message(e)}
-    end
+    {:ok, count}
+  rescue
+    e -> {:error, Exception.message(e)}
   end
 
   @doc """
@@ -222,15 +220,13 @@ defmodule Heaters.Media.Clips do
   """
   @spec get_clips_by_identifiers([String.t()]) :: {:ok, [Clip.t()]} | {:error, any()}
   def get_clips_by_identifiers(identifiers) when is_list(identifiers) do
-    try do
-      clips =
-        from(c in Clip, where: c.clip_identifier in ^identifiers)
-        |> Repo.all()
+    clips =
+      from(c in Clip, where: c.clip_identifier in ^identifiers)
+      |> Repo.all()
 
-      {:ok, clips}
-    rescue
-      e -> {:error, Exception.message(e)}
-    end
+    {:ok, clips}
+  rescue
+    e -> {:error, Exception.message(e)}
   end
 
   @doc """
@@ -239,15 +235,13 @@ defmodule Heaters.Media.Clips do
   """
   @spec fetch_clips_by_identifiers([String.t()]) :: {:ok, [Clip.t()]} | {:error, any()}
   def fetch_clips_by_identifiers(identifiers) when is_list(identifiers) do
-    try do
-      clips =
-        from(c in Clip, where: c.clip_identifier in ^identifiers)
-        |> Repo.all()
+    clips =
+      from(c in Clip, where: c.clip_identifier in ^identifiers)
+      |> Repo.all()
 
-      {:ok, clips}
-    rescue
-      e -> {:error, Exception.message(e)}
-    end
+    {:ok, clips}
+  rescue
+    e -> {:error, Exception.message(e)}
   end
 
   # ---------------------------------------------------------------------------
@@ -299,15 +293,13 @@ defmodule Heaters.Media.Clips do
 
   @spec format_clip_validation_errors(list()) :: String.t()
   defp format_clip_validation_errors(errors) do
-    errors
-    |> Enum.map(fn {index, changeset_errors} ->
+    Enum.map_join(errors, "; ", fn {index, changeset_errors} ->
       error_messages =
-        changeset_errors
-        |> Enum.map(fn {field, {message, _}} -> "#{field}: #{message}" end)
-        |> Enum.join(", ")
+        Enum.map_join(changeset_errors, ", ", fn {field, {message, _}} ->
+          "#{field}: #{message}"
+        end)
 
       "Clip #{index}: #{error_messages}"
     end)
-    |> Enum.join("; ")
   end
 end

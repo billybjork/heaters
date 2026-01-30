@@ -7,11 +7,11 @@ defmodule Heaters.Processing.Embed.Workflow do
   """
 
   import Ecto.Query, warn: false
-  alias Heaters.Repo
   alias Heaters.Media.Clip
+  alias Heaters.Media.Clips
   alias Heaters.Processing.Embed.Embedding
   alias Heaters.Processing.Embed.Types.EmbedResult
-  alias Heaters.Media.Clips
+  alias Heaters.Repo
   require Logger
 
   @doc """
@@ -35,44 +35,52 @@ defmodule Heaters.Processing.Embed.Workflow do
   def complete_embedding(clip_id, embedding_data) do
     start_time = System.monotonic_time()
 
-    case Repo.transaction(fn ->
-           with {:ok, clip} <- Clips.get_clip(clip_id),
-                {:ok, updated_clip} <-
-                  update_clip(clip, %{
-                    ingest_state: :embedded,
-                    embedded_at: DateTime.utc_now(),
-                    last_error: nil
-                  }),
-                {:ok, embedding} <- create_embedding(clip_id, embedding_data) do
-             {updated_clip, embedding}
-           else
-             {:error, reason} -> Repo.rollback(reason)
-           end
-         end) do
+    case execute_embedding_transaction(clip_id, embedding_data) do
       {:ok, {_updated_clip, embedding}} ->
-        duration_ms =
-          System.convert_time_unit(System.monotonic_time() - start_time, :native, :millisecond)
-
-        embed_result = %EmbedResult{
-          status: "success",
-          clip_id: clip_id,
-          embedding_id: embedding.id,
-          model_name: embedding_data["model_name"],
-          generation_strategy: embedding_data["generation_strategy"],
-          embedding_dim:
-            if(is_list(embedding_data[:embedding]),
-              do: length(embedding_data[:embedding]),
-              else: nil
-            ),
-          metadata: Map.get(embedding_data, "metadata", %{}),
-          duration_ms: duration_ms,
-          processed_at: DateTime.utc_now()
-        }
-
-        {:ok, embed_result}
+        {:ok, build_embed_result(clip_id, embedding, embedding_data, start_time)}
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp execute_embedding_transaction(clip_id, embedding_data) do
+    Repo.transaction(fn ->
+      with {:ok, clip} <- Clips.get_clip(clip_id),
+           {:ok, updated_clip} <- update_clip(clip, embedding_state_attrs()),
+           {:ok, embedding} <- create_embedding(clip_id, embedding_data) do
+        {updated_clip, embedding}
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
+
+  defp embedding_state_attrs do
+    %{ingest_state: :embedded, embedded_at: DateTime.utc_now(), last_error: nil}
+  end
+
+  defp build_embed_result(clip_id, embedding, embedding_data, start_time) do
+    duration_ms =
+      System.convert_time_unit(System.monotonic_time() - start_time, :native, :millisecond)
+
+    %EmbedResult{
+      status: "success",
+      clip_id: clip_id,
+      embedding_id: embedding.id,
+      model_name: embedding_data["model_name"],
+      generation_strategy: embedding_data["generation_strategy"],
+      embedding_dim: get_embedding_dim(embedding_data),
+      metadata: Map.get(embedding_data, "metadata", %{}),
+      duration_ms: duration_ms,
+      processed_at: DateTime.utc_now()
+    }
+  end
+
+  defp get_embedding_dim(embedding_data) do
+    case embedding_data[:embedding] do
+      list when is_list(list) -> length(list)
+      _ -> nil
     end
   end
 
@@ -178,9 +186,9 @@ defmodule Heaters.Processing.Embed.Workflow do
   end
 
   defp format_changeset_errors(changeset) do
-    changeset.errors
-    |> Enum.map(fn {field, {message, _}} -> "#{field}: #{message}" end)
-    |> Enum.join(", ")
+    Enum.map_join(changeset.errors, ", ", fn {field, {message, _}} ->
+      "#{field}: #{message}"
+    end)
   end
 
   defp format_error_message(error_reason) when is_binary(error_reason), do: error_reason

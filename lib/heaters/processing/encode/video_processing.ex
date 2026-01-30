@@ -11,8 +11,8 @@ defmodule Heaters.Processing.Encode.VideoProcessing do
   import FFmpex
   use FFmpex.Options
 
-  alias Heaters.Processing.Support.FFmpeg.Config
   alias Heaters.Processing.Encode.MetadataExtraction
+  alias Heaters.Processing.Support.FFmpeg.Config
 
   @type video_result :: {:ok, map()} | {:error, String.t()}
 
@@ -283,14 +283,12 @@ defmodule Heaters.Processing.Encode.VideoProcessing do
   # Convert FFmpex command to raw FFmpeg arguments
   @spec ffmpeg_command_to_args(FFmpex.Command.t()) :: {:ok, [String.t()]} | {:error, String.t()}
   defp ffmpeg_command_to_args(command) do
-    try do
-      case FFmpex.prepare(command) do
-        {_executable, args} -> {:ok, args}
-      end
-    rescue
-      error ->
-        {:error, "FFmpex command preparation failed: #{Exception.message(error)}"}
+    case FFmpex.prepare(command) do
+      {_executable, args} -> {:ok, args}
     end
+  rescue
+    error ->
+      {:error, "FFmpex command preparation failed: #{Exception.message(error)}"}
   end
 
   # Execute FFmpeg with real-time progress reporting
@@ -437,22 +435,20 @@ defmodule Heaters.Processing.Encode.VideoProcessing do
   # Parse time string in format HH:MM:SS.mmm to seconds
   @spec parse_time_string(String.t()) :: {:ok, float()} | :error
   defp parse_time_string(time_str) do
-    try do
-      case String.split(time_str, ":") do
-        [hours_str, minutes_str, seconds_str] ->
-          hours = parse_numeric(hours_str)
-          minutes = parse_numeric(minutes_str)
-          seconds = parse_numeric(seconds_str)
-          total_seconds = hours * 3600 + minutes * 60 + seconds
-          {:ok, total_seconds}
+    case String.split(time_str, ":") do
+      [hours_str, minutes_str, seconds_str] ->
+        hours = parse_numeric(hours_str)
+        minutes = parse_numeric(minutes_str)
+        seconds = parse_numeric(seconds_str)
+        total_seconds = hours * 3600 + minutes * 60 + seconds
+        {:ok, total_seconds}
 
-        _ ->
-          :error
-      end
-    rescue
       _ ->
         :error
     end
+  rescue
+    _ ->
+      :error
   end
 
   # Helper to parse numeric strings that could be integers or floats

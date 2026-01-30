@@ -34,12 +34,15 @@ defmodule Heaters.Processing.Encode.Worker do
     unique: [period: 300, fields: [:args], keys: [:source_video_id]]
 
   alias Heaters.Media.{Video, Videos}
-  alias Heaters.Processing.Encode.StateManager
+  alias Heaters.Pipeline.Config, as: PipelineConfig
   alias Heaters.Pipeline.WorkerBehavior
+  alias Heaters.Processing.Encode.Core, as: EncodeCore
+  alias Heaters.Processing.Encode.StateManager
   alias Heaters.Processing.Support.FFmpeg.Config, as: FFmpegConfig
-  alias Heaters.Storage.PipelineCache.TempCache
   alias Heaters.Processing.Support.ResultBuilder
   alias Heaters.Processing.Support.Types.EncodeResult
+  alias Heaters.Storage.PipelineCache.TempCache
+  alias Heaters.Storage.S3.Paths, as: S3Paths
   require Logger
 
   @impl WorkerBehavior
@@ -50,9 +53,10 @@ defmodule Heaters.Processing.Encode.Worker do
   defp handle_encoding_work(%{"source_video_id" => source_video_id}) do
     Logger.info("EncodeWorker: Starting encoding for source_video_id: #{source_video_id}")
 
-    with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
-      handle_encoding(source_video)
-    else
+    case Videos.get_source_video(source_video_id) do
+      {:ok, source_video} ->
+        handle_encoding(source_video)
+
       {:error, :not_found} ->
         WorkerBehavior.handle_not_found("Source video", source_video_id)
     end
@@ -116,7 +120,7 @@ defmodule Heaters.Processing.Encode.Worker do
         can_reuse_as_proxy = can_reuse_normalized_as_proxy?(source_video, local_source_path)
 
         # Generate S3 paths using centralized path service
-        paths = Heaters.Storage.S3.Paths.generate_video_paths(source_video.id, source_video.title)
+        paths = S3Paths.generate_video_paths(source_video.id, source_video.title)
 
         encode_args = %{
           source_video_id: source_video.id,
@@ -152,7 +156,7 @@ defmodule Heaters.Processing.Encode.Worker do
     proxy_filepath = Map.get(encode_args, :proxy_output_path)
     use_temp_cache = Map.get(encode_args, :use_temp_cache, false)
 
-    case Heaters.Processing.Encode.Core.process_source_video(
+    case EncodeCore.process_source_video(
            Map.get(encode_args, :source_video_path),
            source_video.id,
            source_video.title || "Video #{source_video.id}",
@@ -193,7 +197,7 @@ defmodule Heaters.Processing.Encode.Worker do
             analysis.audio_codec == "aac" &&
             analysis.height <= 1080 &&
             analysis.width <= 1920 &&
-            is_reasonable_quality?(analysis)
+            reasonable_quality?(analysis)
 
         {:error, reason} ->
           Logger.debug("EncodeWorker: Cannot analyze for proxy reuse: #{inspect(reason)}")
@@ -206,51 +210,49 @@ defmodule Heaters.Processing.Encode.Worker do
 
   # Analyze video file to determine if it's suitable for proxy reuse
   defp analyze_video_for_proxy_reuse(video_path) do
-    try do
-      cmd = [
-        "ffprobe",
-        "-v",
-        "quiet",
-        "-print_format",
-        "json",
-        "-show_streams",
-        "-show_format",
-        video_path
-      ]
+    cmd = [
+      "ffprobe",
+      "-v",
+      "quiet",
+      "-print_format",
+      "json",
+      "-show_streams",
+      "-show_format",
+      video_path
+    ]
 
-      case System.cmd("ffprobe", tl(cmd), stderr_to_stdout: true) do
-        {output, 0} ->
-          case Jason.decode(output) do
-            {:ok, data} ->
-              video_stream = Enum.find(data["streams"], &(&1["codec_type"] == "video"))
-              audio_stream = Enum.find(data["streams"], &(&1["codec_type"] == "audio"))
+    case System.cmd("ffprobe", tl(cmd), stderr_to_stdout: true) do
+      {output, 0} ->
+        case Jason.decode(output) do
+          {:ok, data} ->
+            video_stream = Enum.find(data["streams"], &(&1["codec_type"] == "video"))
+            audio_stream = Enum.find(data["streams"], &(&1["codec_type"] == "audio"))
 
-              analysis = %{
-                video_codec: video_stream["codec_name"],
-                audio_codec: audio_stream && audio_stream["codec_name"],
-                width: video_stream["width"],
-                height: video_stream["height"],
-                bitrate: String.to_integer(data["format"]["bit_rate"] || "0"),
-                duration: String.to_float(data["format"]["duration"] || "0.0")
-              }
+            analysis = %{
+              video_codec: video_stream["codec_name"],
+              audio_codec: audio_stream && audio_stream["codec_name"],
+              width: video_stream["width"],
+              height: video_stream["height"],
+              bitrate: String.to_integer(data["format"]["bit_rate"] || "0"),
+              duration: String.to_float(data["format"]["duration"] || "0.0")
+            }
 
-              {:ok, analysis}
+            {:ok, analysis}
 
-            {:error, reason} ->
-              {:error, "JSON decode failed: #{inspect(reason)}"}
-          end
+          {:error, reason} ->
+            {:error, "JSON decode failed: #{inspect(reason)}"}
+        end
 
-        {error, _code} ->
-          {:error, "ffprobe failed: #{error}"}
-      end
-    rescue
-      error ->
-        {:error, "Analysis exception: #{Exception.message(error)}"}
+      {error, _code} ->
+        {:error, "ffprobe failed: #{error}"}
     end
+  rescue
+    error ->
+      {:error, "Analysis exception: #{Exception.message(error)}"}
   end
 
   # Check if video quality is reasonable for proxy use
-  defp is_reasonable_quality?(analysis) do
+  defp reasonable_quality?(analysis) do
     analysis.bitrate > 500_000 && analysis.duration > 0
   end
 
@@ -275,7 +277,7 @@ defmodule Heaters.Processing.Encode.Worker do
     case StateManager.complete_encoding(source_video.id, update_attrs) do
       {:ok, updated_video} ->
         Logger.info("EncodeWorker: Native encoding completed for video #{updated_video.id}")
-        :ok = Heaters.Pipeline.Config.maybe_chain_next_job(__MODULE__, updated_video)
+        :ok = PipelineConfig.maybe_chain_next_job(__MODULE__, updated_video)
         Logger.info("EncodeWorker: Successfully chained to next pipeline stage")
 
         ResultBuilder.encode_success(
@@ -318,7 +320,7 @@ defmodule Heaters.Processing.Encode.Worker do
       {:ok, _cached_results} ->
         Logger.info("EncodeWorker: Temp cache files stored for video #{source_video.id}")
 
-        paths = Heaters.Storage.S3.Paths.generate_video_paths(source_video.id, source_video.title)
+        paths = S3Paths.generate_video_paths(source_video.id, source_video.title)
 
         update_attrs = %{
           proxy_filepath: paths.proxy,
@@ -333,7 +335,7 @@ defmodule Heaters.Processing.Encode.Worker do
               "EncodeWorker: Native temp cache encoding completed for video #{updated_video.id}"
             )
 
-            :ok = Heaters.Pipeline.Config.maybe_chain_next_job(__MODULE__, updated_video)
+            :ok = PipelineConfig.maybe_chain_next_job(__MODULE__, updated_video)
             Logger.info("EncodeWorker: Successfully chained to next pipeline stage")
 
             ResultBuilder.encode_success(

@@ -4,12 +4,13 @@ defmodule Heaters.Application do
   @moduledoc false
 
   use Application
+  alias Heaters.Storage.TempManager
   require Logger
 
   @impl true
   def start(_type, _args) do
     # Clean up any orphaned temporary files from previous runs
-    Heaters.Storage.TempManager.cleanup_orphaned_temp_files()
+    TempManager.cleanup_orphaned_temp_files()
 
     children = [
       HeatersWeb.Telemetry,

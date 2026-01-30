@@ -7,6 +7,7 @@ defmodule Heaters.Storage.PipelineCache.CacheArgs do
   eliminating unnecessary downloads.
   """
 
+  alias Heaters.Media.Videos
   alias Heaters.Storage.PipelineCache.TempCache
   require Logger
 
@@ -33,36 +34,38 @@ defmodule Heaters.Storage.PipelineCache.CacheArgs do
   """
   @spec resolve_cached_paths(map()) :: map()
   def resolve_cached_paths(args) when is_map(args) do
-    args
-    |> Enum.reduce(%{}, fn {key, value}, acc ->
+    Enum.reduce(args, %{}, fn {key, value}, acc ->
       acc = Map.put(acc, key, value)
-
-      # Check if this looks like an S3 path key
-      if is_s3_path_key?(key) do
-        case TempCache.get(value) do
-          {:ok, local_path} ->
-            local_key = get_local_path_key(key)
-            Logger.debug("CacheArgs: Using cached path #{value} -> #{local_path}")
-            Map.put(acc, local_key, local_path)
-
-          {:error, :not_found} ->
-            acc
-
-          {:error, :expired} ->
-            Logger.debug("CacheArgs: Cache expired for #{value}")
-            acc
-
-          {:error, reason} ->
-            Logger.warning(
-              "CacheArgs: Failed to get cached path for #{value}: #{inspect(reason)}"
-            )
-
-            acc
-        end
-      else
-        acc
-      end
+      maybe_add_cached_local_path(acc, key, value)
     end)
+  end
+
+  defp maybe_add_cached_local_path(acc, key, value) do
+    if s3_path_key?(key) do
+      add_cached_local_path(acc, key, value)
+    else
+      acc
+    end
+  end
+
+  defp add_cached_local_path(acc, key, s3_path) do
+    case TempCache.get(s3_path) do
+      {:ok, local_path} ->
+        local_key = get_local_path_key(key)
+        Logger.debug("CacheArgs: Using cached path #{s3_path} -> #{local_path}")
+        Map.put(acc, local_key, local_path)
+
+      {:error, :not_found} ->
+        acc
+
+      {:error, :expired} ->
+        Logger.debug("CacheArgs: Cache expired for #{s3_path}")
+        acc
+
+      {:error, reason} ->
+        Logger.warning("CacheArgs: Failed to get cached path for #{s3_path}: #{inspect(reason)}")
+        acc
+    end
   end
 
   @doc """
@@ -73,46 +76,51 @@ defmodule Heaters.Storage.PipelineCache.CacheArgs do
   """
   @spec cache_task_outputs(map()) :: map()
   def cache_task_outputs(%{"status" => "success"} = results) do
-    cached_results =
-      results
-      |> Enum.reduce(%{}, fn {key, value}, acc ->
-        acc = Map.put(acc, key, value)
-
-        # Cache files that end with "_path" and have S3 keys
-        if String.ends_with?(to_string(key), "_path") and is_binary(value) do
-          case extract_temp_file_path(results, key) do
-            {:ok, local_path} ->
-              case TempCache.put(value, local_path) do
-                {:ok, cached_path} ->
-                  Logger.debug("CacheArgs: Cached #{value} -> #{cached_path}")
-                  Map.put(acc, "#{key}_cached", true)
-
-                {:error, reason} ->
-                  Logger.warning("CacheArgs: Failed to cache #{value}: #{inspect(reason)}")
-                  Map.put(acc, "#{key}_cached", false)
-              end
-
-            {:error, :not_available} ->
-              # No local path available, this is fine for non-temp-cache tasks
-              Logger.debug("CacheArgs: No local path available for #{key}")
-              acc
-
-            {:error, reason} ->
-              Logger.warning(
-                "CacheArgs: Cannot extract local path for #{key}: #{inspect(reason)}"
-              )
-
-              Map.put(acc, "#{key}_cached", false)
-          end
-        else
-          acc
-        end
-      end)
-
-    cached_results
+    Enum.reduce(results, %{}, fn {key, value}, acc ->
+      acc = Map.put(acc, key, value)
+      maybe_cache_path_value(acc, results, key, value)
+    end)
   end
 
   def cache_task_outputs(results), do: results
+
+  defp maybe_cache_path_value(acc, results, key, value)
+       when is_binary(value) do
+    if String.ends_with?(to_string(key), "_path") do
+      cache_path_to_temp(acc, results, key, value)
+    else
+      acc
+    end
+  end
+
+  defp maybe_cache_path_value(acc, _results, _key, _value), do: acc
+
+  defp cache_path_to_temp(acc, results, key, s3_value) do
+    case extract_temp_file_path(results, key) do
+      {:ok, local_path} ->
+        try_cache_file(acc, key, s3_value, local_path)
+
+      {:error, :not_available} ->
+        Logger.debug("CacheArgs: No local path available for #{key}")
+        acc
+
+      {:error, reason} ->
+        Logger.warning("CacheArgs: Cannot extract local path for #{key}: #{inspect(reason)}")
+        Map.put(acc, "#{key}_cached", false)
+    end
+  end
+
+  defp try_cache_file(acc, key, s3_value, local_path) do
+    case TempCache.put(s3_value, local_path) do
+      {:ok, cached_path} ->
+        Logger.debug("CacheArgs: Cached #{s3_value} -> #{cached_path}")
+        Map.put(acc, "#{key}_cached", true)
+
+      {:error, reason} ->
+        Logger.warning("CacheArgs: Failed to cache #{s3_value}: #{inspect(reason)}")
+        Map.put(acc, "#{key}_cached", false)
+    end
+  end
 
   @doc """
   Persist cached files to S3 storage.
@@ -179,7 +187,7 @@ defmodule Heaters.Storage.PipelineCache.CacheArgs do
   defp parse_temp_cache_key(_), do: {:error, :not_temp_key}
 
   defp get_s3_path_from_database(source_video_id, file_type) do
-    case Heaters.Media.Videos.get_source_video(source_video_id) do
+    case Videos.get_source_video(source_video_id) do
       {:ok, source_video} ->
         case file_type do
           "proxy" -> source_video.proxy_filepath
@@ -193,7 +201,7 @@ defmodule Heaters.Storage.PipelineCache.CacheArgs do
     end
   end
 
-  defp is_s3_path_key?(key) do
+  defp s3_path_key?(key) do
     key_str = to_string(key)
     String.ends_with?(key_str, "_path") or String.ends_with?(key_str, "_video_path")
   end
@@ -249,26 +257,22 @@ defmodule Heaters.Storage.PipelineCache.CacheArgs do
   end
 
   # Helper to find local paths using alternative naming patterns
-  defp find_local_path_in_results(results, patterns) when is_list(patterns) do
-    case patterns do
-      [] ->
-        {:error, :not_found}
+  defp find_local_path_in_results(_results, []), do: {:error, :not_found}
 
-      [pattern | remaining] ->
-        case Map.get(results, pattern) do
-          nil ->
-            find_local_path_in_results(results, remaining)
+  defp find_local_path_in_results(results, [pattern | remaining]) do
+    case check_pattern_for_local_path(results, pattern) do
+      {:ok, local_path} -> {:ok, local_path}
+      :not_found -> find_local_path_in_results(results, remaining)
+    end
+  end
 
-          local_path when is_binary(local_path) and local_path != "" ->
-            if File.exists?(local_path) do
-              {:ok, local_path}
-            else
-              find_local_path_in_results(results, remaining)
-            end
+  defp check_pattern_for_local_path(results, pattern) do
+    case Map.get(results, pattern) do
+      local_path when is_binary(local_path) and local_path != "" ->
+        if File.exists?(local_path), do: {:ok, local_path}, else: :not_found
 
-          _ ->
-            find_local_path_in_results(results, remaining)
-        end
+      _ ->
+        :not_found
     end
   end
 end

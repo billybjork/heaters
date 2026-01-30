@@ -30,8 +30,8 @@ defmodule Heaters.Media.Cuts do
   """
 
   import Ecto.Query, warn: false
-  alias Heaters.Repo
   alias Heaters.Media.Cut
+  alias Heaters.Repo
 
   # ---------------------------------------------------------------------------
   # CRUD Operations

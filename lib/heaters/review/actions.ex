@@ -9,8 +9,10 @@ defmodule Heaters.Review.Actions do
 
   import Ecto.Query, warn: false
   alias Ecto.Query, as: Q
-  alias Heaters.Repo
   alias Heaters.Media.Clip
+  alias Heaters.Media.Cuts.Operations, as: CutsOperations
+  alias Heaters.Repo
+  alias Heaters.Review.Queue
   require Logger
 
   # -------------------------------------------------------------------------
@@ -125,7 +127,7 @@ defmodule Heaters.Review.Actions do
 
       next_clip =
         case rows do
-          [[id]] -> Heaters.Review.Queue.load_clip_with_assocs(id)
+          [[id]] -> Queue.load_clip_with_assocs(id)
           _ -> nil
         end
 
@@ -172,7 +174,7 @@ defmodule Heaters.Review.Actions do
         )
         |> Repo.one()
 
-      next_clip = if next_id, do: Heaters.Review.Queue.load_clip_with_assocs(next_id)
+      next_clip = if next_id, do: Queue.load_clip_with_assocs(next_id)
       {next_clip, %{clip_id_source: curr_id, clip_id_target: prev_id, action: "group"}}
     end)
   end
@@ -245,7 +247,7 @@ defmodule Heaters.Review.Actions do
   end
 
   def request_split_at_time_offset(%Clip{}, _time_offset_seconds) do
-    # EXPORTED CLIPS: Not supported in cuts-based architecture  
+    # EXPORTED CLIPS: Not supported in cuts-based architecture
     {:error, "Split operation only supported for virtual clips"}
   end
 
@@ -295,48 +297,64 @@ defmodule Heaters.Review.Actions do
   - Sets mutual grouped_with_clip_id references
   """
   def handle_group_action(clip_id) do
-    # Get the current clip to find the preceding clip
-    case Repo.get(Clip, clip_id) do
-      %Clip{} = current_clip ->
-        # Find the preceding clip that ends where this clip starts
-        preceding_clip =
-          from(c in Clip,
-            where:
-              c.source_video_id == ^current_clip.source_video_id and
-                c.ingest_state != :archived and
-                c.end_frame == ^current_clip.start_frame
-          )
-          |> Repo.one()
-
-        case preceding_clip do
-          %Clip{} = prev_clip ->
-            # Use the existing grouping logic
-            case request_group_and_fetch_next(prev_clip, current_clip) do
-              {:ok, {_next_clip, _metadata}} ->
-                Logger.info(
-                  "Review: Successfully grouped clip #{clip_id} with preceding clip #{prev_clip.id}"
-                )
-
-                :ok
-
-              {:error, reason} ->
-                Logger.warning("Review: Failed to group clip #{clip_id}: #{reason}")
-                {:error, reason}
-            end
-
-          nil ->
-            Logger.warning("Review: Cannot group - no preceding clip found for clip #{clip_id}")
-            {:error, "No preceding clip found"}
-        end
-
-      nil ->
-        Logger.warning("Review: Cannot group - clip #{clip_id} not found")
-        {:error, "Clip not found"}
+    with {:ok, current_clip} <- fetch_clip_for_group(clip_id),
+         {:ok, prev_clip} <- find_preceding_clip(current_clip),
+         {:ok, _result} <- execute_group(prev_clip, current_clip, clip_id) do
+      :ok
     end
   rescue
     error ->
       Logger.error("Review: Group operation failed for clip #{clip_id}: #{inspect(error)}")
       {:error, "Group operation failed"}
+  end
+
+  defp fetch_clip_for_group(clip_id) do
+    case Repo.get(Clip, clip_id) do
+      %Clip{} = clip ->
+        {:ok, clip}
+
+      nil ->
+        Logger.warning("Review: Cannot group - clip #{clip_id} not found")
+        {:error, "Clip not found"}
+    end
+  end
+
+  defp find_preceding_clip(current_clip) do
+    preceding_clip =
+      from(c in Clip,
+        where:
+          c.source_video_id == ^current_clip.source_video_id and
+            c.ingest_state != :archived and
+            c.end_frame == ^current_clip.start_frame
+      )
+      |> Repo.one()
+
+    case preceding_clip do
+      %Clip{} = clip ->
+        {:ok, clip}
+
+      nil ->
+        Logger.warning(
+          "Review: Cannot group - no preceding clip found for clip #{current_clip.id}"
+        )
+
+        {:error, "No preceding clip found"}
+    end
+  end
+
+  defp execute_group(prev_clip, current_clip, clip_id) do
+    case request_group_and_fetch_next(prev_clip, current_clip) do
+      {:ok, {_next_clip, _metadata}} = result ->
+        Logger.info(
+          "Review: Successfully grouped clip #{clip_id} with preceding clip #{prev_clip.id}"
+        )
+
+        result
+
+      {:error, reason} ->
+        Logger.warning("Review: Failed to group clip #{clip_id}: #{reason}")
+        {:error, reason}
+    end
   end
 
   @doc """
@@ -364,7 +382,7 @@ defmodule Heaters.Review.Actions do
     case Repo.get(Clip, clip_id) do
       %Clip{} = clip ->
         # Find the cut at the start of this clip (which would be removed to merge with previous clip)
-        case Heaters.Media.Cuts.Operations.remove_cut(
+        case CutsOperations.remove_cut(
                clip.source_video_id,
                clip.start_frame,
                # user_id - nil for system operations triggered by review
@@ -409,7 +427,7 @@ defmodule Heaters.Review.Actions do
     # 1. Creating the cut at frame_num
     # 2. Archiving the original clip
     # 3. Creating two new clips based on the new cut boundaries
-    case Heaters.Media.Cuts.Operations.add_cut(
+    case CutsOperations.add_cut(
            clip.source_video_id,
            frame_num,
            # user_id - nil for system operations
@@ -487,7 +505,7 @@ defmodule Heaters.Review.Actions do
     {:ok, 0}
   end
 
-  defp fetch_next_pending_clip() do
+  defp fetch_next_pending_clip do
     next_id =
       Q.from(c in Clip,
         where: c.ingest_state == :pending_review and is_nil(c.reviewed_at),
@@ -498,6 +516,6 @@ defmodule Heaters.Review.Actions do
       )
       |> Repo.one()
 
-    if next_id, do: Heaters.Review.Queue.load_clip_with_assocs(next_id)
+    if next_id, do: Queue.load_clip_with_assocs(next_id)
   end
 end

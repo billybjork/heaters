@@ -1,4 +1,8 @@
 defmodule Heaters.Media.Clip do
+  @moduledoc """
+  Schema representing a clip segment extracted from a source video.
+  """
+
   use Heaters.Schema
 
   @type t() :: %__MODULE__{

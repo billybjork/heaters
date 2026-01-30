@@ -12,6 +12,7 @@ defmodule Heaters.Storage.TempManager do
   temporary files from previous runs that may have been interrupted.
   """
 
+  alias Heaters.Storage.S3.Core, as: S3Core
   require Logger
 
   @doc """
@@ -30,8 +31,8 @@ defmodule Heaters.Storage.TempManager do
       {:ok, cleanup_count} = TempManager.cleanup_orphaned_temp_files()
       Logger.info("Cleaned up orphaned temp directories: " <> Integer.to_string(cleanup_count))
   """
-  @spec cleanup_orphaned_temp_files() :: {:ok, non_neg_integer()} | {:error, any()}
-  def cleanup_orphaned_temp_files() do
+  @spec cleanup_orphaned_temp_files :: {:ok, non_neg_integer()} | {:error, any()}
+  def cleanup_orphaned_temp_files do
     case System.tmp_dir() do
       nil ->
         Logger.warning("TempManager: Could not access system temp directory for orphan cleanup")
@@ -151,18 +152,19 @@ defmodule Heaters.Storage.TempManager do
   """
   @spec with_temp_directory(String.t(), (String.t() -> any())) :: any()
   def with_temp_directory(prefix, fun) when is_function(fun, 1) do
-    with {:ok, temp_dir} <- create_temp_directory(prefix) do
-      try do
-        Logger.debug("TempManager: Executing function with temp directory: #{temp_dir}")
-        fun.(temp_dir)
-      after
-        Logger.debug(
-          "TempManager: Cleaning up temp directory after function execution: #{temp_dir}"
-        )
+    case create_temp_directory(prefix) do
+      {:ok, temp_dir} ->
+        try do
+          Logger.debug("TempManager: Executing function with temp directory: #{temp_dir}")
+          fun.(temp_dir)
+        after
+          Logger.debug(
+            "TempManager: Cleaning up temp directory after function execution: #{temp_dir}"
+          )
 
-        cleanup_temp_directory(temp_dir)
-      end
-    else
+          cleanup_temp_directory(temp_dir)
+        end
+
       error ->
         Logger.error(
           "TempManager: Could not create temp directory for function execution: #{inspect(error)}"
@@ -187,36 +189,40 @@ defmodule Heaters.Storage.TempManager do
   """
   @spec download_for_processing(String.t(), String.t()) :: {:ok, String.t()} | {:error, any()}
   def download_for_processing(filepath, operation) do
-    with {:ok, temp_dir} <- create_temp_directory(operation),
-         {:ok, local_path} <- download_file_to_temp(filepath, temp_dir) do
-      {:ok, local_path}
+    with {:ok, temp_dir} <- create_temp_directory(operation) do
+      download_file_to_temp(filepath, temp_dir)
     end
   end
 
   defp download_file_to_temp(filepath, temp_dir) do
-    # Check if it's an S3 key or local file
-    if String.starts_with?(filepath, "s3://") or String.contains?(filepath, "/") do
-      # Assume it's an S3 key - download from S3
-      filename = Path.basename(filepath)
-      local_path = Path.join(temp_dir, filename)
+    local_path = Path.join(temp_dir, Path.basename(filepath))
 
-      case Heaters.Storage.S3.Core.download_file(filepath, local_path) do
-        {:ok, _} -> {:ok, local_path}
-        {:error, reason} -> {:error, "Failed to download from S3: #{inspect(reason)}"}
+    if s3_path?(filepath) do
+      download_s3_to_temp(filepath, local_path)
+    else
+      copy_local_to_temp(filepath, local_path)
+    end
+  end
+
+  defp s3_path?(filepath) do
+    String.starts_with?(filepath, "s3://") or String.contains?(filepath, "/")
+  end
+
+  defp download_s3_to_temp(filepath, local_path) do
+    case S3Core.download_file(filepath, local_path) do
+      {:ok, _} -> {:ok, local_path}
+      {:error, reason} -> {:error, "Failed to download from S3: #{inspect(reason)}"}
+    end
+  end
+
+  defp copy_local_to_temp(filepath, local_path) do
+    if File.exists?(filepath) do
+      case File.cp(filepath, local_path) do
+        :ok -> {:ok, local_path}
+        {:error, reason} -> {:error, "Failed to copy local file: #{inspect(reason)}"}
       end
     else
-      # Assume it's a local file path
-      if File.exists?(filepath) do
-        filename = Path.basename(filepath)
-        local_path = Path.join(temp_dir, filename)
-
-        case File.cp(filepath, local_path) do
-          :ok -> {:ok, local_path}
-          {:error, reason} -> {:error, "Failed to copy local file: #{inspect(reason)}"}
-        end
-      else
-        {:error, "File not found: #{filepath}"}
-      end
+      {:error, "File not found: #{filepath}"}
     end
   end
 
@@ -279,43 +285,42 @@ defmodule Heaters.Storage.TempManager do
 
   @spec cleanup_matching_directories(String.t()) :: {:ok, non_neg_integer()} | {:error, any()}
   defp cleanup_matching_directories(temp_root) do
-    try do
-      # Our temp directories follow the pattern: heaters_<prefix>_<unique_integer>
-      heaters_dirs =
-        File.ls!(temp_root)
-        |> Enum.filter(&String.starts_with?(&1, "heaters_"))
-        |> Enum.filter(&File.dir?(Path.join(temp_root, &1)))
+    # Our temp directories follow the pattern: heaters_<prefix>_<unique_integer>
+    heaters_dirs =
+      File.ls!(temp_root)
+      |> Enum.filter(fn dir_name ->
+        String.starts_with?(dir_name, "heaters_") and File.dir?(Path.join(temp_root, dir_name))
+      end)
 
-      cleaned_count =
-        heaters_dirs
-        |> Enum.map(&Path.join(temp_root, &1))
-        |> Enum.reduce(0, fn dir_path, acc ->
-          case cleanup_temp_directory(dir_path) do
-            :ok ->
-              Logger.debug("TempManager: Cleaned orphaned directory: #{dir_path}")
-              acc + 1
+    cleaned_count =
+      heaters_dirs
+      |> Enum.map(&Path.join(temp_root, &1))
+      |> Enum.reduce(0, fn dir_path, acc ->
+        case cleanup_temp_directory(dir_path) do
+          :ok ->
+            Logger.debug("TempManager: Cleaned orphaned directory: #{dir_path}")
+            acc + 1
 
-            {:error, reason} ->
-              Logger.warning(
-                "TempManager: Failed to clean orphaned directory #{dir_path}: #{reason}"
-              )
+          {:error, reason} ->
+            Logger.warning(
+              "TempManager: Failed to clean orphaned directory #{dir_path}: #{reason}"
+            )
 
-              acc
-          end
-        end)
+            acc
+        end
+      end)
 
-      if cleaned_count > 0 do
-        Logger.info("TempManager: Cleaned up #{cleaned_count} orphaned temp directories")
-      else
-        Logger.debug("TempManager: No orphaned temp directories found")
-      end
-
-      {:ok, cleaned_count}
-    rescue
-      e ->
-        error_msg = "Failed to cleanup orphaned temp directories: #{Exception.message(e)}"
-        Logger.error("TempManager: #{error_msg}")
-        {:error, error_msg}
+    if cleaned_count > 0 do
+      Logger.info("TempManager: Cleaned up #{cleaned_count} orphaned temp directories")
+    else
+      Logger.debug("TempManager: No orphaned temp directories found")
     end
+
+    {:ok, cleaned_count}
+  rescue
+    e ->
+      error_msg = "Failed to cleanup orphaned temp directories: #{Exception.message(e)}"
+      Logger.error("TempManager: #{error_msg}")
+      {:error, error_msg}
   end
 end

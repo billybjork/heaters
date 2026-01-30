@@ -60,11 +60,12 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
     queue: :media_processing,
     unique: [period: 900, fields: [:args]]
 
-  alias Heaters.Repo
   alias Heaters.Media.Video, as: SourceVideo
   alias Heaters.Media.Videos
   alias Heaters.Pipeline.WorkerBehavior
+  alias Heaters.Repo
   alias Heaters.Storage.PipelineCache.TempCache
+  alias Heaters.Storage.S3.Paths, as: S3Paths
   require Logger
 
   @impl WorkerBehavior
@@ -77,9 +78,10 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
       "PersistCacheWorker: Starting cache persistence for source_video_id: #{source_video_id}"
     )
 
-    with {:ok, source_video} <- Videos.get_source_video(source_video_id) do
-      handle_persist(source_video)
-    else
+    case Videos.get_source_video(source_video_id) do
+      {:ok, source_video} ->
+        handle_persist(source_video)
+
       {:error, :not_found} ->
         WorkerBehavior.handle_not_found("Source video", source_video_id)
     end
@@ -152,7 +154,7 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
         # Both temp cache keys and S3 keys might resolve to the same S3 destination
         all_keys = deduplicate_by_s3_destination(temp_cache_keys ++ s3_keys)
 
-        if length(all_keys) > 0 do
+        if all_keys != [] do
           Logger.info(
             "PersistCacheWorker: Persisting #{length(all_keys)} potential cached files for video #{source_video.id}"
           )
@@ -196,8 +198,7 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
       source_video.proxy_filepath,
       source_video.master_filepath
     ]
-    |> Enum.reject(&is_nil/1)
-    |> Enum.reject(&(&1 == ""))
+    |> Enum.reject(fn key -> is_nil(key) or key == "" end)
   end
 
   defp deduplicate_by_s3_destination(cache_keys) do
@@ -247,58 +248,64 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
   end
 
   defp update_database_with_s3_paths(source_video, successful_uploads) do
-    # Build update attributes from successful uploads
-    attrs =
-      successful_uploads
-      |> Enum.reduce(%{}, fn {cache_key, s3_destination}, acc ->
-        case cache_key do
-          "temp_" <> rest ->
-            case String.split(rest, "_") do
-              [_id, "proxy"] -> Map.put(acc, :proxy_filepath, s3_destination)
-              [_id, "master"] -> Map.put(acc, :master_filepath, s3_destination)
-              _ -> acc
-            end
+    attrs = build_s3_path_attrs(successful_uploads)
+    apply_s3_path_updates(source_video, attrs)
+  end
 
-          _ ->
-            # For direct S3 keys, determine type from path
-            cond do
-              String.contains?(s3_destination, "/proxy") ->
-                Map.put(acc, :proxy_filepath, s3_destination)
-
-              String.contains?(s3_destination, "/master") ->
-                Map.put(acc, :master_filepath, s3_destination)
-
-              String.contains?(s3_destination, "originals") ->
-                Map.put(acc, :filepath, s3_destination)
-
-              true ->
-                acc
-            end
-        end
-      end)
-
-    if map_size(attrs) > 0 do
-      case Videos.update_source_video(source_video, attrs) do
-        {:ok, updated_video} ->
-          Logger.info(
-            "PersistCacheWorker: Updated source_video #{source_video.id} with S3 paths: #{inspect(Map.keys(attrs))}"
-          )
-
-          {:ok, updated_video}
-
-        {:error, reason} ->
-          Logger.error(
-            "PersistCacheWorker: Failed to update source_video #{source_video.id} with S3 paths: #{inspect(reason)}"
-          )
-
-          {:error, reason}
+  defp build_s3_path_attrs(successful_uploads) do
+    Enum.reduce(successful_uploads, %{}, fn {cache_key, s3_destination}, acc ->
+      case determine_path_attr(cache_key, s3_destination) do
+        nil -> acc
+        {key, value} -> Map.put(acc, key, value)
       end
-    else
-      Logger.debug(
-        "PersistCacheWorker: No S3 paths to update for source_video #{source_video.id}"
-      )
+    end)
+  end
 
-      {:ok, source_video}
+  defp determine_path_attr("temp_" <> rest, s3_destination) do
+    determine_temp_path_type(rest, s3_destination)
+  end
+
+  defp determine_path_attr(_cache_key, s3_destination) do
+    determine_s3_path_type(s3_destination)
+  end
+
+  defp determine_temp_path_type(rest, s3_destination) do
+    case String.split(rest, "_") do
+      [_id, "proxy"] -> {:proxy_filepath, s3_destination}
+      [_id, "master"] -> {:master_filepath, s3_destination}
+      _ -> nil
+    end
+  end
+
+  defp determine_s3_path_type(s3_destination) do
+    cond do
+      String.contains?(s3_destination, "/proxy") -> {:proxy_filepath, s3_destination}
+      String.contains?(s3_destination, "/master") -> {:master_filepath, s3_destination}
+      String.contains?(s3_destination, "originals") -> {:filepath, s3_destination}
+      true -> nil
+    end
+  end
+
+  defp apply_s3_path_updates(source_video, attrs) when map_size(attrs) == 0 do
+    Logger.debug("PersistCacheWorker: No S3 paths to update for source_video #{source_video.id}")
+    {:ok, source_video}
+  end
+
+  defp apply_s3_path_updates(source_video, attrs) do
+    case Videos.update_source_video(source_video, attrs) do
+      {:ok, updated_video} ->
+        Logger.info(
+          "PersistCacheWorker: Updated source_video #{source_video.id} with S3 paths: #{inspect(Map.keys(attrs))}"
+        )
+
+        {:ok, updated_video}
+
+      {:error, reason} ->
+        Logger.error(
+          "PersistCacheWorker: Failed to update source_video #{source_video.id}: #{inspect(reason)}"
+        )
+
+        {:error, reason}
     end
   end
 
@@ -356,11 +363,11 @@ defmodule Heaters.Storage.PipelineCache.PersistCache.Worker do
         case file_type do
           "proxy" ->
             source_video.proxy_filepath ||
-              Heaters.Storage.S3.Paths.generate_proxy_path(source_video.title, source_video.id)
+              S3Paths.generate_proxy_path(source_video.title, source_video.id)
 
           "master" ->
             source_video.master_filepath ||
-              Heaters.Storage.S3.Paths.generate_master_path(source_video.title, source_video.id)
+              S3Paths.generate_master_path(source_video.title, source_video.id)
 
           "source" ->
             source_video.filepath

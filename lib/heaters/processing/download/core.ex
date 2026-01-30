@@ -18,23 +18,21 @@ defmodule Heaters.Processing.Download.Core do
   | `:download_failed`| `:downloading`    | `start_downloading/1`    | Retry attempt          |
   """
 
-  alias Heaters.Repo
   alias Heaters.Media.Video, as: SourceVideo
   alias Heaters.Media.Videos
+  alias Heaters.Repo
   require Logger
 
   defp format_changeset_errors(changeset) do
-    changeset.errors
-    |> Enum.map(fn {field, {message, _}} -> "#{field}: #{message}" end)
-    |> Enum.join(", ")
+    Enum.map_join(changeset.errors, ", ", fn {field, {message, _}} ->
+      "#{field}: #{message}"
+    end)
   end
 
   @spec submit(String.t()) :: :ok | {:error, String.t()}
   def submit(url) when is_binary(url) do
-    with {:ok, _id} <- insert_source_video(url) do
-      :ok
-      # Propagate specific error messages
-    else
+    case insert_source_video(url) do
+      {:ok, _id} -> :ok
       {:error, reason} -> {:error, reason}
     end
   end
