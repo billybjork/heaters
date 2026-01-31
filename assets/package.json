@@ -2,9 +2,7 @@
   "name": "frontend-assets",
   "version": "0.1.0",
   "scripts": {
-    "deploy": "postcss css/app.css -o ../priv/static/assets/app.css --env production && esbuild js/app.js --bundle --target=es2017 --outdir=../priv/static/assets --minify",
-    "watch:css": "postcss css/app.css -o ../priv/static/assets/app.css --watch",
-    "watch:js": "esbuild js/app.js --bundle --target=es2017 --outdir=../priv/static/assets --sourcemap --watch"
+    "deploy": "postcss css/app.css -o ../priv/static/assets/app.css --env production && esbuild js/app.js --bundle --target=es2022 --outdir=../priv/static/assets --minify"
   },
   "dependencies": {
     "esbuild": "^0.25.5",
@@ -13,6 +11,7 @@
   },
   "devDependencies": {
     "autoprefixer": "^10.4.21",
+    "cssnano": "^7.0.0",
     "postcss": "^8.5.3",
     "postcss-cli": "^11.0.1",
     "postcss-import": "^16.1.0"

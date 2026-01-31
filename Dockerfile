@@ -11,11 +11,14 @@ ENV MIX_ENV=prod
 RUN apt-get update && apt-get install -y --no-install-recommends \
   build-essential \
   git \
-  nodejs \
-  npm \
+  unzip \
   python3 \
   curl \
   && rm -rf /var/lib/apt/lists/*
+
+# Install Bun for fast JavaScript package management and bundling
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:$PATH"
 
 # Install uv for fast Python package management
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -50,8 +53,8 @@ RUN uv pip install --no-cache -r py/requirements.txt
 COPY . .
 
 # Build assets
-RUN npm install --prefix ./assets
-RUN npm run --prefix ./assets deploy
+RUN bun install --cwd ./assets
+RUN bun run --cwd ./assets deploy
 RUN mix phx.digest
 
 # Create the final, self-contained release.
