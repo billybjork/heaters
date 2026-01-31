@@ -68,7 +68,7 @@ services:
       sh -c "
 
         mix deps.get &&
-        (cd assets && npm install) &&
+        bun install --cwd assets &&
         mix ecto.create &&
         mix ecto.migrate &&
         mix phx.server

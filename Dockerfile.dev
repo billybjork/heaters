@@ -6,8 +6,7 @@ FROM elixir:1.18.4-otp-26-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
   build-essential \
   git \
-  nodejs \
-  npm \
+  unzip \
   python3 \
   postgresql-client \
   inotify-tools \
@@ -17,6 +16,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   wget \
   xz-utils \
   && rm -rf /var/lib/apt/lists/*
+
+# Install Bun for fast JavaScript package management and bundling
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:$PATH"
 
 # Install uv for fast Python package management
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
