@@ -42,7 +42,7 @@ erl_crash.dump
 /priv/gettext/*.pot
 /priv/gettext/**/*.po~
 
-# Node.js & asset pipeline
+# Bun/JS asset pipeline
 **/node_modules/
 *.js.map
 *.css.map
