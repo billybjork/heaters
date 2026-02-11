@@ -16,7 +16,7 @@ defmodule Heaters.Processing.Support.FFmpeg.StreamClip do
 
   ## Supported Use Cases
 
-  - **Temporary Clips**: Fast preview generation for review UI (no audio, small files)
+  - **Temporary Clips**: Fast preview generation for review UI (audio preserved via stream copy)
   - **Final Exports**: High-quality permanent clips with audio preservation
   - **Custom Profiles**: Extensible via FFmpeg configuration system
 

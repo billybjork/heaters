@@ -1,38 +1,10 @@
 defmodule Heaters.Storage.PlaybackCache.TempClip do
   @moduledoc """
-  Efficient temporary clip generation using stream copy from all-I proxy files for instant split-mode compatibility.
+  Temporary clip generation using FFmpeg stream copy from all-I proxy files.
 
-  This module leverages the unified `StreamClip` module for consistent, maintainable
-  clip generation with profile-based configuration and optimal browser compatibility.
-
-  ## Key Features
-
-  - **Unified Architecture**: Uses `StreamClip` for consistent clip generation
-  - **Split-Mode Ready**: Uses stream copy from all-I proxy files for perfect frame-accurate seeking
-  - **Instant Generation**: Stream copy provides instant clip creation with zero re-encoding
-  - **Browser Optimized**: Fast decode, no audio, +faststart for instant playback
-  - **Reasonable Files**: Minimal size overhead since no re-encoding occurs
-
-  ## Architecture
-
-  Built on the unified FFmpeg abstraction that provides:
-  - Direct CloudFront URL processing (no downloads)
-  - Profile-based configuration from `FFmpeg.Config`
-  - DB fps integration for metadata preservation
-  - Consistent error handling and logging
-
-  ## Split Mode Benefits
-
-  Unlike virtual clips, these stream-copied clips from all-I proxy sources support reliable seeking:
-  - Every frame remains a keyframe from original proxy
-  - Browsers can seek to any timestamp without snapping to 0
-  - Frame stepping works consistently across all browsers
-  - Original timing preserved exactly from source
-
-  ## Cleanup
-
-  Cleanup is handled by the scheduled CleanupWorker rather than per-file timers
-  for more efficient batch processing.
+  Delegates to `StreamClip.generate_clip/3` with the `:temp_playback` profile.
+  Stream copy from all-I proxy sources preserves frame-accurate seeking for split mode.
+  Cleanup is handled by `PlaybackCache.CleanupWorker`.
   """
 
   require Logger
@@ -41,28 +13,10 @@ defmodule Heaters.Storage.PlaybackCache.TempClip do
   alias Heaters.Repo
 
   @doc """
-  Build a temporary clip file using stream copy from all-I proxy for split-mode compatibility.
+  Build a temporary clip file using the `:temp_playback` stream copy profile.
 
-  ## Parameters
-  - `clip`: Clip struct with timing and source video information
-  - `opts`: Options for temp clip generation (currently unused, for future expansion)
-
-  ## Profile
-  Uses `:temp_playback` with stream copy from all-I proxy:
-  - Instant generation via stream copy (no re-encoding)
-  - Perfect seeking preserved from all-I proxy source
-  - No audio for minimal file size
-  - +faststart for instant browser playback
-
-  ## Returns
-  - `{:ok, file_url}` - HTTP URL for direct browser access
-  - `{:error, reason}` - FFmpeg error or missing data
-
-  ## Examples
-
-      {:ok, url} = TempClip.build(clip)
-      # Returns: {:ok, "/temp/clip_123_456789.mp4?t=123456"}
-      # File supports frame-accurate seeking for split mode
+  Returns `{:ok, "/temp/clip_{id}_{ts}.mp4?t=..."}` or `{:error, reason}`.
+  Automatically preloads `source_video` if not already loaded.
   """
   @spec build(map(), keyword()) :: {:ok, String.t()} | {:error, String.t()}
   def build(clip, opts \\ [])

@@ -109,58 +109,23 @@ Clips: pending_review → review_approved → exporting → exported → keyfram
 
 ### Temp Clip Architecture
 
-Temp clips provide instant playback of video segments using small generated files (2-5MB) with FFmpeg stream copy for frame-accurate navigation and split operations. This approach eliminates the performance issues of large virtual streams while maintaining perfect seeking capabilities.
+Temp clips provide instant playback of video segments using small generated files with FFmpeg stream copy (audio included) for frame-accurate navigation and split operations.
 
 #### Key Features
 
-- **FFmpeg Stream Copy**: Instant generation from all-I proxy files with zero re-encoding
-- **Small File Size**: Typically 2-5MB temp files vs 28+GB virtual streams  
-- **HTTP Range Support**: 206 Partial Content responses enable frame-accurate seeking
-- **Background Generation**: Oban workers with PubSub reactive updates to LiveView
-- **Automatic Cleanup**: Scheduled LRU eviction and disk space monitoring
+- **FFmpeg Stream Copy**: Instant generation from all-I proxy files with zero re-encoding (audio preserved)
+- **Background Generation**: Oban workers on `:temp_clips` queue with PubSub reactive updates to LiveView
+- **Automatic Cleanup**: Scheduled LRU eviction (1GB limit), age expiry (15 min), and disk space monitoring
 
 #### Coordinate System Design
 
-**Key Insight**: Complex coordinate translations moved server-side to eliminate client-side brittleness.
+Complex coordinate translations are handled server-side to eliminate client-side brittleness:
 
-1. **Source Video Coordinates (Database Authority)**
-   - Time: `0s` to `video.duration_seconds` (e.g., 50s total video)
-   - Frames: `0` to `duration * fps` (e.g., 0-1200 @ 24fps)
-   - Used by: Database storage, cut definitions, server-side calculations
+1. **Source Video Coordinates** — `0s` to `video.duration_seconds`; used by database, cut definitions, server-side calculations
+2. **Video Element Coordinates** — `video.currentTime` uses absolute source video time for temp clips
+3. **Clip UI Coordinates** — Timeline shows `0s` to `clip.duration_seconds` for display only
 
-2. **Video Element Coordinates (Client Playback)**
-   - `video.currentTime` uses absolute source video time for temp clips
-   - Used by: HTML video element, seeking operations, frame navigation
-
-3. **Clip UI Coordinates (Display Only)**
-   - Timeline shows `0s` to `clip.duration_seconds`
-   - Used by: UI timeline display, progress bars, user interaction
-
-#### Split Operation Flow
-
-**Simplified Client-Side** (`assets/js/frame-navigator.js`):
-```javascript
-// Client sends simple time offset to server
-const timeOffsetSeconds = currentTime - clipStartTime;
-this.pushEvent("split_at_time_offset", { time_offset_seconds: timeOffsetSeconds });
-```
-
-**Server-Side Calculation** (`lib/heaters/review/actions.ex`):
-```elixir
-# Server handles all coordinate translation using authoritative database FPS
-absolute_time_seconds = clip.start_time_seconds + time_offset_seconds
-absolute_frame = round(absolute_time_seconds * source_video.fps)
-```
-
-#### Architecture Benefits
-
-- **Small Files**: 2-5MB vs 28+GB eliminates network performance issues
-- **Perfect Seeking**: Stream copy from all-I proxy preserves frame accuracy
-- **Instant Generation**: FFmpeg stream copy completes in milliseconds
-- **Background Processing**: Non-blocking generation with reactive UI updates
-- **Single Source of Truth**: All frame calculations use database FPS data
-- **Reduced Brittleness**: No client-side coordinate translation complexity
-- **Better Debugging**: Server-side calculations are logged and traceable
+**Split flow**: Client sends a simple time offset; server translates to absolute frame using authoritative database FPS (see `review/actions.ex`).
 
 ### Frontend Architecture (LiveView 1.1)
 - **Colocated Hooks**: JavaScript code embedded directly in Phoenix components
@@ -272,10 +237,10 @@ config :heaters,
 - Escape: Exit split mode
 
 ### Maintenance & Monitoring
-- **Scheduled Cleanup**: Playback cache maintenance every 4 hours via Oban cron
+- **Scheduled Cleanup**: Playback cache maintenance every 4 hours (prod) / 5 min (dev) via Oban cron
 - **Cache Size Limits**: Configurable limits (default: 1GB) with LRU eviction strategy
 - **Disk Space Monitoring**: Alerts when free space drops below threshold (default: 500MB)
-- **Startup Cleanup**: Automatic removal of orphaned temp files on application start
+- **Startup Cleanup**: Automatic removal of orphaned pipeline cache directories (`heaters_*`) on application start (via `TempManager`; playback cache `clip_*` files are handled by the scheduled `CleanupWorker`)
 - **Comprehensive Logging**: Cache statistics, utilization metrics, and cleanup operations
 
 ## Troubleshooting
@@ -290,7 +255,7 @@ config :heaters,
 **Frame Navigation Problems**
 - Verify 206 Partial Content responses in DevTools Network tab (not 200 OK)
 - Check Accept-Ranges: bytes header is present on virtual clip requests
-- Confirm `temp_playbook` profile uses stream copy from all-I proxy files
+- Confirm `temp_playback` profile uses stream copy from all-I proxy files
 - Validate FPS data is present in clip_info JSON
 - Look for "handleEvent overwrites" warnings (hook conflicts)
 - Check for excessive time correction messages (should see debounced corrections)
