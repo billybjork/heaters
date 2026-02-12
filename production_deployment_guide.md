@@ -2,337 +2,173 @@
 
 ## Overview
 
-This guide covers deploying the Heaters video processing system with server-side FFmpeg streaming to production infrastructure. The system is architected for scalable, cost-effective deployment using Fly.io, CloudFront, and optional FLAME serverless patterns.
+Heaters deploys on Fly.io with the FLAME pattern for elastic, scale-to-zero media processing. PostgreSQL for persistence, AWS S3/CloudFront for media storage, and Oban for durable background jobs. Clip playback uses pre-generated temp files via FFmpeg stream copy — there is no on-demand FFmpeg streaming in the request path.
 
-## Current Architecture Status
-
-**✅ Development Complete:**
-- Server-side FFmpeg time segmentation with process pooling and rate limiting
-- Virtual clip streaming with database-level MECE constraints
-- StreamingVideoPlayer frontend with 0-based timeline experience
-- Performance monitoring and keyframe leakage detection
-- Type-safe URL generation with cache versioning
-
-**🚀 Ready for Production:**
-- Phoenix app serves as custom origin for CloudFront
-- FFmpeg streams exact clip ranges (no full video downloads)
-- Each virtual clip feels like a standalone video file
-- Comprehensive error handling and process cleanup
-
----
-
-## Infrastructure Components
-
-### **Core Architecture**
+## Architecture
 
 ```
-Browser → CloudFront (Global Cache) → Phoenix App (Fly.io) → FFmpeg Process Pool
-                                           ↓
-                                     S3 Proxy Files (Range Requests)
+Browser → CloudFront (signed URLs) → S3 Proxy Files
+                                          ↑
+Phoenix App (Fly.io) → Oban Jobs → FLAME.call(Runner, fn -> FFmpeg/Python work end)
+       ↓                                ↓
+  PostgreSQL (Fly.io)        Ephemeral Fly Machine (same Docker image)
+                             └─ boots, runs work, uploads to S3, shuts down
 ```
 
-### **Key Technologies**
-- **Application**: Phoenix LiveView on Fly.io
-- **CDN**: AWS CloudFront (caches FFmpeg output globally)
-- **Storage**: AWS S3 (proxy files, direct access via presigned URLs)
-- **Database**: PostgreSQL with MECE constraints
-- **Processing**: Server-side FFmpeg with process pooling
+**Key Technologies:**
+- **Application**: Phoenix LiveView on Fly.io (Docker)
+- **Elastic Compute**: FLAME — ephemeral Fly Machines for CPU-heavy work
+- **CDN/Storage**: AWS S3 + CloudFront (presigned URLs for proxy files)
+- **Database**: PostgreSQL with pgvector on Fly.io
+- **Background Jobs**: Oban with queue-based worker separation
+- **Media Processing**: FFmpeg (libx264 encoding, stream copy for clips), Python (scene detection, embeddings)
 
----
+## FLAME
 
-## Deployment Phases
+FLAME (`{:flame, "~> 0.5"}`) boots a **full copy of your application** on an
+ephemeral Fly.io Machine, sends a function closure via Erlang distribution, and
+tears the machine down when idle. The remote node has your entire app context —
+Repo, PubSub, config — so closures Just Work.
 
-### **Phase 1: Basic Production Deployment**
+- ~3 second cold-start on Fly.io (boots your Docker image via Machines API)
+- `FLAME.Terminator` monitors parent connection; auto-destroys on disconnect
+- `FLAME.LocalBackend` for dev/test (executes closures in-process, no infra needed)
 
-**Fly.io Application Setup:**
-1. **Machine Configuration**:
-   - Use `shared-cpu-1x` or `shared-cpu-2x` for development/staging
-   - Consider `dedicated-cpu-1x` for production traffic
-   - Ensure FFmpeg is available in the Docker image
+### Which Workers to Wrap with FLAME
 
-2. **Environment Variables**:
-   ```bash
-   fly secrets set DATABASE_URL="postgresql://..."
-   fly secrets set SECRET_KEY_BASE="..."
-   fly secrets set AWS_ACCESS_KEY_ID="..."
-   fly secrets set AWS_SECRET_ACCESS_KEY="..."
-   fly secrets set S3_BUCKET="heaters-production"
-   fly secrets set CLOUDFRONT_DOMAIN="your-distribution.cloudfront.net"
-   ```
+| Worker | Queue | Bottleneck | FLAME? | Why |
+|--------|-------|------------|--------|-----|
+| Encode (proxy/master) | `media_processing` | CPU (libx264, minutes) | **Yes — highest value** | Heaviest CPU workload, bursty |
+| Scene detection | `media_processing` | CPU (OpenCV, full video) | **Yes** | Long-running, blocks queue |
+| Export | `exports` | I/O (stream copy + S3 upload) | **Yes** | Benefits from elastic scaling |
+| Keyframe extraction | `background_jobs` | CPU-light (FFmpeg JPEG) | Optional | Fast already, low priority |
+| Temp clip generation | `temp_clips` | I/O (stream copy, instant) | Optional | Already sub-second; FLAME would eliminate cleanup concerns |
+| Embeddings | `background_jobs` | CPU (PyTorch CLIP ViT-Base) | No | Fast on CPU at current volume; revisit if moving to larger models |
+| Download | `media_processing` | Network I/O | No | FLAME adds no value to network-bound work |
 
-3. **Dockerfile Optimization**:
-   ```dockerfile
-   FROM flyio/elixir:1.16-slim
-   RUN apt-get update && apt-get install -y ffmpeg --no-install-recommends
-   # ... rest of Phoenix build
-   ```
+### Integration Pattern
 
-**CloudFront Distribution Setup:**
+Oban owns job durability, retries, scheduling, and observability.
+FLAME wraps the expensive compute inside the worker's `perform/1`:
 
-1. **Create Distribution**:
-   - **Origin Domain**: `your-app.fly.dev`
-   - **Origin Protocol**: HTTPS only
-   - **Origin Path**: Leave empty
-
-2. **Cache Behavior for Streaming**:
-   - **Path Pattern**: `/videos/clips/*/stream*`
-   - **Cache Policy**: `CachingOptimized` (handles Range headers)
-   - **Origin Request Policy**: `CORS-S3Origin` (for CORS headers)
-   - **Allowed Methods**: `GET, HEAD`
-   - **TTL**: Use default (respects cache headers from Phoenix)
-
-3. **Cache Behavior for Static Assets**:
-   - **Path Pattern**: `/assets/*`
-   - **Cache Policy**: `CachingOptimized`
-   - **TTL**: 1 year (static assets are versioned)
-
-**Database Configuration:**
-- Ensure MECE constraints are applied (migration `20250728234518_add_mece_overlap_constraints.exs`)
-- Consider read replicas for clip metadata queries at scale
-- Connection pooling optimized for Fly.io networking
-
-### **Phase 2: Performance Optimization**
-
-**Monitoring Setup:**
-1. **Application Metrics**:
-   ```elixir
-   # Monitor FFmpeg process utilization
-   HeatersWeb.FFmpegPool.detailed_status()
-   
-   # Returns:
-   # %{
-   #   active_processes: 3,
-   #   max_processes: 10,
-   #   utilization_percent: 30.0,
-   #   memory_usage: %{total_memory_mb: 45.2, process_count: 3}
-   # }
-   ```
-
-2. **CloudFront Cache Monitoring**:
-   - Set up CloudWatch alarms for cache hit ratios
-   - Monitor origin request counts (should decrease over time)
-   - Track egress bandwidth costs
-
-3. **Application Logging**:
-   - FFmpeg stream completion times are logged automatically
-   - Keyframe leakage detection logs (currently for monitoring only)
-   - Process pool utilization tracking
-
-**Configuration Tuning:**
 ```elixir
-# config/prod.exs
-config :heaters, HeatersWeb.FFmpegPool,
-  max_concurrent_processes: 15,  # Adjust based on machine resources
-  cleanup_interval: 30_000
+# In an Oban worker
+def perform(%Oban.Job{args: %{"video_id" => video_id}}) do
+  video = Repo.get!(SourceVideo, video_id)
 
-# Streaming timeouts for large clips
-config :heaters, HeatersWeb.StreamPorts,
-  stream_timeout: 300_000  # 5 minutes
+  FLAME.call(Heaters.MediaRunner, fn ->
+    # This closure runs on an ephemeral Fly Machine.
+    # Repo, PubSub, and all app config are available.
+    Encoder.encode_proxy(video)
+  end)
+end
 ```
 
-**Regional Optimization:**
-- Co-locate Fly.io machines with S3 bucket regions
-- Consider multiple Fly.io regions for global performance
-- Use S3 Transfer Acceleration if needed
+### Pool Configuration
 
-### **Phase 3: 🔥 FLAME Serverless Architecture (Optional)**
+```elixir
+# mix.exs
+{:flame, "~> 0.5"}
 
-**Cost Optimization Target:**
-- Current: ~$5-20/month (always-on Phoenix)
-- FLAME: ~$0.50/month (scale-to-zero, pay-per-use)
+# config/runtime.exs (prod only)
+config :flame, :backend, FLAME.FlyBackend
+config :flame, FLAME.FlyBackend,
+  token: System.fetch_env!("FLY_API_TOKEN"),
+  env: %{
+    "DATABASE_URL" => System.fetch_env!("DATABASE_URL"),
+    "SECRET_KEY_BASE" => System.fetch_env!("SECRET_KEY_BASE"),
+    "PROD_S3_BUCKET_NAME" => System.fetch_env!("PROD_S3_BUCKET_NAME"),
+    "PROD_CLOUDFRONT_DOMAIN" => System.fetch_env!("PROD_CLOUDFRONT_DOMAIN"),
+    "AWS_ACCESS_KEY_ID" => System.fetch_env!("AWS_ACCESS_KEY_ID"),
+    "AWS_SECRET_ACCESS_KEY" => System.fetch_env!("AWS_SECRET_ACCESS_KEY"),
+    "POOL_SIZE" => "1"
+  }
 
-**FLAME Integration Components:**
+# application.ex — add pool to supervision tree
+# Single pool for all media processing (encoding, scene detection, export)
+{FLAME.Pool,
+ name: Heaters.MediaRunner,
+ min: 0,              # scale to zero when idle
+ max: 5,              # max concurrent machines
+ max_concurrency: 1,  # one heavy job per machine (encoding is CPU-bound)
+ idle_shutdown_after: 30_000}  # 30s idle before teardown
+```
 
-1. **FLAME Runners** (`lib/heaters/flame_runners/`):
-   ```elixir
-   defmodule Heaters.FLAMERunners.FfmpegRunner do
-     use FLAME.Runner
-     
-     def stream_clip(clip_id, signed_url) do
-       # FFmpeg processing in ephemeral machine
-       # Returns streaming data
-     end
-   end
-   ```
+Key details:
+- Set `min: 0` for scale-to-zero (cost: ~3s cold start on first call)
+- Set `min: 1` to keep a warm runner and eliminate cold starts
+- FLAME children should skip Oban and the HTTP endpoint (use `FLAME.Parent.get()` to detect)
+- Reduce DB `pool_size` to 1 on FLAME children to conserve connections
+- Environment variables are NOT inherited — forward them all explicitly via `:env`
 
-2. **Architecture Changes**:
-   - Replace `FFmpegPool` with `FLAME.call(FfmpegRunner, ...)`
-   - Remove ETS-based process counting (use Fly machine limits)
-   - Optimize for ~5-minute machine lifecycle
-   - Ensure graceful shutdown coordination
+## Oban Queue Architecture
 
-3. **Benefits**:
-   - **Zero Idle Cost**: Machines shutdown when not streaming
-   - **Elastic Scaling**: Handle traffic spikes without provisioning
-   - **Cost Efficiency**: Pay only for actual compute seconds
-   - **CloudFront Caching**: High cache hit ratios minimize compute costs
+Production queues are configured via the `OBAN_QUEUES` environment variable in `config/runtime.exs`:
 
----
+- **Web machine**: Runs `default` queue (cron scheduler: Dispatcher every minute, CleanupWorker every 4 hours)
+- **Heavy queues** (`media_processing`, `exports`, `temp_clips`, `background_jobs`, `maintenance`): Run on the web machine or a separate worker machine depending on load
 
-## Performance Characteristics
+## Required Environment Variables
 
-### **Expected Metrics**
-- **FFmpeg Startup Latency**: ~150ms (includes process spawn + input seeking)
-- **Stream Copy Performance**: ~10ms per second of video content
-- **Memory Usage**: ~15MB per active FFmpeg process
-- **CPU Usage**: <10% per stream on shared-cpu-1x machines
-- **Bandwidth Efficiency**: 90% reduction vs full-video streaming
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `SECRET_KEY_BASE` | Phoenix secret key |
+| `PHX_HOST` | Public hostname for URL generation |
+| `APP_ENV` | `production` |
+| `FLY_API_TOKEN` | Fly.io API token (for FLAME to spawn machines) |
+| `OBAN_QUEUES` | Comma-separated queue names to run |
+| `PROD_S3_BUCKET_NAME` | S3 bucket for media storage |
+| `PROD_CLOUDFRONT_DOMAIN` | CloudFront distribution domain |
+| `AWS_ACCESS_KEY_ID` | AWS access key |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key |
 
-### **Scaling Considerations**
-- **Concurrent Streams**: 10-15 per shared-cpu-1x machine
-- **CloudFront Caching**: Identical clips served globally without origin requests
-- **Database Load**: Minimal (simple clip metadata queries)
-- **S3 Costs**: Primarily GET requests and bandwidth for proxy files
+## Playback Cache
 
-### **Rate Limiting**
-- Built-in FFmpeg process pool prevents resource exhaustion
-- Returns 429 status when max concurrent processes exceeded
-- CloudFront provides additional request rate limiting if needed
-
----
-
-## Security Configuration
-
-### **Authentication & Authorization**
-- Streaming endpoints use existing Phoenix session authentication
-- Consider short-lived HMAC tokens for direct CloudFront access
-- Keep preview thumbnails public to reduce signing overhead
-
-### **Network Security**
-- All FFmpeg input via signed CloudFront URLs (not direct S3)
-- HTTPS-only for all video streaming endpoints
-- CORS headers configured via CloudFront origin request policy
-
-### **Process Security**
-- FFmpeg process isolation with `Port.monitor/1`
-- Zombie process prevention with proper cleanup
-- Resource limits enforced via ETS counters
-
----
-
-## Cost Analysis
-
-### **Current Architecture (Always-On Phoenix)**
-- **Compute**: $5-20/month (Fly.io shared-cpu machines)
-- **Storage**: S3 Standard pricing for proxy files
-- **Bandwidth**: CloudFront egress costs (primary expense)
-- **Database**: Minimal (simple queries, small dataset)
-
-### **FLAME Architecture (Scale-to-Zero)**
-- **Compute**: ~$0.50/month (pay per actual streaming time)
-- **Storage**: Same S3 costs
-- **Bandwidth**: Same CloudFront costs (caching reduces origin load)
-- **Total Savings**: 80-90% on compute costs
-
-### **Cost Optimization Strategies**
-1. **High CloudFront Cache Hit Ratios**: Most requests served from edge
-2. **Efficient FFmpeg Commands**: Stream copy vs re-encoding
-3. **S3 Regional Alignment**: Minimize cross-region transfer costs
-4. **Proxy File Strategy**: Dual-purpose for review and export
-
----
+Temp clips are generated by `PlaybackCache.Worker` on the `:temp_clips` Oban queue:
+- FFmpeg stream-copies segments from CloudFront proxy URLs to local `/tmp/clip_{id}_{timestamp}.mp4`
+- `CleanupWorker` runs every 4 hours: expires files >15 min old, enforces 1GB LRU limit, monitors disk space (500MB threshold)
+- Configuration in `config/config.exs` under `:heaters, :playback_cache`
 
 ## Deployment Checklist
 
-### **Pre-Deployment**
-- [ ] FFmpeg available in Docker image
-- [ ] Database MECE constraints applied
-- [ ] Environment variables configured
+### Pre-Deployment
+- [ ] FFmpeg and Python available in Docker image
+- [ ] Fly.io app created, `FLY_API_TOKEN` set
+- [ ] All environment variables configured as Fly secrets
 - [ ] S3 bucket and CloudFront distribution created
-- [ ] DNS configured for custom domain (optional)
+- [ ] Database migrations applied
 
-### **Initial Deployment**
-- [ ] Deploy Phoenix app to Fly.io
-- [ ] Configure CloudFront origin and cache behaviors
-- [ ] Test streaming endpoints with curl/browser
-- [ ] Verify FFmpeg process pool monitoring
-- [ ] Check CloudFront cache hit/miss ratios
+### Post-Deployment
+- [ ] Verify health check endpoint responds
+- [ ] Confirm Oban cron jobs are scheduling (check logs for Dispatcher)
+- [ ] Test clip playback in review interface
+- [ ] Trigger an encoding job and verify FLAME machine spawns (check `fly machines list`)
+- [ ] Monitor Oban job queues for failures
+- [ ] Verify S3/CloudFront connectivity from FLAME children
 
-### **Production Monitoring**
-- [ ] Set up CloudWatch alarms for CloudFront metrics
-- [ ] Monitor application logs for FFmpeg performance
-- [ ] Track database constraint violations
-- [ ] Monitor S3 request patterns and costs
-- [ ] Set up alerting for 429 rate limiting responses
+## Troubleshooting
 
-### **Optional FLAME Migration**
-- [ ] Implement FLAME runners for FFmpeg processing
-- [ ] Test ephemeral machine lifecycle management
-- [ ] Migrate process pool logic to FLAME patterns
-- [ ] Monitor cost savings and performance impact
-- [ ] Implement graceful fallback to always-on if needed
+**Clip playback not working:**
+- Check Oban `:temp_clips` queue is running
+- Verify proxy files exist in S3 for the source video
+- Review `PlaybackCache.Worker` logs for FFmpeg errors
 
----
+**FLAME machines not spawning:**
+- Verify `FLY_API_TOKEN` is set and valid
+- Check that the FLAME pool is in the supervision tree
+- Confirm `FLAME.Parent.get()` returns `nil` on the parent (not a FLAME child itself)
+- Review Fly.io machine logs: `fly logs` or `fly machines list`
 
-## Troubleshooting Guide
+**FLAME children failing:**
+- Check that all required env vars are forwarded in the `:env` map
+- Verify S3/CloudFront connectivity from the FLAME machine region
+- Confirm DB pool size is reduced (`POOL_SIZE=1`) to avoid connection exhaustion
 
-### **Common Issues**
+**Oban jobs not running:**
+- Confirm `OBAN_QUEUES` env var includes the needed queues
+- Check that the `default` queue machine is running (required for cron scheduling)
 
-**FFmpeg Process Issues:**
-- Check `HeatersWeb.FFmpegPool.detailed_status()` for utilization
-- Monitor memory usage growth over time
-- Verify zombie process cleanup in logs
-
-**CloudFront Caching Issues:**
-- Ensure cache policy supports Range headers
-- Check cache-control headers from Phoenix responses
-- Verify URL versioning for cache busting
-
-**Performance Issues:**
-- Monitor FFmpeg startup latency in logs
-- Check S3 request patterns for efficiency
-- Verify database query performance for clip lookups
-
-**Cost Issues:**
-- Analyze CloudFront bandwidth vs cache hit ratios
-- Review S3 request patterns and pricing tier
-- Consider FLAME migration for significant cost reduction
-
-### **Diagnostic Commands**
-```bash
-# Check FFmpeg processes
-fly ssh console -c "ps aux | grep ffmpeg"
-
-# Monitor resource usage
-fly ssh console -c "top"
-
-# View application logs
-fly logs --app your-app-name
-
-# Test streaming endpoint
-curl -I https://your-domain/videos/clips/123/stream/v1
-```
-
----
-
-## Future Enhancements
-
-### **Immediate Opportunities**
-- Cut point manipulation UI with instant streaming updates
-- CloudFront cache warming for popular clips
-- Advanced keyframe leakage handling (precision mode)
-- Multi-region deployment for global performance
-
-### **Advanced Features**
-- Sequential clip playback (foundation already implemented)
-- Real-time clip collaboration with LiveView
-- Advanced performance analytics and optimization
-- Integration with video analytics and ML pipelines
-
----
-
-## Support & Maintenance
-
-### **Regular Maintenance Tasks**
-- Monitor CloudFront cost trends and optimization opportunities
-- Review FFmpeg process pool configuration based on usage patterns
-- Update Docker images for security patches
-- Analyze database performance and query optimization
-
-### **Scaling Considerations**
-- FLAME migration becomes more cost-effective at higher usage
-- Consider dedicated CPU machines for consistent performance
-- Multi-region deployment for global user base
-- Advanced caching strategies for frequently accessed clips
-
-This deployment guide provides a clear path from development to production, with optional optimization phases based on usage patterns and cost requirements.
+**Disk space issues:**
+- `CleanupWorker` logs cache statistics every 4 hours
+- Adjust `:playback_cache` config if temp files accumulate
