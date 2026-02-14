@@ -215,24 +215,21 @@ defmodule Heaters.Media.Cuts.Operations do
       "Creating initial cuts from scene detection: #{length(cut_points)} cuts for source_video_id #{source_video_id}"
     )
 
-    case Repo.transaction(fn ->
-           with {:ok, cuts} <-
-                  create_cuts_from_scene_detection(source_video_id, cut_points, metadata),
-                {:ok, clips} <- create_clips_from_cuts(source_video_id, cuts) do
-             Logger.info(
-               "Successfully created #{length(cuts)} cuts and #{length(clips)} clips for source_video_id #{source_video_id}"
-             )
+    Repo.transaction(fn ->
+      with {:ok, cuts} <-
+             create_cuts_from_scene_detection(source_video_id, cut_points, metadata),
+           {:ok, clips} <- create_clips_from_cuts(source_video_id, cuts) do
+        Logger.info(
+          "Successfully created #{length(cuts)} cuts and #{length(clips)} clips for source_video_id #{source_video_id}"
+        )
 
-             {cuts, clips}
-           else
-             {:error, reason} ->
-               Logger.error("Failed to create initial cuts: #{reason}")
-               Repo.rollback(reason)
-           end
-         end) do
-      {:ok, {cuts, clips}} -> {:ok, {cuts, clips}}
-      {:error, reason} -> {:error, reason}
-    end
+        {cuts, clips}
+      else
+        {:error, reason} ->
+          Logger.error("Failed to create initial cuts: #{reason}")
+          Repo.rollback(reason)
+      end
+    end)
   end
 
   ## Private Implementation Functions
@@ -240,63 +237,54 @@ defmodule Heaters.Media.Cuts.Operations do
   @spec execute_add_cut(integer(), integer(), integer(), keyword()) ::
           {:ok, {Clip.t(), Clip.t()}} | {:error, String.t()}
   defp execute_add_cut(source_video_id, frame_number, user_id, opts) do
-    case Repo.transaction(fn ->
-           source_video = Repo.get!(Heaters.Media.Video, source_video_id)
+    Repo.transaction(fn ->
+      source_video = Repo.get!(Heaters.Media.Video, source_video_id)
 
-           with {:ok, cut} <-
-                  create_cut(source_video_id, frame_number, source_video, user_id, opts),
-                {:ok, containing_clip} <- find_containing_clip(source_video_id, frame_number),
-                {:ok, {first_clip, second_clip}} <-
-                  split_clip_at_cut(containing_clip, cut, user_id, opts) do
-             {first_clip, second_clip}
-           else
-             {:error, reason} -> Repo.rollback(reason)
-           end
-         end) do
-      {:ok, {first_clip, second_clip}} -> {:ok, {first_clip, second_clip}}
-      {:error, reason} -> {:error, reason}
-    end
+      with {:ok, cut} <-
+             create_cut(source_video_id, frame_number, source_video, user_id, opts),
+           {:ok, containing_clip} <- find_containing_clip(source_video_id, frame_number),
+           {:ok, {first_clip, second_clip}} <-
+             split_clip_at_cut(containing_clip, cut, user_id, opts) do
+        {first_clip, second_clip}
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
   end
 
   @spec execute_remove_cut(integer(), integer(), integer(), keyword()) ::
           {:ok, Clip.t()} | {:error, String.t()}
   defp execute_remove_cut(source_video_id, frame_number, user_id, opts) do
-    case Repo.transaction(fn ->
-           with {:ok, cut} <- find_cut_to_remove(source_video_id, frame_number),
-                {:ok, {left_clip, right_clip}} <-
-                  find_adjacent_clips(source_video_id, frame_number),
-                {:ok, merged_clip} <- merge_clips(left_clip, right_clip, user_id, opts),
-                :ok <- delete_cut(cut) do
-             merged_clip
-           else
-             {:error, reason} -> Repo.rollback(reason)
-           end
-         end) do
-      {:ok, merged_clip} -> {:ok, merged_clip}
-      {:error, reason} -> {:error, reason}
-    end
+    Repo.transaction(fn ->
+      with {:ok, cut} <- find_cut_to_remove(source_video_id, frame_number),
+           {:ok, {left_clip, right_clip}} <-
+             find_adjacent_clips(source_video_id, frame_number),
+           {:ok, merged_clip} <- merge_clips(left_clip, right_clip, user_id, opts),
+           :ok <- delete_cut(cut) do
+        merged_clip
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
   end
 
   @spec execute_move_cut(integer(), integer(), integer(), integer(), keyword()) ::
           {:ok, {Clip.t(), Clip.t()}} | {:error, String.t()}
   defp execute_move_cut(source_video_id, old_frame, new_frame, user_id, opts) do
-    case Repo.transaction(fn ->
-           source_video = Repo.get!(Heaters.Media.Video, source_video_id)
+    Repo.transaction(fn ->
+      source_video = Repo.get!(Heaters.Media.Video, source_video_id)
 
-           with {:ok, cut} <- find_cut_to_move(source_video_id, old_frame),
-                {:ok, {left_clip, right_clip}} <- find_adjacent_clips(source_video_id, old_frame),
-                {:ok, updated_cut} <-
-                  update_cut_position(cut, new_frame, source_video, user_id, opts),
-                {:ok, {updated_left, updated_right}} <-
-                  update_adjacent_clips(left_clip, right_clip, updated_cut, user_id, opts) do
-             {updated_left, updated_right}
-           else
-             {:error, reason} -> Repo.rollback(reason)
-           end
-         end) do
-      {:ok, {updated_left, updated_right}} -> {:ok, {updated_left, updated_right}}
-      {:error, reason} -> {:error, reason}
-    end
+      with {:ok, cut} <- find_cut_to_move(source_video_id, old_frame),
+           {:ok, {left_clip, right_clip}} <- find_adjacent_clips(source_video_id, old_frame),
+           {:ok, updated_cut} <-
+             update_cut_position(cut, new_frame, source_video, user_id, opts),
+           {:ok, {updated_left, updated_right}} <-
+             update_adjacent_clips(left_clip, right_clip, updated_cut, user_id, opts) do
+        {updated_left, updated_right}
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
   end
 
   @spec create_cuts_from_scene_detection(integer(), [map()], map()) ::
@@ -321,7 +309,7 @@ defmodule Heaters.Media.Cuts.Operations do
         end)
 
       # Process results using pattern matching
-      process_cut_results(cuts)
+      collect_results(cuts)
     end
   end
 
@@ -338,8 +326,7 @@ defmodule Heaters.Media.Cuts.Operations do
         create_clip_from_segment(segment, index)
       end)
 
-    # Process results using pattern matching
-    process_clip_results(clips)
+    collect_results(clips)
   end
 
   @spec create_cut(integer(), integer(), Heaters.Media.Video.t(), integer(), keyword()) ::
@@ -751,42 +738,18 @@ defmodule Heaters.Media.Cuts.Operations do
     end
   end
 
-  # Helper functions for processing operation results using pattern matching
-  @spec process_cut_results([{:ok, Cut.t()} | {:error, String.t()}]) ::
-          {:ok, [Cut.t()]} | {:error, String.t()}
-  defp process_cut_results(results) do
-    collect_cut_results(results, [], [])
-  end
+  # Collect a list of {:ok, item} | {:error, reason} into {:ok, items} | {:error, reason}.
+  # Returns the first error encountered.
+  @spec collect_results([{:ok, any()} | {:error, any()}]) :: {:ok, [any()]} | {:error, any()}
+  defp collect_results(results), do: collect_results(results, [], [])
 
-  @spec process_clip_results([{:ok, Clip.t()} | {:error, String.t()}]) ::
-          {:ok, [Clip.t()]} | {:error, String.t()}
-  defp process_clip_results(results) do
-    collect_clip_results(results, [], [])
-  end
+  defp collect_results([], items, []), do: {:ok, Enum.reverse(items)}
+  defp collect_results([], _items, [first_error | _]), do: {:error, first_error}
+  defp collect_results([{:ok, item} | rest], items, errors),
+    do: collect_results(rest, [item | items], errors)
 
-  # Pattern matching for cut results collection
-  defp collect_cut_results([], cuts, []), do: {:ok, Enum.reverse(cuts)}
-  defp collect_cut_results([], _cuts, [first_error | _]), do: {:error, first_error}
-
-  defp collect_cut_results([{:ok, cut} | rest], cuts, errors) do
-    collect_cut_results(rest, [cut | cuts], errors)
-  end
-
-  defp collect_cut_results([{:error, error} | rest], cuts, errors) do
-    collect_cut_results(rest, cuts, [error | errors])
-  end
-
-  # Pattern matching for clip results collection
-  defp collect_clip_results([], clips, []), do: {:ok, Enum.reverse(clips)}
-  defp collect_clip_results([], _clips, [first_error | _]), do: {:error, first_error}
-
-  defp collect_clip_results([{:ok, clip} | rest], clips, errors) do
-    collect_clip_results(rest, [clip | clips], errors)
-  end
-
-  defp collect_clip_results([{:error, error} | rest], clips, errors) do
-    collect_clip_results(rest, clips, [error | errors])
-  end
+  defp collect_results([{:error, error} | rest], items, errors),
+    do: collect_results(rest, items, [error | errors])
 
   # (no-op helper removed)
 end

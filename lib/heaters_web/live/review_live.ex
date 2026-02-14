@@ -1,12 +1,12 @@
 defmodule HeatersWeb.ReviewLive do
   use HeatersWeb, :live_view
+  import Ecto.Query, warn: false
   import Phoenix.LiveView, only: [put_flash: 3, clear_flash: 1, push_event: 3, push_patch: 2]
-
-  # Components / helpers
   import HeatersWeb.ClipPlayer, only: [clip_player: 1]
 
   alias Heaters.Media.Clip
   alias Heaters.Media.Cuts
+  alias Heaters.Repo
   alias Heaters.Review.Actions, as: ClipActions
   alias Heaters.Review.Queue, as: ClipReview
   alias Heaters.Storage.PlaybackCache.Worker, as: PlaybackCacheWorker
@@ -398,53 +398,33 @@ defmodule HeatersWeb.ReviewLive do
     # by trying to generate the URL - if it fails or is loading, queue background generation.
     # Oban uniqueness constraints prevent duplicate jobs for the same clip.
     case ClipUrls.get_video_url(clip, clip.source_video || %{}) do
-      {:error, _reason} ->
-        # Queue background generation via Oban worker (with uniqueness constraints)
-        job_result =
-          %{clip_id: clip.id}
-          |> PlaybackCacheWorker.new()
-          |> Oban.insert()
-
-        case job_result do
-          {:ok, %Oban.Job{}} ->
-            :ok
-
-          {:error, %Ecto.Changeset{errors: [unique: _]}} ->
-            :ok
-
-          {:error, reason} ->
-            Logger.warning(
-              "ReviewLive: Failed to queue job for clip #{clip.id}: #{inspect(reason)}"
-            )
-        end
-
-      {:loading, nil} ->
-        # Temp clip needs to be generated - queue background generation (with uniqueness constraints)
-        job_result =
-          %{clip_id: clip.id}
-          |> PlaybackCacheWorker.new()
-          |> Oban.insert()
-
-        case job_result do
-          {:ok, %Oban.Job{}} ->
-            :ok
-
-          {:error, %Ecto.Changeset{errors: [unique: _]}} ->
-            :ok
-
-          {:error, reason} ->
-            Logger.warning(
-              "ReviewLive: Failed to queue job for clip #{clip.id}: #{inspect(reason)}"
-            )
-        end
-
       {:ok, _url, _type} ->
         # Already available, no need to prefetch
         :ok
+
+      _needs_generation ->
+        # Not yet available (error or loading) - queue background generation
+        queue_background_generation(clip)
     end
   rescue
-    # Gracefully handle any errors in prefetch - don't break the main flow
-    _error -> :ok
+    error ->
+      Logger.debug("ReviewLive: Prefetch failed for clip #{clip.id}: #{inspect(error)}")
+      :ok
+  end
+
+  defp queue_background_generation(clip) do
+    case PlaybackCacheWorker.new(%{clip_id: clip.id}) |> Oban.insert() do
+      {:ok, %Oban.Job{}} ->
+        :ok
+
+      {:error, %Ecto.Changeset{errors: [unique: _]}} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "ReviewLive: Failed to queue job for clip #{clip.id}: #{inspect(reason)}"
+        )
+    end
   end
 
   # Pre-warm additional clips from the same source videos for sequential review
@@ -471,11 +451,6 @@ defmodule HeatersWeb.ReviewLive do
   end
 
   defp prefetch_next_clips_for_video(source_video_id, prefetch_count, exclude_clip_ids) do
-    # Get the next clips for this source video in review order
-    # Use a direct query to avoid loading full associations for prefetch
-    import Ecto.Query
-    alias Heaters.Repo
-
     next_clips =
       from(c in Heaters.Media.Clip,
         join: sv in assoc(c, :source_video),
@@ -497,8 +472,9 @@ defmodule HeatersWeb.ReviewLive do
     # Note: Oban uniqueness constraints prevent duplicate jobs for same clip_id
     Enum.each(next_clips, &maybe_trigger_background_generation/1)
   rescue
-    # Gracefully handle any database errors in prefetch
-    _error -> :ok
+    error ->
+      Logger.debug("ReviewLive: Sequential prewarming failed: #{inspect(error)}")
+      :ok
   end
 
   # -------------------------------------------------------------------------
@@ -676,9 +652,6 @@ defmodule HeatersWeb.ReviewLive do
   defp merge_available?(%{current: %Clip{start_frame: 0}}), do: false
 
   defp merge_available?(%{current: %Clip{} = clip}) do
-    import Ecto.Query
-    alias Heaters.Repo
-
     # Check if there's a preceding clip that ends where this clip starts
     preceding_clip_exists =
       from(c in Clip,
@@ -714,9 +687,6 @@ defmodule HeatersWeb.ReviewLive do
   defp group_available?(%{current: %Clip{start_frame: 0}}), do: false
 
   defp group_available?(%{current: %Clip{} = clip}) do
-    import Ecto.Query
-    alias Heaters.Repo
-
     # Check if there's a preceding clip that ends where this clip starts
     from(c in Clip,
       where:

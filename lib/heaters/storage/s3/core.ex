@@ -26,13 +26,6 @@ defmodule Heaters.Storage.S3.Core do
   alias ExAws.S3.Upload, as: S3Upload
   require Logger
 
-  # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
-  #
-  # JUSTIFICATION: PyRunner requires DEV_DATABASE_URL and DEV_S3_BUCKET_NAME environment
-  # variables. When not set, PyRunner always fails, making success patterns unreachable.
-  # In configured environments, this function will succeed normally.
-  @dialyzer {:nowarn_function, [upload_file_with_progress: 3]}
-
   # S3 limit for delete_objects operation
   @max_delete_batch_size 1000
 
