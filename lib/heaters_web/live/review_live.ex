@@ -1,6 +1,6 @@
 defmodule HeatersWeb.ReviewLive do
   use HeatersWeb, :live_view
-  import Ecto.Query, warn: false
+  import Ecto.Query, warn: false, except: [update: 3]
   import Phoenix.LiveView, only: [put_flash: 3, clear_flash: 1, push_event: 3, push_patch: 2]
   import HeatersWeb.ClipPlayer, only: [clip_player: 1]
 
@@ -421,9 +421,7 @@ defmodule HeatersWeb.ReviewLive do
         :ok
 
       {:error, reason} ->
-        Logger.warning(
-          "ReviewLive: Failed to queue job for clip #{clip.id}: #{inspect(reason)}"
-        )
+        Logger.warning("ReviewLive: Failed to queue job for clip #{clip.id}: #{inspect(reason)}")
     end
   end
 

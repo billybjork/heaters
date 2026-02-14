@@ -130,21 +130,17 @@ defmodule Heaters.Processing.Support.PythonRunner do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
     pubsub_topic = Keyword.get(opts, :pubsub_topic)
 
+    with {:ok, json_args} <- encode_args(args),
+         {:ok, env} <- build_env(),
+         {:ok, port} <- open_port(task_name, json_args, env) do
+      handle_port_messages(port, [], pubsub_topic, timeout)
+    end
+  end
+
+  defp encode_args(args) do
     case Jason.encode(args) do
       {:ok, json_args} ->
-        case build_env() do
-          {:ok, env} ->
-            case open_port(task_name, json_args, env) do
-              {:ok, port} ->
-                handle_port_messages(port, [], pubsub_topic, timeout)
-
-              {:error, reason} ->
-                {:error, reason}
-            end
-
-          {:error, reason} ->
-            {:error, reason}
-        end
+        {:ok, json_args}
 
       {:error, %Jason.EncodeError{message: msg}} ->
         {:error, "Failed to encode arguments as JSON: #{msg}"}

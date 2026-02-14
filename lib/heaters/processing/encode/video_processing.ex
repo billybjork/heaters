@@ -400,21 +400,32 @@ defmodule Heaters.Processing.Encode.VideoProcessing do
   @spec parse_and_log_progress(String.t(), float(), String.t(), String.t(), integer()) ::
           integer()
   defp parse_and_log_progress(line, duration, task_name, operation_name, last_progress) do
-    if String.contains?(line, "out_time=") && duration > 0 do
-      case extract_time_from_progress_line(line) do
-        {:ok, current_seconds} ->
-          progress = min(100, trunc(current_seconds / duration * 100))
+    should_parse = String.contains?(line, "out_time=") && duration > 0
 
-          if progress > 0 && progress >= last_progress + 10 && rem(progress, 10) == 0 do
-            Logger.info("#{operation_name}: #{task_name} #{progress}% complete")
-            progress
-          else
-            last_progress
-          end
+    if should_parse do
+      do_parse_progress(line, duration, task_name, operation_name, last_progress)
+    else
+      last_progress
+    end
+  end
 
-        :error ->
-          last_progress
-      end
+  defp do_parse_progress(line, duration, task_name, operation_name, last_progress) do
+    case extract_time_from_progress_line(line) do
+      {:ok, current_seconds} ->
+        maybe_log_progress(current_seconds, duration, task_name, operation_name, last_progress)
+
+      :error ->
+        last_progress
+    end
+  end
+
+  defp maybe_log_progress(current_seconds, duration, task_name, operation_name, last_progress) do
+    progress = min(100, trunc(current_seconds / duration * 100))
+    should_log = progress > 0 && progress >= last_progress + 10 && rem(progress, 10) == 0
+
+    if should_log do
+      Logger.info("#{operation_name}: #{task_name} #{progress}% complete")
+      progress
     else
       last_progress
     end

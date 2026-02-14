@@ -38,61 +38,69 @@ defmodule Heaters.Processing.Encode.MetadataExtraction do
   def extract_keyframe_offsets(video_path, operation_name) do
     Logger.debug("#{operation_name}: Extracting keyframe offsets from #{video_path}")
 
-    try do
-      case System.cmd("ffprobe", [
-             "-v",
-             "quiet",
-             "-select_streams",
-             "v:0",
-             "-show_entries",
-             "frame=key_frame,pkt_pos",
-             "-print_format",
-             "json",
-             video_path
-           ]) do
-        {output, 0} ->
-          case Jason.decode(output) do
-            {:ok, %{"frames" => frames}} ->
-              offsets =
-                frames
-                |> Enum.filter(fn frame -> Map.get(frame, "key_frame") == 1 end)
-                |> Enum.map(fn frame ->
-                  case Map.get(frame, "pkt_pos") do
-                    pos when is_binary(pos) ->
-                      case Integer.parse(pos) do
-                        {int_pos, _} -> int_pos
-                        _ -> nil
-                      end
+    case run_ffprobe_keyframes(video_path) do
+      {:ok, output} ->
+        parse_keyframe_output(output, operation_name)
 
-                    _ ->
-                      nil
-                  end
-                end)
-                |> Enum.reject(&is_nil/1)
-                |> Enum.sort()
-
-              Logger.info("#{operation_name}: Extracted #{length(offsets)} keyframe offsets")
-              offsets
-
-            {:error, reason} ->
-              Logger.warning(
-                "#{operation_name}: Failed to parse keyframe JSON: #{inspect(reason)}"
-              )
-
-              []
-          end
-
-        {_output, exit_code} ->
-          Logger.warning("#{operation_name}: ffprobe failed with exit code #{exit_code}")
-          []
-      end
-    rescue
-      e ->
-        Logger.warning(
-          "#{operation_name}: Exception extracting keyframes: #{Exception.message(e)}"
-        )
-
+      {:error, exit_code} ->
+        Logger.warning("#{operation_name}: ffprobe failed with exit code #{exit_code}")
         []
+    end
+  rescue
+    e ->
+      Logger.warning("#{operation_name}: Exception extracting keyframes: #{Exception.message(e)}")
+
+      []
+  end
+
+  defp run_ffprobe_keyframes(video_path) do
+    case System.cmd("ffprobe", [
+           "-v",
+           "quiet",
+           "-select_streams",
+           "v:0",
+           "-show_entries",
+           "frame=key_frame,pkt_pos",
+           "-print_format",
+           "json",
+           video_path
+         ]) do
+      {output, 0} -> {:ok, output}
+      {_output, exit_code} -> {:error, exit_code}
+    end
+  end
+
+  defp parse_keyframe_output(output, operation_name) do
+    case Jason.decode(output) do
+      {:ok, %{"frames" => frames}} ->
+        offsets = extract_offsets_from_frames(frames)
+        Logger.info("#{operation_name}: Extracted #{length(offsets)} keyframe offsets")
+        offsets
+
+      {:error, reason} ->
+        Logger.warning("#{operation_name}: Failed to parse keyframe JSON: #{inspect(reason)}")
+        []
+    end
+  end
+
+  defp extract_offsets_from_frames(frames) do
+    frames
+    |> Enum.filter(fn frame -> Map.get(frame, "key_frame") == 1 end)
+    |> Enum.map(&parse_frame_offset/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.sort()
+  end
+
+  defp parse_frame_offset(frame) do
+    case Map.get(frame, "pkt_pos") do
+      pos when is_binary(pos) ->
+        case Integer.parse(pos) do
+          {int_pos, _} -> int_pos
+          _ -> nil
+        end
+
+      _ ->
+        nil
     end
   end
 

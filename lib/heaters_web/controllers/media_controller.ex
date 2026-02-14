@@ -135,34 +135,48 @@ defmodule HeatersWeb.MediaController do
 
     case get_req_header(conn, "range") do
       ["bytes=" <> spec] ->
-        case parse_range_spec(spec, file_size) do
-          {:ok, {start_pos, end_pos}} ->
-            length = end_pos - start_pos + 1
-
-            conn
-            |> put_resp_header("content-range", "bytes #{start_pos}-#{end_pos}/#{file_size}")
-            |> put_resp_header("content-length", Integer.to_string(length))
-            |> case do
-              c when c.method == "HEAD" -> send_resp(c, 206, "")
-              c -> Plug.Conn.send_file(c, 206, file_path, start_pos, length)
-            end
-
-          :error ->
-            # Invalid range - return 416 Range Not Satisfiable
-            conn
-            |> put_resp_header("content-range", "bytes */#{file_size}")
-            |> send_resp(416, "Range Not Satisfiable")
-        end
+        handle_range_request(conn, spec, file_path, file_size)
 
       _ ->
         # No range header - serve whole file
         conn
         |> put_resp_header("content-length", Integer.to_string(file_size))
-        |> case do
-          c when c.method == "HEAD" -> send_resp(c, 200, "")
-          c -> send_file(c, 200, file_path)
-        end
+        |> send_file_or_head(200, file_path)
     end
+  end
+
+  defp handle_range_request(conn, spec, file_path, file_size) do
+    case parse_range_spec(spec, file_size) do
+      {:ok, {start_pos, end_pos}} ->
+        length = end_pos - start_pos + 1
+
+        conn
+        |> put_resp_header("content-range", "bytes #{start_pos}-#{end_pos}/#{file_size}")
+        |> put_resp_header("content-length", Integer.to_string(length))
+        |> send_partial_file_or_head(file_path, start_pos, length)
+
+      :error ->
+        # Invalid range - return 416 Range Not Satisfiable
+        conn
+        |> put_resp_header("content-range", "bytes */#{file_size}")
+        |> send_resp(416, "Range Not Satisfiable")
+    end
+  end
+
+  defp send_file_or_head(%{method: "HEAD"} = conn, status, _file_path) do
+    send_resp(conn, status, "")
+  end
+
+  defp send_file_or_head(conn, status, file_path) do
+    send_file(conn, status, file_path)
+  end
+
+  defp send_partial_file_or_head(%{method: "HEAD"} = conn, _file_path, _offset, _length) do
+    send_resp(conn, 206, "")
+  end
+
+  defp send_partial_file_or_head(conn, file_path, offset, length) do
+    Plug.Conn.send_file(conn, 206, file_path, offset, length)
   end
 
   # Parse HTTP Range header specifications

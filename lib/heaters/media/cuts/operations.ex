@@ -745,6 +745,7 @@ defmodule Heaters.Media.Cuts.Operations do
 
   defp collect_results([], items, []), do: {:ok, Enum.reverse(items)}
   defp collect_results([], _items, [first_error | _]), do: {:error, first_error}
+
   defp collect_results([{:ok, item} | rest], items, errors),
     do: collect_results(rest, [item | items], errors)
 

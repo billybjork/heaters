@@ -105,55 +105,26 @@ defmodule Heaters.Media.Artifacts do
       "Artifacts: Creating #{length(artifacts_data)} #{artifact_type} artifacts for clip_id: #{clip_id}"
     )
 
-    normalized_type =
-      cond do
-        is_atom(artifact_type) ->
-          artifact_type
-
-        is_binary(artifact_type) ->
-          try do
-            String.to_existing_atom(artifact_type)
-          rescue
-            _ -> :keyframe
-          end
-
-        true ->
-          :keyframe
-      end
+    normalized_type = normalize_artifact_type(artifact_type)
 
     artifacts_attrs =
-      artifacts_data
-      |> Enum.map(fn artifact_data ->
-        build_artifact_attrs(clip_id, normalized_type, artifact_data)
-      end)
+      Enum.map(artifacts_data, &build_artifact_attrs(clip_id, normalized_type, &1))
 
-    # Validate all artifacts before bulk insert
     validated_changesets = Enum.map(artifacts_attrs, &Artifact.changeset(%Artifact{}, &1))
 
-    case validate_artifact_changesets(validated_changesets) do
-      :ok ->
-        case Repo.insert_all(Artifact, artifacts_attrs, returning: true) do
-          {count, artifacts} when count > 0 ->
-            Logger.info(
-              "Artifacts: Successfully created #{count} #{artifact_type} artifacts for clip_id: #{clip_id}"
-            )
-
-            {:ok, artifacts}
-
-          {0, _} ->
-            Logger.error(
-              "Artifacts: Failed to create #{artifact_type} artifacts for clip_id: #{clip_id}"
-            )
-
-            {:error, "No artifacts were created"}
-        end
-
-      {:error, errors} ->
+    with :ok <- validate_artifact_changesets(validated_changesets),
+         {:ok, artifacts} <- do_insert_artifacts(artifacts_attrs, artifact_type, clip_id) do
+      {:ok, artifacts}
+    else
+      {:error, errors} when is_list(errors) ->
         Logger.error(
           "Artifacts: Validation failed for #{artifact_type} artifacts for clip_id: #{clip_id}. Errors: #{inspect(errors)}"
         )
 
         {:error, "Validation failed: #{format_artifact_validation_errors(errors)}"}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   rescue
     e ->
@@ -162,6 +133,32 @@ defmodule Heaters.Media.Artifacts do
       )
 
       {:error, Exception.message(e)}
+  end
+
+  defp normalize_artifact_type(artifact_type) when is_atom(artifact_type), do: artifact_type
+
+  defp normalize_artifact_type(artifact_type) when is_binary(artifact_type) do
+    String.to_existing_atom(artifact_type)
+  rescue
+    _ -> :keyframe
+  end
+
+  defp do_insert_artifacts(artifacts_attrs, artifact_type, clip_id) do
+    case Repo.insert_all(Artifact, artifacts_attrs, returning: true) do
+      {count, artifacts} when count > 0 ->
+        Logger.info(
+          "Artifacts: Successfully created #{count} #{artifact_type} artifacts for clip_id: #{clip_id}"
+        )
+
+        {:ok, artifacts}
+
+      {0, _} ->
+        Logger.error(
+          "Artifacts: Failed to create #{artifact_type} artifacts for clip_id: #{clip_id}"
+        )
+
+        {:error, "No artifacts were created"}
+    end
   end
 
   # Private Helper Functions

@@ -442,15 +442,20 @@ defmodule Heaters.Processing.Support.FFmpeg.Runner do
   @spec extract_keyframes_by_percentage(String.t(), String.t(), [float()], keyword()) ::
           {:ok, [map()]} | {:error, any()}
   def extract_keyframes_by_percentage(video_path, output_dir, percentages, opts \\ []) do
-    with {:ok, metadata} <- get_video_metadata(video_path) do
-      duration = Map.get(metadata, :duration, 0.0)
+    with {:ok, metadata} <- get_video_metadata(video_path),
+         {:ok, duration} <- validate_duration(metadata) do
+      timestamps = Enum.map(percentages, fn pct -> duration * pct end)
+      extract_keyframes_by_timestamp(video_path, output_dir, timestamps, opts)
+    end
+  end
 
-      if duration > 0 do
-        timestamps = Enum.map(percentages, fn pct -> duration * pct end)
-        extract_keyframes_by_timestamp(video_path, output_dir, timestamps, opts)
-      else
-        {:error, "Invalid video duration: #{duration}"}
-      end
+  defp validate_duration(metadata) do
+    duration = Map.get(metadata, :duration, 0.0)
+
+    if duration > 0 do
+      {:ok, duration}
+    else
+      {:error, "Invalid video duration: #{duration}"}
     end
   end
 
