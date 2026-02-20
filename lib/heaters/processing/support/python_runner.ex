@@ -297,8 +297,8 @@ defmodule Heaters.Processing.Support.PythonRunner do
   defp build_env do
     app_env = Application.get_env(:heaters, :app_env) || "development"
 
-    with {:ok, db_url} <- fetch_env(db_url_var(app_env)),
-         {:ok, bucket} <- fetch_env(s3_bucket_var(app_env)) do
+    with {:ok, db_url} <- fetch_first_env(db_url_vars(app_env)),
+         {:ok, bucket} <- fetch_first_env(s3_bucket_vars(app_env)) do
       env =
         [
           {"APP_ENV", app_env},
@@ -324,21 +324,21 @@ defmodule Heaters.Processing.Support.PythonRunner do
     end
   end
 
-  @spec fetch_env(String.t()) :: {:ok, String.t()} | {:error, String.t()}
-  defp fetch_env(var) do
-    case System.get_env(var) do
-      nil -> {:error, "Environment variable #{var} not set"}
+  @spec fetch_first_env([String.t()]) :: {:ok, String.t()} | {:error, String.t()}
+  defp fetch_first_env(vars) when is_list(vars) do
+    case Enum.find_value(vars, fn var -> System.get_env(var) end) do
+      nil -> {:error, "Environment variable #{Enum.join(vars, " or ")} not set"}
       val -> {:ok, val}
     end
   end
 
-  @spec db_url_var(String.t()) :: String.t()
-  defp db_url_var("production"), do: "PROD_DATABASE_URL"
-  defp db_url_var(_), do: "DEV_DATABASE_URL"
+  @spec db_url_vars(String.t()) :: [String.t()]
+  defp db_url_vars("production"), do: ["PROD_DATABASE_URL", "DATABASE_URL"]
+  defp db_url_vars(_), do: ["DEV_DATABASE_URL", "DATABASE_URL"]
 
-  @spec s3_bucket_var(String.t()) :: String.t()
-  defp s3_bucket_var("production"), do: "PROD_S3_BUCKET_NAME"
-  defp s3_bucket_var(_), do: "DEV_S3_BUCKET_NAME"
+  @spec s3_bucket_vars(String.t()) :: [String.t()]
+  defp s3_bucket_vars("production"), do: ["PROD_S3_BUCKET_NAME", "S3_BUCKET_NAME"]
+  defp s3_bucket_vars(_), do: ["DEV_S3_BUCKET_NAME", "S3_BUCKET_NAME"]
 
   # Helper function to explicitly show Dialyzer that success is possible
   @spec can_return_success() :: {:ok, map()}

@@ -1,324 +1,162 @@
 import Config
 
-# Configure phoenix_html to move CSRF tokens into the cookie session
-# to protect Nerves devices from CSRF token rotation attacks.
-# Disable if you prefer to store tokens in the HTML.
-# config :phoenix_html, :csrf_tokens_via_cookie_session, true # Keep if you have this line
-
 if System.get_env("PHX_SERVER") do
   config :heaters, HeatersWeb.Endpoint, server: true
 end
 
-# === S3/CloudFront Configuration (based on APP_ENV) ===
-# Skip external service configuration for test environment
-# APP_ENV is expected to be "development" for local Docker Compose runs (from .env)
-# and "production" for Render deployments (set in Render service environment).
+runtime_mode = config_env()
 
-# Check if we're running a database-only operation (migrations, etc.)
-# These operations don't need CloudFront configuration
-is_database_operation =
-  System.argv()
-  |> Enum.any?(fn arg ->
-    String.contains?(arg, "ecto.") or
-      String.contains?(arg, "migrate") or
-      String.contains?(arg, "rollback") or
-      String.contains?(arg, "setup") or
-      String.contains?(arg, "create") or
-      String.contains?(arg, "drop")
-  end)
+app_env =
+  case runtime_mode do
+    :prod -> "production"
+    :test -> "test"
+    _ -> "development"
+  end
 
-if config_env() != :test and not is_database_operation do
-  app_env_string = System.get_env("APP_ENV")
+config :heaters, :app_env, app_env
 
-  # Make APP_ENV available in application config if needed
-  config :heaters, :app_env, app_env_string
-
-  # Configure Cloudfront Domain
-  current_cloudfront_domain =
-    case app_env_string do
-      "development" ->
-        # In local dev (docker-compose with APP_ENV="development"), expect DEV_CLOUDFRONT_DOMAIN from .env.
-        System.get_env("DEV_CLOUDFRONT_DOMAIN") ||
-          raise "DEV_CLOUDFRONT_DOMAIN not set for APP_ENV=development. Please set it in your .env file."
-
-      "production" ->
-        # In production (Render with APP_ENV="production"), expect PROD_CLOUDFRONT_DOMAIN.
+{cloudfront_domain, s3_bucket} =
+  case runtime_mode do
+    :prod ->
+      cloudfront_domain =
         System.get_env("PROD_CLOUDFRONT_DOMAIN") ||
-          raise "PROD_CLOUDFRONT_DOMAIN not set for APP_ENV=production. Please set it in your Render environment variables."
+          System.get_env("CLOUDFRONT_DOMAIN") ||
+          raise "PROD_CLOUDFRONT_DOMAIN or CLOUDFRONT_DOMAIN is required in production"
 
-      _ ->
-        # APP_ENV not "development" or "production" (e.g., nil during compile time or local mix outside Docker).
-        # This case should ideally not be hit if APP_ENV is always correctly set.
-        # For safety during build or other contexts, try to infer, but log a significant warning.
-        effective_mix_env = config_env()
+      s3_bucket =
+        System.get_env("PROD_S3_BUCKET_NAME") ||
+          System.get_env("S3_BUCKET_NAME") ||
+          raise "PROD_S3_BUCKET_NAME or S3_BUCKET_NAME is required in production"
 
-        IO.puts(
-          :stderr,
-          "Critical Warning: APP_ENV is '#{app_env_string || "not set"}'. Attempting to infer CloudFront domain using MIX_ENV=#{effective_mix_env}, but this is not recommended. Ensure APP_ENV is correctly set to 'development' or 'production'."
-        )
+      {cloudfront_domain, s3_bucket}
 
-        cond do
-          effective_mix_env == :prod ->
-            System.get_env("PROD_CLOUDFRONT_DOMAIN") ||
-              raise "PROD_CLOUDFRONT_DOMAIN not set, and APP_ENV was not 'production' during a :prod mix_env context."
+    :test ->
+      {"test.cloudfront.test", "test-bucket"}
 
-          effective_mix_env == :dev ->
-            System.get_env("DEV_CLOUDFRONT_DOMAIN") ||
-              raise "DEV_CLOUDFRONT_DOMAIN not set, and APP_ENV was not 'development' during a :dev mix_env context."
-
-          # Default fallback if MIX_ENV is also something unexpected
-          true ->
-            raise "Cannot determine CloudFront domain: APP_ENV is '#{app_env_string || "not set"}' and MIX_ENV is '#{effective_mix_env}'. Please check your environment configuration."
-        end
-    end
-
-  config :heaters, :cloudfront_domain, current_cloudfront_domain
-  IO.puts("[Runtime.exs] Configured CloudFront Domain: #{current_cloudfront_domain}")
-
-  # Configure S3 Bucket Name (if Phoenix needs to know it directly for URL generation, etc.)
-  current_s3_bucket =
-    case app_env_string do
-      "development" ->
-        # Fallback to generic if _DEV_ missing
-        System.get_env("DEV_S3_BUCKET_NAME") || System.get_env("S3_BUCKET_NAME")
-
-      "production" ->
-        # Fallback to generic if _PROD_ missing
-        System.get_env("PROD_S3_BUCKET_NAME") || System.get_env("S3_BUCKET_NAME")
-
-      _ ->
-        # Fallback if APP_ENV is not explicitly "development" or "production".
-        # Relies on S3_BUCKET_NAME being appropriately set in the environment (e.g. from .env via direnv).
-        effective_mix_env = config_env()
-
-        IO.puts(
-          :stderr,
-          "Warning: APP_ENV is '#{app_env_string || "not set"}'. Inferring S3 Bucket using MIX_ENV=#{effective_mix_env}."
-        )
-
-        # For S3 bucket, typically you'd want it to be mandatory if needed.
-        # If it's critical for prod builds, System.fetch_env! might be appropriate in the :prod branch here.
-        # This will be nil if not set, Phoenix code should handle nil if it's optional.
-        System.get_env("S3_BUCKET_NAME")
-    end
-
-  if current_s3_bucket do
-    config :heaters, :s3_bucket, current_s3_bucket
-    IO.puts("[Runtime.exs] Configured S3 Bucket: #{current_s3_bucket}")
-  else
-    IO.puts("[Runtime.exs] S3 Bucket not configured via APP_ENV specific vars or S3_BUCKET_NAME.")
+    _ ->
+      {
+        System.get_env("DEV_CLOUDFRONT_DOMAIN") || System.get_env("CLOUDFRONT_DOMAIN"),
+        System.get_env("DEV_S3_BUCKET_NAME") || System.get_env("S3_BUCKET_NAME") || "heaters-dev"
+      }
   end
 
-  # Configure CloudFront streaming and proxy settings
-  cloudfront_streaming_enabled = System.get_env("CLOUDFRONT_STREAMING_ENABLED", "true") == "true"
-  config :heaters, :cloudfront_streaming_enabled, cloudfront_streaming_enabled
+config :heaters, :cloudfront_domain, cloudfront_domain
+config :heaters, :s3_bucket, s3_bucket
 
-  # Configure CDN domain for proxy video streaming (supports range requests)
-  proxy_cdn_domain = System.get_env("PROXY_CDN_DOMAIN") || current_cloudfront_domain
-  config :heaters, :proxy_cdn_domain, proxy_cdn_domain
+cloudfront_streaming_enabled = System.get_env("CLOUDFRONT_STREAMING_ENABLED", "true") == "true"
+proxy_cdn_domain = System.get_env("PROXY_CDN_DOMAIN") || cloudfront_domain
+master_storage_class = System.get_env("MASTER_STORAGE_CLASS", "STANDARD")
+proxy_storage_class = System.get_env("PROXY_STORAGE_CLASS", "STANDARD")
 
-  # Configure storage classes for performance and cost balance
-  master_storage_class = System.get_env("MASTER_STORAGE_CLASS", "STANDARD")
-  proxy_storage_class = System.get_env("PROXY_STORAGE_CLASS", "STANDARD")
+config :heaters, :cloudfront_streaming_enabled, cloudfront_streaming_enabled
+config :heaters, :proxy_cdn_domain, proxy_cdn_domain
+config :heaters, :master_storage_class, master_storage_class
+config :heaters, :proxy_storage_class, proxy_storage_class
 
-  config :heaters, :master_storage_class, master_storage_class
-  config :heaters, :proxy_storage_class, proxy_storage_class
-
-  IO.puts("[Runtime.exs] CloudFront streaming enabled: #{cloudfront_streaming_enabled}")
-  IO.puts("[Runtime.exs] Proxy CDN domain: #{proxy_cdn_domain}")
-  IO.puts("[Runtime.exs] Master storage: #{master_storage_class}")
-  IO.puts("[Runtime.exs] Proxy storage: #{proxy_storage_class}")
-else
-  # In test environment or database operations, configure minimal stubs for S3/CloudFront
-  if is_database_operation do
-    config :heaters, :app_env, System.get_env("APP_ENV") || "development"
-    config :heaters, :cloudfront_domain, "database-op.cloudfront.test"
-    config :heaters, :s3_bucket, "database-op-bucket"
-    IO.puts("[Runtime.exs] Database operation - using minimal CloudFront/S3 configuration.")
-  else
-    # Test environment
-    config :heaters, :app_env, "test"
-    config :heaters, :cloudfront_domain, "test.cloudfront.test"
-    config :heaters, :s3_bucket, "test-bucket"
-    IO.puts("[Runtime.exs] Test environment - using minimal CloudFront/S3 configuration.")
-  end
-end
-
-# === Database Configuration ===
-# Only configure Repo from DATABASE_URL for production environment.
-# For :dev and :test, their respective config files manage database configuration.
-if config_env() == :prod do
-  # For production environment:
-  # 1. Try PROD_DATABASE_URL (from .env, for local scripts targeting prod or specific prod-like envs).
-  # 2. Fallback to DATABASE_URL (this is what Render injects for its managed DB).
+if runtime_mode == :prod do
   database_url =
-    System.get_env("PROD_DATABASE_URL") ||
-      System.get_env("DATABASE_URL") ||
-      raise """
-      environment variable PROD_DATABASE_URL or DATABASE_URL is missing.
-      It's required for production environment.
-      For :dev and :test, their respective config files handle database configuration.
-      """
-
-  IO.puts(
-    "[Runtime.exs] Configuring Repo for #{config_env()} using DATABASE_URL (source: PROD_DATABASE_URL or DATABASE_URL)"
-  )
+    System.get_env("DATABASE_URL") ||
+      System.get_env("PROD_DATABASE_URL") ||
+      raise "DATABASE_URL or PROD_DATABASE_URL is required in production"
 
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 
-  # Check if the database_url points to a Render managed database.
-  # System.get_env("RENDER_INSTANCE_ID") is a reliable way to check if running on Render.
-  is_on_render_platform = System.get_env("RENDER_INSTANCE_ID") != nil
-  is_render_db_host = String.contains?(database_url, ".render.com")
-
-  ssl_opts =
-    cond do
-      is_on_render_platform and is_render_db_host ->
-        # Running on Render platform and connecting to a Render DB.
-        # Use CAStore for Render's managed certificates.
-        # Add {:castore, "~> 1.0"} to mix.exs deps and CAStore.init() in application.ex if using.
-        [
-          verify: :verify_peer,
-          # Requires CAStore dependency and initialization.
-          cacertfile: CAStore.file_path(),
-          server_name_indication: URI.parse(database_url).host |> to_charlist()
-          # For older Elixir/Erlang, you might need:
-          # sni: URI.parse(database_url).host |> String.to_charlist()
-        ]
-
-      is_render_db_host ->
-        # Connecting to a Render DB host, but NOT from the Render platform (e.g., local script).
-        # PROD_DATABASE_URL from .env should include "?sslmode=require".
-        # psycopg2/Postgrex handles `sslmode=require` from the DSN.
-        # Explicit options can be added if `sslmode=verify-full` is used and CA certs need local management.
-        # For `sslmode=require`, often empty list or `ssl: true` is enough if system trusts CAs.
-        # Relying on sslmode in URL. For verify-full, you'd need cacertfile path.
-        if String.contains?(database_url, "sslmode=verify-full") do
-          [
-            verify: :verify_peer,
-            # cacertfile: "/path/to/your/local/render-ca-cert.pem", # If needed for verify-full
-            server_name_indication: URI.parse(database_url).host |> to_charlist()
-          ]
-        else
-          # For sslmode=require, Postgrex handles it if present in URL.
-          # If not in URL, `ssl: true` can enable basic SSL.
-          if String.contains?(database_url, "sslmode=") or
-               String.contains?(database_url, "ssl=true"),
-             do: [],
-             else: [ssl: true]
-        end
-
-      String.contains?(database_url, "ssl=true") or
-          String.contains?(database_url, "sslmode=require") ->
-        # For other non-Render DBs that specify SSL in the URL.
-        # Postgrex handles basic SSL if the URL indicates it.
-        []
-
-      true ->
-        # No SSL indicated or needed.
-        false
-    end
-
-  # Ensure sslmode=require is part of the URL for Render DBs if not already,
-  # to simplify SSL setup, especially if CAStore is not used or for local connections to Render.
-  # Your PROD_DATABASE_URL in .env already includes this.
-  # This primarily helps if Render's auto-injected DATABASE_URL doesn't include it.
-  repo_url_with_sslmode =
-    if is_render_db_host and not String.contains?(database_url, "sslmode=") and
-         not String.contains?(database_url, "ssl=") do
-      database_url <> "?sslmode=require"
-    else
-      database_url
-    end
-
   config :heaters, Heaters.Repo,
-    url: repo_url_with_sslmode,
-    ssl: ssl_opts,
+    url: database_url,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
     socket_options: maybe_ipv6
-else
-  # In :dev and :test environments, their respective config files handle Repo config.
-  IO.puts(
-    "[Runtime.exs] Repo configuration for #{config_env()} is handled by config/#{config_env()}.exs."
-  )
-end
 
-# === Production Only settings (when MIX_ENV=prod) ===
-# This block applies settings specifically for production builds/releases.
-if config_env() == :prod do
-  IO.puts("[Runtime.exs] Applying production-specific endpoint configurations (MIX_ENV=prod).")
-  # SECRET_KEY_BASE is critical for prod, ensure it's set.
   secret_key_base =
     System.get_env("SECRET_KEY_BASE") ||
-      raise "environment variable SECRET_KEY_BASE is missing for prod"
+      raise "SECRET_KEY_BASE is required in production"
 
-  # PHX_HOST for constructing canonical URLs.
-  # RENDER_EXTERNAL_HOSTNAME is provided by Render.
   host =
-    System.get_env("PHX_HOST") || System.get_env("RENDER_EXTERNAL_HOSTNAME") ||
-      raise "PHX_HOST or RENDER_EXTERNAL_HOSTNAME must be set for prod"
+    System.get_env("PHX_HOST") ||
+      raise "PHX_HOST is required in production"
 
   port = String.to_integer(System.get_env("PORT") || "4000")
 
-  # DNS_CLUSTER_QUERY is for clustered deployments (e.g., libcluster with DNS strategy).
   if dns_cluster_query_env = System.get_env("DNS_CLUSTER_QUERY") do
     config :heaters, :dns_cluster_query, dns_cluster_query_env
   end
 
   config :heaters, HeatersWeb.Endpoint,
-    # Prod typically runs on HTTPS.
     url: [host: host, port: 443, scheme: "https"],
     http: [
-      # Listen on all interfaces.
       ip: {0, 0, 0, 0, 0, 0, 0, 0},
-      # Port the app binds to internally on Render.
       port: port
     ],
     secret_key_base: secret_key_base,
-    # Enable HSTS and other security headers for production.
-    # Ensure host matches for HSTS
     force_ssl: [hsts: true, host: host],
-    # For long-lived caching of static assets.
     cache_static_manifest: "priv/static/cache_manifest.json"
 
-  # The `force_ssl` option above implies HTTPS, so `https` scheme is appropriate.
-  # Render handles SSL termination at its load balancers, forwarding traffic as HTTP to your app on `port`.
-  # Phoenix needs to know the original scheme (https) and host for correct URL generation.
+  oban_config = Application.get_env(:heaters, Oban, [])
+  canonical_queues = Keyword.get(oban_config, :queues, [])
+  canonical_plugins = Keyword.get(oban_config, :plugins, [])
 
-  # --- Oban Dynamic Configuration ---
-  # Default to running only the 'default' queue if OBAN_QUEUES is not set.
-  # This makes our Render web service safe by default.
-  queues_str = System.get_env("OBAN_QUEUES", "default")
+  name_to_queue =
+    Map.new(canonical_queues, fn {queue_name, concurrency} ->
+      {Atom.to_string(queue_name), {queue_name, concurrency}}
+    end)
+
+  requested_queue_names =
+    System.get_env("OBAN_QUEUES", "default")
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+
+  unknown_queue_names =
+    requested_queue_names
+    |> Enum.reject(&Map.has_key?(name_to_queue, &1))
+
+  if unknown_queue_names != [] do
+    allowed_queue_names =
+      name_to_queue
+      |> Map.keys()
+      |> Enum.sort()
+      |> Enum.join(",")
+
+    unknown_names = Enum.join(unknown_queue_names, ",")
+
+    raise """
+    OBAN_QUEUES contains unknown queue names: #{unknown_names}
+    Allowed queues: #{allowed_queue_names}
+    """
+  end
 
   queues =
-    queues_str
-    |> String.split(",", trim: true)
-    |> Enum.map(fn queue_name -> {String.to_atom(queue_name), 10} end)
+    requested_queue_names
+    |> Enum.map(fn queue_name ->
+      Map.fetch!(name_to_queue, queue_name)
+    end)
     |> Map.new()
 
-  # Only the node running the 'default' queue (the web service) will schedule jobs.
+  scheduler_enabled =
+    case System.get_env("OBAN_SCHEDULER") do
+      value when value in ["true", "1"] -> true
+      value when value in ["false", "0"] -> false
+      _ -> "default" in requested_queue_names
+    end
+
   plugins =
-    if "default" in String.split(queues_str, ",", trim: true) do
-      [
-        Oban.Plugins.Pruner,
-        {Oban.Plugins.Cron,
-         crontab: [
-           {"* * * * *", Heaters.Pipeline.Dispatcher},
-           {"0 */4 * * *", Heaters.Storage.PlaybackCache.CleanupWorker}
-         ]}
-      ]
+    if scheduler_enabled do
+      canonical_plugins
     else
-      [Oban.Plugins.Pruner]
+      Enum.reject(canonical_plugins, fn
+        {Oban.Plugins.Cron, _opts} -> true
+        Oban.Plugins.Cron -> true
+        _ -> false
+      end)
     end
 
   config :heaters, Oban,
     queues: queues,
     plugins: plugins
 
-  # Configure PyRunner for production with strict validation
   python_exe =
     System.get_env("PYTHON_EXECUTABLE") ||
-      "/opt/venv/bin/python3"
+      "/opt/venv/bin/python"
       |> tap(fn path ->
         unless File.exists?(path) do
           raise "PYTHON_EXECUTABLE does not exist: #{path}"
@@ -339,8 +177,3 @@ if config_env() == :prod do
     working_dir: working_dir,
     runner_script: "py/runner.py"
 end
-
-# General debug log at the end of runtime.exs
-IO.puts(
-  "[Runtime.exs] Runtime configuration finished for MIX_ENV=#{config_env()} and APP_ENV=#{System.get_env("APP_ENV") || "not set"}."
-)

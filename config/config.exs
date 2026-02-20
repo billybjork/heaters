@@ -23,8 +23,6 @@ config :heaters, Oban,
     media_processing: 5,
     # For dispatcher and archive operations
     background_jobs: 2,
-    # For clip exports
-    exports: 5,
     # For temp clip generation (background prefetch)
     temp_clips: 3,
     # For maintenance tasks (cleanup, monitoring)

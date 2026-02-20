@@ -65,7 +65,7 @@ end
 #  Phoenix endpoint
 # ───────────────────────────────────────────
 config :heaters, HeatersWeb.Endpoint,
-  http: [ip: {0, 0, 0, 0}, port: 4000],
+  http: [ip: {0, 0, 0, 0}, port: 4002],
   check_origin: false,
   code_reloader: true,
   debug_errors: true,
@@ -157,8 +157,8 @@ python_executable =
     # In Docker container, Python is in /opt/venv
     "/opt/venv/bin/python"
   else
-    # Local development, use local venv
-    Path.join(Path.expand("."), "py/venv/bin/python")
+    # Local development, use uv-managed local venv
+    Path.join(Path.expand("."), "py/.venv/bin/python")
   end
 
 config :heaters, Heaters.Processing.Support.PythonRunner,
@@ -167,31 +167,11 @@ config :heaters, Heaters.Processing.Support.PythonRunner,
   runner_script: "py/runner.py"
 
 # ───────────────────────────────────────────
-#  S3/ExAws Configuration for Development
-# ───────────────────────────────────────────
-# Override base ExAws config for development-specific needs
-config :ex_aws,
-  access_key_id: System.get_env("AWS_ACCESS_KEY_ID"),
-  secret_access_key: System.get_env("AWS_SECRET_ACCESS_KEY"),
-  region: System.get_env("AWS_REGION") || "us-west-1"
-
-config :ex_aws, :s3,
-  scheme: "https://",
-  host: "s3.us-west-1.amazonaws.com",
-  region: System.get_env("AWS_REGION") || "us-west-1"
-
-# ───────────────────────────────────────────
 #  CloudFront Video Streaming Configuration
 # ───────────────────────────────────────────
 config :heaters,
-  # FFmpeg binary path for development (supports Docker and local installations)
-  ffmpeg_bin:
-    if(System.get_env("DOCKER_ENV") == "true",
-      # Docker container path
-      do: "/usr/bin/ffmpeg",
-      # Local development
-      else: System.get_env("FFMPEG_BIN") || "/opt/homebrew/bin/ffmpeg"
-    ),
+  # FFmpeg binary path for development (portable across Docker/macOS/Linux)
+  ffmpeg_bin: System.get_env("FFMPEG_BIN") || System.find_executable("ffmpeg") || "ffmpeg",
   # CloudFront distribution domain (fallback to S3 for development)
   cloudfront_domain: System.get_env("DEV_CLOUDFRONT_DOMAIN"),
   # S3 bucket configuration
