@@ -22,20 +22,22 @@ defmodule Heaters.Processing.Embed.Worker do
   # JUSTIFICATION: PyRunner requires DEV_DATABASE_URL and DEV_S3_BUCKET_NAME environment
   # variables. When not set, PyRunner always fails, making success patterns unreachable.
   # In configured environments, these functions will succeed normally.
+  #
+  # The functions below are called within the PyRunner execution path, so dialyzer
+  # believes they are unreachable when PyRunner always fails.
   @dialyzer {:nowarn_function,
              [
+               handle_work: 1,
                handle_embedding_work: 1,
                run_embedding_task: 2,
+               execute_python_embedding: 2,
+               process_embedding_result: 3,
+               handle_embedding_error: 2,
                extract_embeddings_count: 1,
                extract_keyframes_count: 1,
                extract_vector_dimensions: 1,
                extract_processing_stats: 1
              ]}
-
-  # Note: no @complete_states used here; idempotency is determined by existing embedding
-
-  # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
-  @dialyzer {:nowarn_function, [handle_work: 1]}
 
   @impl WorkerBehavior
   def handle_work(%{"clip_id" => clip_id} = args) do

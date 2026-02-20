@@ -40,24 +40,27 @@ defmodule Heaters.Processing.Download.Worker do
   # variables. When these are not set (e.g., in unconfigured development environments),
   # PyRunner will always fail with {:error, "Environment variable ... not set"}.
   #
-  # This makes success patterns and their dependent functions (convert_keys_to_atoms,
-  # handle_temp_cache_download_completion) genuinely unreachable in such environments.
-  #
-  # In properly configured environments, these functions WILL be called and succeed.
+  # This makes success patterns and their dependent functions genuinely unreachable
+  # in such environments. In properly configured environments, these functions WILL
+  # be called and succeed.
   @dialyzer {:nowarn_function,
              [
+               handle_work: 1,
                handle_ingest_work: 1,
+               execute_python_download: 3,
+               process_download_result: 2,
+               finalize_download_success: 4,
                convert_keys_to_atoms: 1,
                safe_string_to_atom: 1,
                handle_temp_cache_download_completion: 2,
+               extract_local_path: 1,
+               upload_to_s3: 2,
+               cache_and_complete: 4,
                get_file_size: 1,
                get_format_info: 1,
                get_quality_metrics: 1,
                build_resolution_string: 2
              ]}
-
-  # Dialyzer cannot statically verify PyRunner success paths due to external system dependencies
-  @dialyzer {:nowarn_function, [handle_work: 1]}
 
   @impl WorkerBehavior
   def handle_work(%{"source_video_id" => source_video_id} = args) do

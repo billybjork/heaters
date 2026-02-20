@@ -87,7 +87,7 @@ defmodule Heaters.Processing.Embed.Workflow do
   @doc """
   Mark a clip embedding as failed.
   """
-  @spec mark_failed(Clip.t() | integer(), String.t(), any()) :: {:ok, Clip.t()} | {:error, any()}
+  @spec mark_failed(Clip.t() | integer(), atom(), any()) :: {:ok, Clip.t()} | {:error, any()}
   def mark_failed(clip_or_id, failure_state, error_reason)
 
   def mark_failed(%Clip{} = clip, failure_state, error_reason) do

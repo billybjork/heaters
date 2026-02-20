@@ -54,13 +54,16 @@ defmodule Heaters.Processing.DetectScenes.Worker do
   # JUSTIFICATION: PyRunner requires DEV_DATABASE_URL and DEV_S3_BUCKET_NAME environment
   # variables. When not set, PyRunner always fails, making success patterns unreachable.
   # In configured environments, these functions will succeed normally.
-  @dialyzer {:nowarn_function, [run_python_scene_detection: 2]}
-
-  # Suppress false positive for convert_segments_to_cut_points/1 being unused.
-  # This function is called from run_python_scene_detection/2, but the suppression above
-  # prevents dialyzer from seeing the call path.
+  #
+  # The functions below are called from within run_python_scene_detection/2, but since
+  # dialyzer sees PyRunner always failing, it believes the success paths are unreachable.
   @dialyzer {:nowarn_function,
              [
+               run_python_scene_detection: 2,
+               process_scene_detection_result: 2,
+               complete_scene_detection_workflow: 4,
+               finalize_scene_detection_success: 5,
+               handle_scene_detection_failure: 3,
                convert_segments_to_cut_points: 1,
                count_existing_clips: 1,
                calculate_average_confidence: 1

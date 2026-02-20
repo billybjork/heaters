@@ -83,7 +83,7 @@ defmodule Heaters.Processing.Download.Core do
   @doc """
   Mark a source video as failed with error details.
   """
-  @spec mark_failed(SourceVideo.t() | integer(), String.t(), any()) ::
+  @spec mark_failed(SourceVideo.t() | integer(), atom(), any()) ::
           {:ok, SourceVideo.t()} | {:error, any()}
   def mark_failed(source_video_or_id, failure_state, error_reason)
 
