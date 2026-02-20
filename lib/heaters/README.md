@@ -10,7 +10,7 @@ Heaters processes videos through a **cuts-based pipeline**: download → encodin
 
 - **Backend**: Elixir/Phoenix 1.8+ with LiveView 1.1
 - **Database**: PostgreSQL with pgvector  
-- **Media Processing**: Native Elixir/FFmpex with selective Python integration for specialized tasks
+- **Media Processing**: Native Elixir/FFmpeg with selective Python integration for specialized tasks
 - **Storage**: AWS S3 with intelligent caching and native ExAws integration
 - **Frontend**: Phoenix LiveView 1.1 with colocated hooks and single-file components
 
@@ -150,7 +150,7 @@ Complex coordinate translations are handled server-side to eliminate client-side
 - **HTTP Range Requests**: MediaController serves virtual clips with 206 Partial Content support
 - **Direct CloudFront Processing**: No local downloads, processes directly from CloudFront URLs with stream copy
 - **Video Processing**: Native Elixir implementations for encoding, export, and S3 operations with structured result types
-- **Specialized Python**: Selective integration for yt-dlp downloads, OpenCV scene detection, and ML embeddings
+- **Specialized Python**: Selective integration for yt-dlp downloads, OpenCV scene detection, and ONNX Runtime embeddings
 - **S3 Operations**: Native ExAws integration with progress reporting, multipart uploads, exponential backoff retry logic
 - **Stream Copy Optimization**: Direct CloudFront → S3 processing with zero re-encoding for 10x performance improvement
 - **Temp Cache System**: Smart file caching with LRU eviction to minimize S3 operations and improve pipeline performance
@@ -162,7 +162,7 @@ Complex coordinate translations are handled server-side to eliminate client-side
 - Defaults for post-review stages are centralized in `Heaters.Pipeline.Config` and can be overridden via application config.
 - Default keys:
   - `default_keyframe_strategy` (e.g., "multi", "midpoint")
-  - `default_embedding_model` (e.g., "openai/clip-vit-base-patch32", "dino-v2")
+  - `default_embedding_model` (e.g., "openai/clip-vit-base-patch32")
   - `default_embedding_generation_strategy` (e.g., "keyframe_multi_avg", "keyframe_single")
 
 Override in `config/dev.exs` (or `prod.exs`):
@@ -192,6 +192,8 @@ config :heaters,
 - **ESBuild Configuration**: Updated for colocated hooks with `--alias:@=.` and NODE_PATH
 - **Debug Features**: `debug_attributes: true` for enhanced development annotations
 - **Python Integration**: Requires `DEV_DATABASE_URL` and `DEV_S3_BUCKET_NAME` environment variables
+- **Python Dependency Management**: Uses `uv` with `py/pyproject.toml` and `py/uv.lock` (`uv sync --project py`)
+- **Ops Reference**: See `docs/environment-operations.md` for minimal env vars and run commands
 - **Dialyzer**: Zero warnings in configured environments; suppressions handle unconfigured PyRunner dependencies
 - **Type Safety**: Full Dialyzer coverage with documented suppressions for external system interfaces
 - **Enum Safety**: All state fields use Ecto enums with database constraints for compile-time and runtime validation
