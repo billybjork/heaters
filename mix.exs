@@ -7,15 +7,14 @@ defmodule Heaters.MixProject do
       version: "0.1.0",
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
-      compilers: [:phoenix_live_view] ++ Mix.compilers(),
+      compilers: Mix.compilers(),
       start_permanent: Mix.env() == :prod,
       listeners: [Phoenix.CodeReloader],
       aliases: aliases(),
       deps: deps(),
       releases: [
         heaters: [
-          steps: [:assemble],
-          include_executables: true
+          steps: [:assemble]
         ]
       ]
     ]
@@ -65,7 +64,6 @@ defmodule Heaters.MixProject do
       {:ex_aws_s3, "~> 2.5"},
       {:hackney, "~> 1.20"},
       {:sweet_xml, "~> 0.7"},
-      {:ffmpex, "~> 0.11.0"},
       {:tidewave, "~> 0.4", only: :dev},
       {:dialyxir, "~> 1.4", only: [:dev], runtime: false},
       {:stream_data, "~> 1.1", only: :test},

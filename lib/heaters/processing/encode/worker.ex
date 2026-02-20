@@ -24,7 +24,7 @@ defmodule Heaters.Processing.Encode.Worker do
 
   ## Architecture
 
-  - **Encoding**: Native Elixir/FFmpex via Encode.Core
+  - **Encoding**: Native Elixir/FFmpeg via Encode.Core
   - **State Management**: Elixir state transitions and database operations
   - **Storage**: S3 for both master and proxy files
   """

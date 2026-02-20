@@ -4,12 +4,10 @@ defmodule Heaters.Processing.Encode.VideoProcessing do
 
   Uses existing FFmpeg infrastructure for all video operations:
   - `Heaters.Processing.Support.FFmpeg.Config` for encoding profiles
-  - FFmpex for command building and execution with progress reporting
+  - explicit FFmpeg args with `Port`-based progress reporting
   """
 
   require Logger
-  import FFmpex
-  use FFmpex.Options
 
   alias Heaters.Processing.Encode.MetadataExtraction
   alias Heaters.Processing.Support.FFmpeg.Config
@@ -148,16 +146,15 @@ defmodule Heaters.Processing.Encode.VideoProcessing do
          video_type,
          operation_name
        ) do
-    config = Config.get_profile_config(profile)
     duration = Map.get(metadata, :duration, 0.0)
 
     Logger.info("#{operation_name}: Encoding #{video_type} with duration: #{duration}s")
 
     # Build FFmpeg command using configuration
-    command = build_ffmpeg_command(source_path, local_output_path, config)
+    args = build_ffmpeg_args(source_path, local_output_path, profile)
 
     case execute_ffmpeg_with_progress(
-           command,
+           args,
            duration,
            "#{String.capitalize(video_type)} Creation",
            operation_name
@@ -207,88 +204,17 @@ defmodule Heaters.Processing.Encode.VideoProcessing do
   defp add_keyframe_offsets({:error, reason}, _operation_name), do: {:error, reason}
 
   # Build FFmpeg command for encoding
-  @spec build_ffmpeg_command(String.t(), String.t(), map()) :: FFmpex.Command.t()
-  defp build_ffmpeg_command(input_path, output_path, config) do
-    FFmpex.new_command()
-    |> add_input_file(input_path)
-    |> add_output_file(output_path)
-    |> add_profile_encoding_options(config)
-    |> add_global_option(option_y())
-  end
-
-  # Add profile encoding options to FFmpeg command (similar to existing Runner implementation)
-  @spec add_profile_encoding_options(FFmpex.Command.t(), map()) :: FFmpex.Command.t()
-  defp add_profile_encoding_options(command, config) do
-    command
-    |> add_video_encoding_options(config.video)
-    |> add_audio_encoding_options(config[:audio])
-    |> add_web_optimization_options(config[:web_optimization])
-  end
-
-  defp add_video_encoding_options(command, video_config) do
-    command
-    |> add_stream_specifier(stream_type: :video)
-    |> add_stream_option(option_c(video_config.codec))
-    |> add_optional_stream_option(&option_preset/1, video_config[:preset])
-    |> add_optional_stream_option(&option_crf/1, video_config[:crf])
-    |> add_optional_stream_option(&option_pix_fmt/1, video_config[:pix_fmt])
-    |> add_optional_stream_option(&option_g/1, video_config[:gop_size])
-  end
-
-  defp add_audio_encoding_options(command, nil), do: command
-
-  defp add_audio_encoding_options(command, audio_config) do
-    command
-    |> add_stream_specifier(stream_type: :audio)
-    |> add_stream_option(option_c(audio_config.codec))
-    |> add_optional_stream_option(&option_b/1, audio_config[:bitrate])
-  end
-
-  defp add_web_optimization_options(command, nil), do: command
-
-  defp add_web_optimization_options(command, web_opts) do
-    command
-    |> add_optional_file_option(&option_movflags/1, web_opts[:movflags])
-  end
-
-  defp add_optional_stream_option(command, _option_func, nil), do: command
-
-  defp add_optional_stream_option(command, option_func, value) do
-    add_stream_option(command, option_func.(value))
-  end
-
-  defp add_optional_file_option(command, _option_func, nil), do: command
-
-  defp add_optional_file_option(command, option_func, value) do
-    add_file_option(command, option_func.(value))
+  @spec build_ffmpeg_args(String.t(), String.t(), atom()) :: [String.t()]
+  defp build_ffmpeg_args(input_path, output_path, profile) do
+    ["-i", input_path] ++ Config.get_args(profile) ++ ["-y", output_path]
   end
 
   # Execute FFmpeg with progress reporting
-  @spec execute_ffmpeg_with_progress(FFmpex.Command.t(), float(), String.t(), String.t()) ::
+  @spec execute_ffmpeg_with_progress([String.t()], float(), String.t(), String.t()) ::
           {:ok, any()} | {:error, String.t()}
-  defp execute_ffmpeg_with_progress(command, duration, task_name, operation_name) do
+  defp execute_ffmpeg_with_progress(args, duration, task_name, operation_name) do
     Logger.info("#{operation_name}: Starting #{task_name}")
-
-    # Convert FFmpex command to raw arguments for progress monitoring
-    case ffmpeg_command_to_args(command) do
-      {:ok, args} ->
-        execute_ffmpeg_with_real_progress(args, duration, task_name, operation_name)
-
-      {:error, reason} ->
-        Logger.error("#{operation_name}: Failed to build FFmpeg command: #{inspect(reason)}")
-        {:error, "Failed to build FFmpeg command: #{inspect(reason)}"}
-    end
-  end
-
-  # Convert FFmpex command to raw FFmpeg arguments
-  @spec ffmpeg_command_to_args(FFmpex.Command.t()) :: {:ok, [String.t()]} | {:error, String.t()}
-  defp ffmpeg_command_to_args(command) do
-    case FFmpex.prepare(command) do
-      {_executable, args} -> {:ok, args}
-    end
-  rescue
-    error ->
-      {:error, "FFmpex command preparation failed: #{Exception.message(error)}"}
+    execute_ffmpeg_with_real_progress(args, duration, task_name, operation_name)
   end
 
   # Execute FFmpeg with real-time progress reporting
@@ -309,23 +235,32 @@ defmodule Heaters.Processing.Encode.VideoProcessing do
       args: args_with_progress
     ]
 
-    port = Port.open({:spawn_executable, System.find_executable("ffmpeg")}, port_opts)
+    with {:ok, ffmpeg_executable} <- ffmpeg_executable() do
+      port = Port.open({:spawn_executable, ffmpeg_executable}, port_opts)
 
-    result = monitor_ffmpeg_progress(port, duration, task_name, operation_name, "")
+      result = monitor_ffmpeg_progress(port, duration, task_name, operation_name, "")
 
-    case result do
-      {:ok, _} ->
-        Logger.info("#{operation_name}: #{task_name} completed successfully")
-        {:ok, nil}
+      case result do
+        {:ok, _} ->
+          Logger.info("#{operation_name}: #{task_name} completed successfully")
+          {:ok, nil}
 
-      {:error, reason} ->
-        Logger.error("#{operation_name}: #{task_name} failed: #{reason}")
-        {:error, "#{task_name} failed: #{reason}"}
+        {:error, reason} ->
+          Logger.error("#{operation_name}: #{task_name} failed: #{reason}")
+          {:error, "#{task_name} failed: #{reason}"}
+      end
     end
   rescue
     error ->
       Logger.error("#{operation_name}: #{task_name} exception: #{Exception.message(error)}")
       {:error, "#{task_name} exception: #{Exception.message(error)}"}
+  end
+
+  defp ffmpeg_executable do
+    case System.find_executable("ffmpeg") do
+      nil -> {:error, "ffmpeg executable not found in PATH"}
+      path -> {:ok, path}
+    end
   end
 
   # Monitor FFmpeg progress by parsing stderr output (entry point)

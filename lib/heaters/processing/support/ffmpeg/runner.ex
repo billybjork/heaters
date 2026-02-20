@@ -12,8 +12,6 @@ defmodule Heaters.Processing.Support.FFmpeg.Runner do
   """
 
   require Logger
-  import FFmpex
-  use FFmpex.Options
 
   alias Heaters.Processing.Support.FFmpeg.Config
 
@@ -42,9 +40,8 @@ defmodule Heaters.Processing.Support.FFmpeg.Runner do
   def create_video_clip(input_path, output_path, start_time, end_time, opts \\ []) do
     # Get encoding profile configuration
     profile = Keyword.get(opts, :profile, :keyframe_extraction)
-    config = Config.get_profile_config(profile)
 
-    # Convert float times to strings for FFmpex compatibility
+    # Convert float times to strings for FFmpeg compatibility
     start_time_str = Float.to_string(start_time)
     duration = end_time - start_time
     duration_str = Float.to_string(duration)
@@ -58,18 +55,9 @@ defmodule Heaters.Processing.Support.FFmpeg.Runner do
       Logger.debug("FFmpegRunner: Creating short clip (#{duration}s) - using profile: #{profile}")
     end
 
-    command =
-      FFmpex.new_command()
-      |> add_input_file(input_path)
-      |> add_file_option(option_ss(start_time_str))
-      |> add_output_file(output_path)
-      |> add_file_option(option_t(duration_str))
-      |> add_file_option(option_map("0:v:0?"))
-      |> add_file_option(option_map("0:a:0?"))
-      |> add_profile_encoding_options(config)
-      |> add_global_option(option_y())
+    args = build_clip_ffmpeg_args(input_path, output_path, start_time_str, duration_str, profile)
 
-    execute_and_get_file_size(command, output_path)
+    execute_and_get_file_size(args, output_path)
   rescue
     e ->
       Logger.error("FFmpegRunner: Exception creating video clip: #{inspect(e)}")
@@ -207,76 +195,43 @@ defmodule Heaters.Processing.Support.FFmpeg.Runner do
 
   ## Private helper functions
 
-  @spec add_profile_encoding_options(FFmpex.Command.t(), map()) :: FFmpex.Command.t()
-  defp add_profile_encoding_options(command, config) do
-    command
-    |> add_video_encoding_options(config.video)
-    |> add_audio_encoding_options(config[:audio])
-    |> add_web_optimization_options(config[:web_optimization])
-    |> add_threading_options(config[:threading])
+  @spec build_clip_ffmpeg_args(String.t(), String.t(), String.t(), String.t(), atom()) ::
+          [String.t()]
+  defp build_clip_ffmpeg_args(input_path, output_path, start_time_str, duration_str, profile) do
+    [
+      "-ss",
+      start_time_str,
+      "-i",
+      input_path,
+      "-t",
+      duration_str,
+      "-map",
+      "0:v:0?",
+      "-map",
+      "0:a:0?"
+    ] ++
+      Config.get_args(profile) ++ ["-y", output_path]
   end
 
-  defp add_video_encoding_options(command, video_config) do
-    command
-    |> add_stream_specifier(stream_type: :video)
-    |> add_stream_option(option_c(video_config.codec))
-    |> add_optional_file_option(&option_preset/1, video_config[:preset])
-    |> add_optional_file_option(&option_crf/1, video_config[:crf])
-    |> add_optional_file_option(&option_pix_fmt/1, video_config[:pix_fmt])
-    |> add_optional_file_option(&option_g/1, video_config[:gop_size])
-  end
+  @spec execute_and_get_file_size([String.t()], String.t()) :: ffmpeg_result()
+  defp execute_and_get_file_size(args, output_path) do
+    with {:ok, ffmpeg_executable} <- ffmpeg_executable(),
+         {_output, 0} <- System.cmd(ffmpeg_executable, args, stderr_to_stdout: true) do
+      # Verify the file was created and get its size
+      case File.stat(output_path) do
+        {:ok, %File.Stat{size: file_size}} ->
+          {:ok, file_size}
 
-  defp add_audio_encoding_options(command, nil), do: command
-
-  defp add_audio_encoding_options(command, audio_config) do
-    command
-    |> add_stream_specifier(stream_type: :audio)
-    |> add_stream_option(option_c(audio_config.codec))
-    |> add_optional_stream_option(&option_b/1, audio_config[:bitrate])
-  end
-
-  defp add_web_optimization_options(command, nil), do: command
-
-  defp add_web_optimization_options(command, web_opts) do
-    command
-    |> add_optional_file_option(&option_movflags/1, web_opts[:movflags])
-  end
-
-  defp add_threading_options(command, nil), do: command
-
-  defp add_threading_options(command, threading_opts) do
-    command
-    |> add_optional_file_option(&option_threads/1, threading_opts[:threads])
-  end
-
-  defp add_optional_file_option(command, _option_func, nil), do: command
-
-  defp add_optional_file_option(command, option_func, value) do
-    add_file_option(command, option_func.(value))
-  end
-
-  defp add_optional_stream_option(command, _option_func, nil), do: command
-
-  defp add_optional_stream_option(command, option_func, value) do
-    add_stream_option(command, option_func.(value))
-  end
-
-  @spec execute_and_get_file_size(FFmpex.Command.t(), String.t()) :: ffmpeg_result()
-  defp execute_and_get_file_size(command, output_path) do
-    case FFmpex.execute(command) do
-      {:ok, _output} ->
-        # Verify the file was created and get its size
-        case File.stat(output_path) do
-          {:ok, %File.Stat{size: file_size}} ->
-            {:ok, file_size}
-
-          {:error, reason} ->
-            {:error, "Created file not found: #{inspect(reason)}"}
-        end
-
+        {:error, reason} ->
+          {:error, "Created file not found: #{inspect(reason)}"}
+      end
+    else
       {:error, reason} ->
-        Logger.error("FFmpegRunner: FFmpeg execution failed: #{inspect(reason)}")
-        {:error, "FFmpeg error: #{inspect(reason)}"}
+        {:error, reason}
+
+      {output, exit_code} ->
+        Logger.error("FFmpegRunner: FFmpeg execution failed with code #{exit_code}: #{output}")
+        {:error, "FFmpeg failed with code #{exit_code}"}
     end
   end
 
@@ -525,44 +480,51 @@ defmodule Heaters.Processing.Support.FFmpeg.Runner do
     output_path = Path.join(output_dir, filename)
 
     try do
-      command =
-        FFmpex.new_command()
-        |> add_input_file(video_path)
-        |> add_file_option(option_ss(timestamp_str))
-        |> add_output_file(output_path)
-        |> add_file_option(option_vframes("1"))
-        |> add_stream_specifier(stream_type: :video)
-        |> add_stream_option(option_q(to_string(quality)))
-        |> add_global_option(option_y())
+      args = [
+        "-ss",
+        timestamp_str,
+        "-i",
+        video_path,
+        "-vframes",
+        "1",
+        "-q:v",
+        to_string(quality),
+        "-y",
+        output_path
+      ]
 
-      case FFmpex.execute(command) do
-        {:ok, _output} ->
-          case File.stat(output_path) do
-            {:ok, %File.Stat{size: file_size}} when file_size > 0 ->
-              Logger.debug("FFmpegRunner: Extracted keyframe at #{timestamp}s: #{filename}")
+      with {:ok, ffmpeg_executable} <- ffmpeg_executable(),
+           {_output, 0} <- System.cmd(ffmpeg_executable, args, stderr_to_stdout: true) do
+        case File.stat(output_path) do
+          {:ok, %File.Stat{size: file_size}} when file_size > 0 ->
+            Logger.debug("FFmpegRunner: Extracted keyframe at #{timestamp}s: #{filename}")
 
-              {:ok,
-               %{
-                 path: output_path,
-                 filename: filename,
-                 timestamp: timestamp,
-                 file_size: file_size,
-                 index: index
-               }}
+            {:ok,
+             %{
+               path: output_path,
+               filename: filename,
+               timestamp: timestamp,
+               file_size: file_size,
+               index: index
+             }}
 
-            {:ok, %File.Stat{size: 0}} ->
-              {:error, "Keyframe file is empty: #{output_path}"}
+          {:ok, %File.Stat{size: 0}} ->
+            {:error, "Keyframe file is empty: #{output_path}"}
 
-            {:error, reason} ->
-              {:error, "Keyframe file not created: #{inspect(reason)}"}
-          end
-
+          {:error, reason} ->
+            {:error, "Keyframe file not created: #{inspect(reason)}"}
+        end
+      else
         {:error, reason} ->
+          Logger.error("FFmpegRunner: FFmpeg executable unavailable: #{reason}")
+          {:error, reason}
+
+        {output, exit_code} ->
           Logger.error(
-            "FFmpegRunner: FFmpeg failed to extract keyframe at #{timestamp}s: #{inspect(reason)}"
+            "FFmpegRunner: FFmpeg failed to extract keyframe at #{timestamp}s with code #{exit_code}: #{output}"
           )
 
-          {:error, "FFmpeg keyframe extraction failed: #{inspect(reason)}"}
+          {:error, "FFmpeg keyframe extraction failed with code #{exit_code}"}
       end
     rescue
       e ->
@@ -571,6 +533,13 @@ defmodule Heaters.Processing.Support.FFmpeg.Runner do
         )
 
         {:error, "Exception extracting keyframe: #{inspect(e)}"}
+    end
+  end
+
+  defp ffmpeg_executable do
+    case System.find_executable("ffmpeg") do
+      nil -> {:error, "ffmpeg executable not found in PATH"}
+      path -> {:ok, path}
     end
   end
 end
