@@ -7,13 +7,14 @@ FROM elixir:1.18.4-otp-26-slim AS build
 
 ENV MIX_ENV=prod
 
-# Install system dependencies (including Rust for rambo/FFmpex)
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
   build-essential \
   git \
   unzip \
   python3 \
   curl \
+  ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
 # Install Bun for fast JavaScript package management and bundling
@@ -24,33 +25,29 @@ ENV PATH="/root/.bun/bin:$PATH"
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
-# Install Rust for rambo compilation BEFORE installing Elixir dependencies
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:$PATH"
-
-# Verify Rust installation
-RUN rustc --version && cargo --version
-
 WORKDIR /app
 
 # --- Set up Python Virtual Environment in the build stage ---
 RUN uv venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+ENV VIRTUAL_ENV="/opt/venv"
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # Install Elixir tools
 RUN mix local.hex --force && mix local.rebar --force
 
-# Install Elixir dependencies (with Rust now available for rambo compilation)
+# Install Elixir dependencies
 COPY mix.exs mix.lock ./
 RUN mix deps.get --only prod
-RUN mix deps.compile
 
 # Install Python dependencies into the venv
-COPY py/requirements.txt ./py/requirements.txt
-RUN uv pip install --no-cache -r py/requirements.txt
+COPY py/pyproject.toml py/uv.lock ./py/
+RUN uv sync --project py --frozen --no-dev --no-install-project --active
 
 # Copy the rest of the application source
 COPY . .
+
+# Compile deps and application together (avoids MixProject recompilation conflict)
+RUN mix deps.compile
 
 # Build assets
 RUN bun install --cwd ./assets
@@ -64,11 +61,14 @@ RUN mix release heaters --overwrite
 # -----------------------
 # 2) Runtime image
 # -----------------------
-FROM elixir:1.18.4-otp-26-slim AS app
+FROM debian:bookworm-slim AS app
 
 # Install only essential runtime dependencies.
 # The Python executable is needed to run the scripts.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+  ca-certificates \
+  libgcc-s1 \
+  libstdc++6 \
   openssl \
   libncurses6 \
   python3 \
@@ -77,14 +77,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   xz-utils \
   && rm -rf /var/lib/apt/lists/*
 
-# Install OpenSSL-enabled static FFmpeg build to fix CloudFront TLS issues
-RUN wget -q https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
-  && tar -xf ffmpeg-release-amd64-static.tar.xz \
-  && cp ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ffmpeg \
-  && cp ffmpeg-*-amd64-static/ffprobe /usr/local/bin/ffprobe \
-  && chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe \
-  && rm -rf ffmpeg-* \
-  && ffmpeg -version
+# Install static FFmpeg build from GitHub (architecture-aware)
+# Uses TARGETARCH from Docker buildx to select the correct binary
+ARG TARGETARCH
+RUN set -ex; \
+    case "${TARGETARCH}" in \
+      amd64) FFMPEG_ARCH="linux64" ;; \
+      arm64) FFMPEG_ARCH="linuxarm64" ;; \
+      *) echo "Unsupported architecture: ${TARGETARCH}"; exit 1 ;; \
+    esac; \
+    FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-${FFMPEG_ARCH}-gpl.tar.xz"; \
+    wget -q "${FFMPEG_URL}" -O /tmp/ffmpeg.tar.xz \
+    && tar -xf /tmp/ffmpeg.tar.xz -C /tmp \
+    && cp /tmp/ffmpeg-master-latest-${FFMPEG_ARCH}-gpl/bin/ffmpeg /usr/local/bin/ffmpeg \
+    && cp /tmp/ffmpeg-master-latest-${FFMPEG_ARCH}-gpl/bin/ffprobe /usr/local/bin/ffprobe \
+    && chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe \
+    && rm -rf /tmp/ffmpeg* \
+    && ffmpeg -version
 
 WORKDIR /app
 
@@ -109,4 +118,4 @@ ENV MIX_ENV=prod
 EXPOSE 4000
 
 # The command to run migrations and start the server
-CMD ["bin/heaters", "eval", "Heaters.Release.migrate()", ";", "bin/heaters", "start"]
+CMD ["/bin/sh", "-c", "bin/heaters eval 'Heaters.Release.migrate()' && exec bin/heaters start"]

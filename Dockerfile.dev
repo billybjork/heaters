@@ -34,21 +34,15 @@ RUN apt-get update \
 # Force IPv4 preference to avoid DNS stalls with CloudFront
 RUN echo 'precedence ::ffff:0:0/96 100' >> /etc/gai.conf
 
-# Install Rust for rambo compilation
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:$PATH"
-
-# Verify Rust installation
-RUN rustc --version && cargo --version
-
 # --- Set up the Python Virtual Environment ---
 RUN uv venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+ENV VIRTUAL_ENV="/opt/venv"
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # --- Install Python Dependencies into the Virtual Environment ---
 WORKDIR /app
-COPY py/requirements.txt ./py/requirements.txt
-RUN uv pip install --no-cache -r py/requirements.txt
+COPY py/pyproject.toml py/uv.lock ./py/
+RUN uv sync --project py --frozen --no-dev --no-install-project --active
 
 # --- Pre-install Elixir tools ---
 RUN mix local.hex --force && \

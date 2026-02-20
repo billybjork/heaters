@@ -66,15 +66,18 @@ services:
 
     command: >
       sh -c "
-
-        mix deps.get &&
-        bun install --cwd assets &&
+        if [ ! -d deps ] || [ -z \"$(ls -A deps 2>/dev/null)\" ]; then
+          mix deps.get;
+        fi &&
+        if [ ! -d assets/node_modules ] || [ -z \"$(ls -A assets/node_modules 2>/dev/null)\" ]; then
+          bun install --cwd assets;
+        fi &&
         mix ecto.create &&
         mix ecto.migrate &&
         mix phx.server
       "
     ports:
-      - "4000:4000"
+      - "4002:4002"
     depends_on:
       app-db-dev:
         condition: service_healthy
