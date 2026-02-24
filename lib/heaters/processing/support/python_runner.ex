@@ -82,7 +82,7 @@ defmodule Heaters.Processing.Support.PythonRunner do
                run_impl: 3,
                handle_port_messages: 5,
                interpret_exit: 3,
-               read_result_file: 1,
+               read_result_file: 2,
                join_lines: 1,
                run_python_task: 3,
                format_task_error: 2
@@ -138,9 +138,12 @@ defmodule Heaters.Processing.Support.PythonRunner do
     with {:ok, json_args} <- encode_args(args),
          {:ok, env} <- build_env(),
          {:ok, port, args_file, result_file} <- open_port(task_name, json_args, env) do
-      result = handle_port_messages(port, [], pubsub_topic, timeout, result_file)
-      File.rm(args_file)
-      result
+      try do
+        handle_port_messages(port, [], pubsub_topic, timeout, result_file)
+      after
+        File.rm(args_file)
+        File.rm(result_file)
+      end
     end
   end
 
@@ -168,6 +171,7 @@ defmodule Heaters.Processing.Support.PythonRunner do
     else
       {:error, reason} ->
         File.rm(args_file)
+        File.rm(result_file)
         {:error, "Failed to create port for task '#{task_name}': #{inspect(reason)}"}
     end
   end
@@ -259,8 +263,8 @@ defmodule Heaters.Processing.Support.PythonRunner do
 
   # Interpret exit status by reading the result file
   @spec interpret_exit(integer(), list(), String.t()) :: {:ok, map()} | {:error, error_reason()}
-  defp interpret_exit(status, _buffer, result_file) when status == 0 do
-    read_result_file(result_file)
+  defp interpret_exit(status, buffer, result_file) when status == 0 do
+    read_result_file(result_file, join_lines(buffer))
   end
 
   defp interpret_exit(status, buffer, _result_file) when status != 0 do
@@ -269,26 +273,21 @@ defmodule Heaters.Processing.Support.PythonRunner do
     {:error, %{exit_status: status, output: output}}
   end
 
-  @spec read_result_file(String.t()) :: {:ok, map()} | {:error, error_reason()}
-  defp read_result_file(path) do
-    result =
-      with {:ok, contents} <- File.read(path),
-           {:ok, decoded} <- Jason.decode(contents) do
-        {:ok, decoded}
-      else
-        {:error, :enoent} ->
-          # Process exited 0 but wrote no result file — treat as bare success
-          {:ok, %{"status" => "success"}}
+  @spec read_result_file(String.t(), String.t()) :: {:ok, map()} | {:error, error_reason()}
+  defp read_result_file(path, output) do
+    with {:ok, contents} <- File.read(path),
+         {:ok, decoded} <- Jason.decode(contents) do
+      {:ok, decoded}
+    else
+      {:error, :enoent} ->
+        {:error, %{reason: :missing_result_file, details: path, output: output}}
 
-        {:error, %Jason.DecodeError{} = reason} ->
-          {:error, %{reason: :json_decode_error, details: reason, output: ""}}
+      {:error, %Jason.DecodeError{} = reason} ->
+        {:error, %{reason: :json_decode_error, details: reason, output: output}}
 
-        {:error, reason} ->
-          {:error, "Failed to read result file #{path}: #{inspect(reason)}"}
-      end
-
-    File.rm(path)
-    result
+      {:error, reason} ->
+        {:error, %{reason: :result_file_read_error, details: reason, output: output}}
+    end
   end
 
   # Join accumulated lines
@@ -366,6 +365,15 @@ defmodule Heaters.Processing.Support.PythonRunner do
 
       %{reason: :json_decode_error, details: details, output: output} ->
         "Python task '#{task_name}' returned invalid JSON: #{inspect(details)}. Output: #{output}"
+
+      %{reason: :missing_result_file, details: path, output: output} ->
+        "Python task '#{task_name}' succeeded but produced no result file at #{path}. Output: #{output}"
+
+      %{reason: :result_file_read_error, details: details, output: output} ->
+        "Python task '#{task_name}' failed reading result file: #{inspect(details)}. Output: #{output}"
+
+      map when is_map(map) ->
+        "Python task '#{task_name}' failed: #{inspect(map)}"
 
       binary when is_binary(binary) ->
         binary
