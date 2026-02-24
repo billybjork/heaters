@@ -61,7 +61,6 @@ defmodule Heaters.Processing.Download.Worker do
 
   defp execute_download(video) do
     config = YtDlpConfig.get_download_config()
-    :ok = YtDlpConfig.validate_config!(config)
 
     download_opts = %{
       url: video.original_url,

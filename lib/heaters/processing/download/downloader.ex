@@ -2,9 +2,8 @@ defmodule Heaters.Processing.Download.Downloader do
   @moduledoc """
   Downloads videos using yt-dlp via System.cmd with a fallback strategy.
 
-  Replaces the Python download.py with native Elixir, eliminating the
-  Python runtime dependency for downloads. All configuration comes from
-  `YtDlpConfig`, all execution happens through the yt-dlp CLI.
+  All configuration comes from `YtDlpConfig`, all execution happens
+  through the yt-dlp CLI.
 
   ## Architecture
 
