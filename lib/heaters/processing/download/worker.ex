@@ -3,30 +3,26 @@ defmodule Heaters.Processing.Download.Worker do
   Download Worker for source video ingestion.
 
   Orchestrates the initial download phase of the video processing pipeline:
-  - Downloads videos from URLs using yt-dlp with quality-focused strategy
+  - Downloads videos from URLs using yt-dlp via System.cmd
   - Applies conditional normalization for primary downloads (fixes merge issues)
   - Stores original files in S3 for downstream processing
   - Chains to encoding stage for pipeline optimization
 
   ## Architecture
 
-  This worker follows the Elixir-orchestrated pattern:
-  - **Configuration**: Provided by `YtDlpConfig` and `FFmpegConfig` modules
-  - **Execution**: Python task receives complete config and focuses on execution
-  - **State Management**: Elixir handles all state transitions and business logic
-
-  See `YtDlpConfig` for yt-dlp configuration details and quality requirements.
+  Uses the native Elixir `Downloader` module instead of Python, eliminating the
+  cross-language serialization layer. Configuration comes from `YtDlpConfig`,
+  execution happens through yt-dlp/ffmpeg CLI calls via `System.cmd`.
   """
 
   use Heaters.Pipeline.WorkerBehavior,
     queue: :media_processing,
-    # 10 minutes with source_video_id uniqueness only
     unique: [period: 600, fields: [:args], keys: [:source_video_id]]
 
   alias Heaters.Media.Videos
   alias Heaters.Pipeline.WorkerBehavior
-  alias Heaters.Processing.Download.{Core, YtDlpConfig}
-  alias Heaters.Processing.Support.PythonRunner, as: PyRunner
+  alias Heaters.Processing.Download.{Core, Downloader, YtDlpConfig}
+  alias Heaters.Processing.Support.FFmpeg.Config, as: FFmpegConfig
   alias Heaters.Processing.Support.ResultBuilder
   alias Heaters.Storage.PipelineCache.TempCache
   alias Heaters.Storage.S3.Core, as: S3
@@ -34,42 +30,12 @@ defmodule Heaters.Processing.Download.Worker do
 
   require Logger
 
-  # Suppress dialyzer warnings for PyRunner calls when environment is not configured.
-  #
-  # JUSTIFICATION: PyRunner requires DEV_DATABASE_URL and DEV_S3_BUCKET_NAME environment
-  # variables. When these are not set (e.g., in unconfigured development environments),
-  # PyRunner will always fail with {:error, "Environment variable ... not set"}.
-  #
-  # This makes success patterns and their dependent functions genuinely unreachable
-  # in such environments. In properly configured environments, these functions WILL
-  # be called and succeed.
-  @dialyzer {:nowarn_function,
-             [
-               handle_work: 1,
-               handle_ingest_work: 1,
-               execute_python_download: 3,
-               process_download_result: 2,
-               finalize_download_success: 4,
-               convert_keys_to_atoms: 1,
-               safe_string_to_atom: 1,
-               handle_temp_cache_download_completion: 2,
-               extract_local_path: 1,
-               upload_to_s3: 2,
-               cache_and_complete: 4,
-               get_file_size: 1,
-               get_format_info: 1,
-               get_quality_metrics: 1,
-               build_resolution_string: 2
-             ]}
-
   @impl WorkerBehavior
   def handle_work(%{"source_video_id" => source_video_id} = args) do
     case Videos.get_source_video(source_video_id) do
       {:ok, source_video} ->
         case check_idempotency(source_video) do
-          :ok ->
-            handle_ingest_work(args)
-
+          :ok -> handle_ingest_work(args)
           {:error, :already_processed} ->
             WorkerBehavior.handle_already_processed("Source video", source_video_id)
         end
@@ -83,255 +49,144 @@ defmodule Heaters.Processing.Download.Worker do
     Logger.info("DownloadWorker: Starting download for source_video_id: #{source_video_id}")
 
     with {:ok, source_video} <- Videos.get_source_video(source_video_id),
-         {:ok, updated_video} <- ensure_downloading_state(source_video),
-         py_args = build_download_py_args(updated_video),
-         {:ok, result} <- execute_python_download(source_video_id, py_args, updated_video) do
-      process_download_result(source_video_id, result)
+         {:ok, video} <- ensure_downloading_state(source_video),
+         {:ok, result} <- execute_download(video) do
+      complete_download(source_video_id, result)
     else
       {:error, reason} ->
-        Logger.error(
-          "DownloadWorker: Failed for source video #{source_video_id}: #{inspect(reason)}"
-        )
-
+        Logger.error("DownloadWorker: Failed for source video #{source_video_id}: #{inspect(reason)}")
         {:error, reason}
     end
   end
 
-  defp build_download_py_args(video) do
-    Logger.info(
-      "DownloadWorker: Running PyRunner for source_video_id: #{video.id}, URL: #{video.original_url}"
-    )
+  defp execute_download(video) do
+    config = YtDlpConfig.get_download_config()
+    :ok = YtDlpConfig.validate_config!(config)
 
-    download_config = YtDlpConfig.get_download_config()
-    :ok = YtDlpConfig.validate_config!(download_config)
-
-    %{
+    download_opts = %{
+      url: video.original_url,
       source_video_id: video.id,
-      input_source: video.original_url,
       timestamp: generate_timestamp(),
-      use_temp_cache: true,
-      download_config: download_config,
-      normalize_args: Heaters.Processing.Support.FFmpeg.Config.get_args(:download_normalization)
+      config: config,
+      normalize_args: FFmpegConfig.get_args(:download_normalization)
     }
-  end
 
-  defp execute_python_download(source_video_id, py_args, video) do
-    case PyRunner.run_python_task("download", py_args, timeout: :timer.minutes(20)) do
+    Logger.info("DownloadWorker: Downloading source_video_id: #{video.id}, URL: #{video.original_url}")
+
+    case Downloader.download(download_opts) do
       {:ok, result} ->
-        Logger.info("DownloadWorker: PyRunner succeeded for source_video_id: #{source_video_id}")
+        Logger.info("DownloadWorker: Download succeeded for source_video_id: #{video.id}")
         {:ok, result}
 
       {:error, reason} ->
-        Logger.error(
-          "DownloadWorker: PyRunner failed for source_video_id: #{source_video_id}: #{inspect(reason)}"
-        )
-
+        Logger.error("DownloadWorker: Download failed for source_video_id: #{video.id}: #{inspect(reason)}")
         Core.mark_failed(video, :download_failed, reason)
         {:error, reason}
     end
   end
 
-  defp process_download_result(source_video_id, result) do
-    metadata = convert_keys_to_atoms(result)
+  defp complete_download(source_video_id, result) do
+    title = get_in(result, [:metadata, :title]) || "video_#{source_video_id}"
+    timestamp = get_in(result, [:metadata, :timestamp]) || generate_timestamp()
+    s3_key = S3Paths.generate_original_path(title, timestamp, ".mp4")
 
-    case handle_temp_cache_download_completion(source_video_id, metadata) do
-      {:ok, updated_video} ->
-        finalize_download_success(source_video_id, updated_video, result, metadata)
+    cache_locally(s3_key, result.local_filepath)
 
+    with {:ok, _} <- upload_to_s3(result.local_filepath, s3_key),
+         {:ok, updated_video} <- save_metadata(source_video_id, result, s3_key) do
+      :ok = Heaters.Pipeline.Config.maybe_chain_next_job(__MODULE__, updated_video)
+      Logger.info("DownloadWorker: Completed and chained for source_video_id: #{source_video_id}")
+
+      build_result(source_video_id, updated_video, result)
+    else
       {:error, reason} ->
-        Logger.error("DownloadWorker: Failed to update video metadata: #{inspect(reason)}")
+        Logger.error("DownloadWorker: Post-download failed: #{inspect(reason)}")
         ResultBuilder.download_error(source_video_id, reason)
     end
   end
 
-  defp finalize_download_success(source_video_id, updated_video, result, metadata) do
-    Logger.info(
-      "DownloadWorker: Successfully completed download for source_video_id: #{source_video_id}"
-    )
-
-    :ok = Heaters.Pipeline.Config.maybe_chain_next_job(__MODULE__, updated_video)
-    Logger.info("DownloadWorker: Successfully chained to next pipeline stage")
-
-    download_result =
-      ResultBuilder.download_success(source_video_id, updated_video.filepath, %{
-        title: updated_video.title,
-        duration_seconds: updated_video.duration_seconds,
-        file_size_bytes: get_file_size(result),
-        format_info: get_format_info(result),
-        quality_metrics: get_quality_metrics(result),
-        metadata: metadata
-      })
-
-    ResultBuilder.log_result(__MODULE__, download_result)
-    download_result
-  end
-
-  # Helper function to ensure video is in downloading state, handling resumable processing
-  defp ensure_downloading_state(source_video) do
-    case source_video.ingest_state do
-      :downloading ->
-        Logger.info(
-          "DownloadWorker: Video #{source_video.id} already in downloading state, resuming"
-        )
-
-        {:ok, source_video}
-
-      _ ->
-        # Transition to downloading state for new/failed videos
-        Core.start_downloading(source_video.id)
-    end
-  end
-
-  # Idempotency Check: Ensures we don't re-process completed work.
-  # Now supports resumable processing of interrupted jobs.
-  defp check_idempotency(%{ingest_state: :new}), do: :ok
-  # Allow resuming interrupted jobs
-  defp check_idempotency(%{ingest_state: :downloading}), do: :ok
-  defp check_idempotency(%{ingest_state: :download_failed}), do: :ok
-  defp check_idempotency(_), do: {:error, :already_processed}
-
-  defp convert_keys_to_atoms(map) when is_map(map) do
-    for {key, value} <- map, into: %{} do
-      {safe_string_to_atom(key), convert_keys_to_atoms(value)}
-    end
-  end
-
-  defp convert_keys_to_atoms(list) when is_list(list) do
-    for item <- list, do: convert_keys_to_atoms(item)
-  end
-
-  defp convert_keys_to_atoms(other), do: other
-
-  # Allowlist of known metadata keys from Python download task
-  @known_metadata_keys %{
-    "filepath" => :filepath,
-    "local_filepath" => :local_filepath,
-    "title" => :title,
-    "duration" => :duration,
-    "filesize" => :filesize,
-    "format_id" => :format_id,
-    "ext" => :ext,
-    "width" => :width,
-    "height" => :height,
-    "fps" => :fps,
-    "vcodec" => :vcodec,
-    "acodec" => :acodec,
-    "format" => :format,
-    "resolution" => :resolution,
-    "filesize_approx" => :filesize_approx,
-    "metadata" => :metadata,
-    "duration_seconds" => :duration_seconds,
-    "file_size_bytes" => :file_size_bytes,
-    "status" => :status
-  }
-
-  # Safe atom conversion with allowlist for expected metadata keys
-  # Unknown keys remain as strings to avoid atom table pollution
-  defp safe_string_to_atom(key) when is_binary(key) do
-    Map.get(@known_metadata_keys, key, key)
-  end
-
-  defp safe_string_to_atom(key), do: key
-
-  # Handle download completion when using temp cache
-  # Uses pattern matching to validate required paths before proceeding
-  defp handle_temp_cache_download_completion(source_video_id, metadata) do
-    title = get_in(metadata, [:metadata, :title]) || "video_#{source_video_id}"
-    timestamp = get_in(metadata, [:metadata, :timestamp]) || generate_timestamp()
-    s3_key = S3Paths.generate_original_path(title, timestamp, ".mp4")
-
-    with {:ok, local_path} <- extract_local_path(metadata),
-         :ok <- Logger.info("DownloadWorker: Starting native Elixir S3 upload for #{s3_key}"),
-         {:ok, ^s3_key} <- upload_to_s3(local_path, s3_key) do
-      Logger.info("DownloadWorker: Successfully uploaded to S3: #{s3_key}")
-      cache_and_complete(source_video_id, metadata, s3_key, local_path)
-    else
-      {:error, :missing_local_path} ->
-        Logger.error(
-          "DownloadWorker: Missing local_filepath in metadata: #{inspect(Map.keys(metadata))}"
-        )
-
-        {:error, "Missing required file paths from Python download task"}
-
-      {:error, upload_reason} ->
-        Logger.error("DownloadWorker: S3 upload failed: #{inspect(upload_reason)}")
-        {:error, "S3 upload failed: #{inspect(upload_reason)}"}
-    end
-  end
-
-  # Extract local path from metadata, returning error tuple if missing
-  defp extract_local_path(%{local_filepath: local_path}) when is_binary(local_path) do
-    {:ok, local_path}
-  end
-
-  defp extract_local_path(_metadata), do: {:error, :missing_local_path}
-
-  # Upload file to S3 with progress reporting
   defp upload_to_s3(local_path, s3_key) do
+    Logger.info("DownloadWorker: Uploading to S3: #{s3_key}")
+
     S3.upload_file_with_progress(local_path, s3_key,
       operation_name: "Download",
       storage_class: "STANDARD"
     )
   end
 
-  # Cache the file and complete the download, handling cache failures gracefully
-  defp cache_and_complete(source_video_id, metadata, s3_key, local_path) do
+  defp cache_locally(s3_key, local_path) do
     case TempCache.put(s3_key, local_path) do
-      {:ok, _cached_path} ->
-        Logger.info("DownloadWorker: Cached download result for pipeline chaining")
-
-      {:error, reason} ->
-        Logger.warning("DownloadWorker: Failed to cache download result: #{inspect(reason)}")
+      {:ok, _} -> Logger.info("DownloadWorker: Cached for pipeline chaining")
+      {:error, reason} -> Logger.warning("DownloadWorker: Cache failed: #{inspect(reason)}")
     end
-
-    # Update database with correct S3 path (proceed regardless of cache success)
-    updated_metadata = Map.put(metadata, :filepath, s3_key)
-    Core.complete_downloading(source_video_id, updated_metadata)
   end
 
-  # Generate timestamp for unique file naming (matches S3.Paths format)
+  defp save_metadata(source_video_id, result, s3_key) do
+    metadata = %{
+      filepath: s3_key,
+      duration_seconds: result.duration_seconds,
+      fps: result.fps,
+      width: result.width,
+      height: result.height,
+      metadata: result.metadata
+    }
+
+    Core.complete_downloading(source_video_id, metadata)
+  end
+
+  defp build_result(source_video_id, updated_video, result) do
+    download_result =
+      ResultBuilder.download_success(source_video_id, updated_video.filepath, %{
+        title: updated_video.title,
+        duration_seconds: updated_video.duration_seconds,
+        file_size_bytes: result.file_size_bytes,
+        format_info: %{
+          width: result.width,
+          height: result.height,
+          fps: result.fps
+        } |> reject_nil_values(),
+        quality_metrics: %{
+          resolution: build_resolution_string(result.width, result.height),
+          fps: result.fps
+        } |> reject_nil_values()
+      })
+
+    ResultBuilder.log_result(__MODULE__, download_result)
+    download_result
+  end
+
+  # -- Helpers -----------------------------------------------------------------
+
+  defp ensure_downloading_state(source_video) do
+    case source_video.ingest_state do
+      :downloading ->
+        Logger.info("DownloadWorker: Video #{source_video.id} already in downloading state, resuming")
+        {:ok, source_video}
+
+      _ ->
+        Core.start_downloading(source_video.id)
+    end
+  end
+
+  defp check_idempotency(%{ingest_state: state}) when state in [:new, :downloading, :download_failed], do: :ok
+  defp check_idempotency(_), do: {:error, :already_processed}
+
   defp generate_timestamp do
     DateTime.utc_now()
     |> DateTime.to_naive()
     |> NaiveDateTime.truncate(:second)
     |> NaiveDateTime.to_string()
-    |> String.replace("-", "")
-    |> String.replace(":", "")
-    |> String.replace(" ", "_")
-  end
-
-  # Metadata extraction helpers for structured results
-  defp get_file_size(result) do
-    result["filesize"] || result["filesize_approx"]
-  end
-
-  defp get_format_info(result) do
-    %{
-      format_id: result["format_id"],
-      ext: result["ext"],
-      width: result["width"],
-      height: result["height"],
-      fps: result["fps"],
-      vcodec: result["vcodec"],
-      acodec: result["acodec"],
-      resolution: result["resolution"]
-    }
-    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-    |> Enum.into(%{})
-  end
-
-  defp get_quality_metrics(result) do
-    %{
-      resolution: build_resolution_string(result["width"], result["height"]),
-      fps: result["fps"],
-      codec: result["vcodec"],
-      format_note: result["format"]
-    }
-    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-    |> Enum.into(%{})
+    |> String.replace(~r/[-: ]/, fn
+      " " -> "_"
+      _ -> ""
+    end)
   end
 
   defp build_resolution_string(nil, _), do: nil
   defp build_resolution_string(_, nil), do: nil
-  defp build_resolution_string(width, height), do: "#{width}x#{height}"
+  defp build_resolution_string(w, h), do: "#{w}x#{h}"
+
+  defp reject_nil_values(map) do
+    map |> Enum.reject(fn {_k, v} -> is_nil(v) end) |> Map.new()
+  end
 end
