@@ -2,6 +2,11 @@ defmodule Heaters.Processing.Support.PythonRunner do
   @moduledoc """
   Spawn-and-monitor a Python task through an OS port, with
   environment injection and Phoenix-PubSub progress streaming.
+
+  Arguments are passed via a temporary JSON file (--args-file).
+  Results are returned via a separate temporary JSON file (--result-file),
+  keeping stdout purely for logging and progress streaming.
+  Both temp files are cleaned up after execution.
   """
 
   alias HeatersWeb.Endpoint
@@ -73,11 +78,11 @@ defmodule Heaters.Processing.Support.PythonRunner do
   @dialyzer {:nowarn_function,
              [
                open_port: 3,
-               create_port: 3,
+               create_port: 4,
                run_impl: 3,
-               handle_port_messages: 4,
-               interpret_exit: 2,
-               extract_final_json: 1,
+               handle_port_messages: 5,
+               interpret_exit: 3,
+               read_result_file: 1,
                join_lines: 1,
                run_python_task: 3,
                format_task_error: 2
@@ -132,8 +137,10 @@ defmodule Heaters.Processing.Support.PythonRunner do
 
     with {:ok, json_args} <- encode_args(args),
          {:ok, env} <- build_env(),
-         {:ok, port} <- open_port(task_name, json_args, env) do
-      handle_port_messages(port, [], pubsub_topic, timeout)
+         {:ok, port, args_file, result_file} <- open_port(task_name, json_args, env) do
+      result = handle_port_messages(port, [], pubsub_topic, timeout, result_file)
+      File.rm(args_file)
+      result
     end
   end
 
@@ -148,24 +155,35 @@ defmodule Heaters.Processing.Support.PythonRunner do
   end
 
   # Port creation with error handling
-  @spec open_port(String.t(), String.t(), list()) :: {:ok, port()} | {:error, String.t()}
+  @spec open_port(String.t(), String.t(), list()) ::
+          {:ok, port(), String.t(), String.t()} | {:error, String.t()}
   defp open_port(task_name, json_args, env) do
-    tmp_file =
-      Path.join(System.tmp_dir!(), "py_args_#{System.unique_integer([:positive])}.json")
+    unique = System.unique_integer([:positive])
+    args_file = Path.join(System.tmp_dir!(), "py_args_#{unique}.json")
+    result_file = Path.join(System.tmp_dir!(), "py_result_#{unique}.json")
 
-    with :ok <- File.write(tmp_file, json_args),
-         {:ok, port} <- create_port(task_name, tmp_file, env) do
-      {:ok, port}
+    with :ok <- File.write(args_file, json_args),
+         {:ok, port} <- create_port(task_name, args_file, result_file, env) do
+      {:ok, port, args_file, result_file}
     else
       {:error, reason} ->
+        File.rm(args_file)
         {:error, "Failed to create port for task '#{task_name}': #{inspect(reason)}"}
     end
   end
 
   # Port creation with explicit error handling
-  @spec create_port(String.t(), String.t(), list()) :: {:ok, port()} | {:error, String.t()}
-  defp create_port(task_name, tmp_file, env) do
-    args = [runner_script_path(), task_name, "--args-file", tmp_file]
+  @spec create_port(String.t(), String.t(), String.t(), list()) ::
+          {:ok, port()} | {:error, String.t()}
+  defp create_port(task_name, args_file, result_file, env) do
+    args = [
+      runner_script_path(),
+      task_name,
+      "--args-file",
+      args_file,
+      "--result-file",
+      result_file
+    ]
 
     try do
       port =
@@ -191,27 +209,27 @@ defmodule Heaters.Processing.Support.PythonRunner do
   end
 
   # Message handling with timeout
-  @spec handle_port_messages(port(), list(), String.t() | nil, pos_integer()) ::
+  @spec handle_port_messages(port(), list(), String.t() | nil, pos_integer(), String.t()) ::
           {:ok, map()} | {:error, error_reason()}
-  defp handle_port_messages(port, buffer, pubsub_topic, timeout) do
+  defp handle_port_messages(port, buffer, pubsub_topic, timeout, result_file) do
     receive do
       {^port, {:data, {:eol, line}}} ->
         trimmed = String.trim(line)
         Logger.info("[py] " <> trimmed)
         if pubsub_topic, do: Endpoint.broadcast(pubsub_topic, "progress", %{line: trimmed})
-        handle_port_messages(port, [trimmed | buffer], pubsub_topic, timeout)
+        handle_port_messages(port, [trimmed | buffer], pubsub_topic, timeout, result_file)
 
       {^port, {:data, {:noeol, line}}} ->
         trimmed = String.trim(line)
         Logger.info("[py] " <> trimmed)
         if pubsub_topic, do: Endpoint.broadcast(pubsub_topic, "progress", %{line: trimmed})
-        handle_port_messages(port, [trimmed | buffer], pubsub_topic, timeout)
+        handle_port_messages(port, [trimmed | buffer], pubsub_topic, timeout, result_file)
 
       {^port, {:data, line}} when is_binary(line) ->
         trimmed = String.trim(line)
         Logger.info("[py] " <> trimmed)
         if pubsub_topic, do: Endpoint.broadcast(pubsub_topic, "progress", %{line: trimmed})
-        handle_port_messages(port, [trimmed | buffer], pubsub_topic, timeout)
+        handle_port_messages(port, [trimmed | buffer], pubsub_topic, timeout, result_file)
 
       {^port, {:exit_status, status}} ->
         # Port already closed, don't try to close it again
@@ -222,7 +240,7 @@ defmodule Heaters.Processing.Support.PythonRunner do
           Logger.error("PyRunner: Full output: #{output}")
         end
 
-        interpret_exit(status, buffer)
+        interpret_exit(status, buffer, result_file)
 
       {:DOWN, _ref, :port, ^port, reason} ->
         Port.close(port)
@@ -230,7 +248,7 @@ defmodule Heaters.Processing.Support.PythonRunner do
         {:error, %{reason: :port_died, details: reason, output: join_lines(buffer)}}
 
       _other ->
-        handle_port_messages(port, buffer, pubsub_topic, timeout)
+        handle_port_messages(port, buffer, pubsub_topic, timeout, result_file)
     after
       timeout ->
         Port.close(port)
@@ -239,49 +257,38 @@ defmodule Heaters.Processing.Support.PythonRunner do
     end
   end
 
-  # Interpret exit status
-  @spec interpret_exit(integer(), list()) :: {:ok, map()} | {:error, error_reason()}
-  defp interpret_exit(status, buffer) when status == 0 do
-    case extract_final_json(buffer) do
-      {:ok, payload} -> {:ok, payload}
-      :no_json -> {:ok, %{"status" => "success"}}
-      {:error, err} -> {:error, err}
-    end
+  # Interpret exit status by reading the result file
+  @spec interpret_exit(integer(), list(), String.t()) :: {:ok, map()} | {:error, error_reason()}
+  defp interpret_exit(status, _buffer, result_file) when status == 0 do
+    read_result_file(result_file)
   end
 
-  defp interpret_exit(status, buffer) when status != 0 do
+  defp interpret_exit(status, buffer, _result_file) when status != 0 do
     output = join_lines(buffer)
     Logger.error("PyRunner: Process exited with status #{status}")
     {:error, %{exit_status: status, output: output}}
   end
 
-  @spec extract_final_json([String.t()]) :: {:ok, map()} | :no_json | {:error, error_reason()}
-  defp extract_final_json(lines) do
-    # Find the index of the line that starts with FINAL_JSON:
-    final_json_index = Enum.find_index(lines, &String.starts_with?(&1, "FINAL_JSON:"))
+  @spec read_result_file(String.t()) :: {:ok, map()} | {:error, error_reason()}
+  defp read_result_file(path) do
+    result =
+      with {:ok, contents} <- File.read(path),
+           {:ok, decoded} <- Jason.decode(contents) do
+        {:ok, decoded}
+      else
+        {:error, :enoent} ->
+          # Process exited 0 but wrote no result file — treat as bare success
+          {:ok, %{"status" => "success"}}
 
-    case final_json_index do
-      nil ->
-        :no_json
+        {:error, %Jason.DecodeError{} = reason} ->
+          {:error, %{reason: :json_decode_error, details: reason, output: ""}}
 
-      index ->
-        # Get all lines from FINAL_JSON: onwards (lines are in reverse order)
-        json_lines = Enum.take(lines, index + 1) |> Enum.reverse()
+        {:error, reason} ->
+          {:error, "Failed to read result file #{path}: #{inspect(reason)}"}
+      end
 
-        # Extract JSON from the first line and join with remaining lines
-        ["FINAL_JSON:" <> first_json_part | remaining_lines] = json_lines
-
-        # Join all JSON parts together
-        complete_json = [String.trim(first_json_part) | remaining_lines] |> Enum.join("")
-
-        case Jason.decode(complete_json) do
-          {:ok, decoded} ->
-            {:ok, decoded}
-
-          {:error, reason} ->
-            {:error, %{reason: :json_decode_error, details: reason, output: join_lines(lines)}}
-        end
-    end
+    File.rm(path)
+    result
   end
 
   # Join accumulated lines
