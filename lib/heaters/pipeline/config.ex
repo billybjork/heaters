@@ -135,6 +135,7 @@ defmodule Heaters.Pipeline.Config do
 
   Each stage contains:
   - `label`: Human-readable description for logging
+  - `worker_module`: Worker that owns this stage (used for next-stage lookup)
   - `query`: Function that returns items to process (for DB query stages)
   - `build`: Function that builds an Oban job from an item (for DB query stages)
   - `call`: Function to execute directly (for action stages)
@@ -146,6 +147,7 @@ defmodule Heaters.Pipeline.Config do
       # State 1: Download (chains to encode stage)
       %{
         label: "videos needing download",
+        worker_module: DownloadWorker,
         query: fn -> PipelineQueries.get_videos_needing_ingest() end,
         build: fn video -> DownloadWorker.new(%{source_video_id: video.id}) end,
         next_stage: %{
@@ -160,6 +162,7 @@ defmodule Heaters.Pipeline.Config do
       # State 2: Encode (chains to scene detection stage)
       %{
         label: "videos needing encoding → proxy generation",
+        worker_module: EncodeWorker,
         query: fn -> PipelineQueries.get_videos_needing_encoding() end,
         build: fn video -> EncodeWorker.new(%{source_video_id: video.id}) end,
         next_stage: %{
@@ -176,6 +179,7 @@ defmodule Heaters.Pipeline.Config do
       # State 3: Scene detection (chains to cache persistence stage)
       %{
         label: "videos needing scene detection → virtual clips",
+        worker_module: DetectScenesWorker,
         query: fn -> PipelineQueries.get_videos_needing_scene_detection() end,
         build: fn video -> DetectScenesWorker.new(%{source_video_id: video.id}) end,
         next_stage: %{
@@ -194,6 +198,7 @@ defmodule Heaters.Pipeline.Config do
       # State 4: Cache persistence (end of video processing)
       %{
         label: "videos needing cache persistence → S3 persistence",
+        worker_module: PersistCacheWorker,
         query: fn -> PipelineQueries.get_videos_needing_cache_persistence() end,
         build: fn video -> PersistCacheWorker.new(%{source_video_id: video.id}) end
       },
@@ -203,6 +208,7 @@ defmodule Heaters.Pipeline.Config do
       # State 5: Export (chains to keyframes stage)
       %{
         label: "approved virtual clips → export",
+        worker_module: ExportWorker,
         query: fn -> PipelineQueries.get_virtual_clips_ready_for_export() end,
         build: fn clip ->
           ExportWorker.new(%{
@@ -222,6 +228,7 @@ defmodule Heaters.Pipeline.Config do
       # State 6: Keyframes (chains to embeddings stage)
       %{
         label: "exported clips needing keyframes",
+        worker_module: KeyframeWorker,
         query: fn -> PipelineQueries.get_clips_needing_keyframes() end,
         build: fn clip ->
           KeyframeWorker.new(%{clip_id: clip.id, strategy: default_keyframe_strategy()})
@@ -244,6 +251,7 @@ defmodule Heaters.Pipeline.Config do
       # State 7: Embeddings
       %{
         label: "keyframed clips needing embeddings",
+        worker_module: EmbeddingWorker,
         query: fn -> PipelineQueries.get_clips_needing_embeddings() end,
         build: fn clip ->
           kf = default_keyframe_strategy()
@@ -259,6 +267,7 @@ defmodule Heaters.Pipeline.Config do
       # State 8: Vector sync
       %{
         label: "clips needing vector sync",
+        worker_module: EmbeddingWorker,
         query: fn ->
           kf = default_keyframe_strategy()
 
@@ -304,37 +313,11 @@ defmodule Heaters.Pipeline.Config do
   """
   @spec find_next_stage_for_worker(module()) :: {:ok, map()} | {:error, :not_found}
   def find_next_stage_for_worker(worker_module) do
-    # Create a mapping of workers to their stages for direct lookup
-    worker_to_stage = %{
-      Heaters.Processing.Download.Worker => "videos needing download",
-      Heaters.Processing.Encode.Worker => "videos needing encoding → proxy generation",
-      Heaters.Processing.DetectScenes.Worker => "videos needing scene detection → virtual clips",
-      Heaters.Storage.PipelineCache.PersistCache.Worker =>
-        "videos needing cache upload → S3 upload",
-      Heaters.Processing.Export.Worker => "approved virtual clips → rolling export",
-      Heaters.Processing.Keyframe.Worker => "exported clips needing keyframes",
-      Heaters.Processing.Embed.Worker => "keyframed clips needing embeddings"
-    }
-
-    target_stage_label = Map.get(worker_to_stage, worker_module)
-
-    if target_stage_label do
-      found_stage =
-        stages()
-        |> Enum.find(fn stage -> stage.label == target_stage_label end)
-
-      case found_stage do
-        %{next_stage: next_stage} ->
-          {:ok, next_stage}
-
-        %{} = _stage ->
-          {:error, :not_found}
-
-        nil ->
-          {:error, :not_found}
-      end
-    else
-      {:error, :not_found}
+    stages()
+    |> Enum.find(fn stage -> stage[:worker_module] == worker_module end)
+    |> case do
+      %{next_stage: next_stage} -> {:ok, next_stage}
+      _ -> {:error, :not_found}
     end
   end
 
@@ -342,30 +325,41 @@ defmodule Heaters.Pipeline.Config do
   Execute state transition for a worker if configured.
   """
   @spec maybe_chain_next_job(module(), any()) :: :ok | {:error, any()}
-  def maybe_chain_next_job(current_worker, item) do
+  def maybe_chain_next_job(current_worker, item),
+    do: maybe_chain_next_job(current_worker, item, &Oban.insert/1)
+
+  @spec maybe_chain_next_job(module(), any(), (Oban.Job.changeset() ->
+                                                 {:ok, Oban.Job.t()} | {:error, any()})) ::
+          :ok | {:error, any()}
+  def maybe_chain_next_job(current_worker, item, insert_fun) when is_function(insert_fun, 1) do
     case find_next_stage_for_worker(current_worker) do
       {:ok, next_stage_config} ->
-        execute_chain_if_condition_met(current_worker, item, next_stage_config)
+        execute_chain_if_condition_met(current_worker, item, next_stage_config, insert_fun)
 
       {:error, :not_found} ->
         :ok
     end
   end
 
-  defp execute_chain_if_condition_met(current_worker, item, %{
-         worker: next_worker,
-         condition: condition_fn,
-         args: args_fn
-       }) do
+  defp execute_chain_if_condition_met(
+         current_worker,
+         item,
+         %{
+           worker: next_worker,
+           condition: condition_fn,
+           args: args_fn
+         },
+         insert_fun
+       ) do
     if condition_fn.(item) do
-      execute_chained_worker(current_worker, item, next_worker, args_fn.(item))
+      execute_chained_worker(current_worker, item, next_worker, args_fn.(item), insert_fun)
     else
       :ok
     end
   end
 
-  defp execute_chained_worker(current_worker, item, next_worker, args) do
-    case Oban.insert(next_worker.new(args)) do
+  defp execute_chained_worker(current_worker, item, next_worker, args, insert_fun) do
+    case insert_fun.(next_worker.new(args)) do
       {:ok, %Oban.Job{id: job_id}} ->
         Logger.info(
           "PipelineConfig: Chained #{inspect(current_worker)} → #{inspect(next_worker)} " <>

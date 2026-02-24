@@ -315,21 +315,12 @@ defmodule Heaters.Processing.Download.Downloader do
   # -- Title extraction from info JSON written during download ----------------
 
   defp read_info_json_title(temp_dir) do
-    case Path.wildcard(Path.join(temp_dir, "*.info.json")) do
-      [info_path | _] ->
-        case File.read(info_path) do
-          {:ok, content} ->
-            case Jason.decode(content) do
-              {:ok, %{"title" => title}} -> title
-              _ -> nil
-            end
-
-          _ ->
-            nil
-        end
-
-      [] ->
-        nil
+    with [info_path | _] <- Path.wildcard(Path.join(temp_dir, "*.info.json")),
+         {:ok, content} <- File.read(info_path),
+         {:ok, %{"title" => title}} <- Jason.decode(content) do
+      title
+    else
+      _ -> nil
     end
   end
 
@@ -388,9 +379,8 @@ defmodule Heaters.Processing.Download.Downloader do
 
   defp validate_dependencies(_url) do
     with :ok <- check_executable("yt-dlp"),
-         :ok <- check_executable("ffprobe"),
-         :ok <- check_executable("ffmpeg") do
-      :ok
+         :ok <- check_executable("ffprobe") do
+      check_executable("ffmpeg")
     end
   end
 
