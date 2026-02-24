@@ -123,6 +123,43 @@ defmodule Heaters.Processing.Download.YtDlpConfig do
     end
   end
 
+  @doc """
+  Validates a yt-dlp configuration against quality requirements.
+
+  Prevents common mistakes that reduce download quality from 4K to 360p.
+  """
+  @spec validate_config!(map()) :: :ok | no_return()
+  def validate_config!(config) when is_map(config) do
+    if Map.has_key?(config, :extractor_args) do
+      raise ArgumentError,
+            "extractor_args will reduce available formats from ~49 to ~5, " <>
+              "blocking 4K/8K quality. Remove extractor_args to let yt-dlp " <>
+              "auto-select optimal clients."
+    end
+
+    format_strategies = Map.get(config, :format_strategies, %{})
+
+    for {strategy_name, strategy} <- format_strategies do
+      format_str = Map.get(strategy, :format, "")
+
+      if String.contains?(format_str, "[height<=") do
+        raise ArgumentError,
+              "Height restrictions in #{strategy_name} format will block 4K (2160p) " <>
+                "and 1440p downloads. Remove height restrictions from format strings."
+      end
+
+      if strategy_name == :primary and String.contains?(format_str, "[ext=") and
+           String.contains?(format_str, "bv*") do
+        IO.warn(
+          "Extension restrictions in primary format may block VP9/AV1 4K streams. " <>
+            "Consider using unrestricted format for maximum quality."
+        )
+      end
+    end
+
+    :ok
+  end
+
   ## Private Implementation
 
   @spec get_base_options(keyword()) :: map()

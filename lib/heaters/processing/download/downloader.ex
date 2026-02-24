@@ -47,14 +47,17 @@ defmodule Heaters.Processing.Download.Downloader do
   @spec download(download_opts()) :: {:ok, download_result()} | {:error, String.t()}
   def download(%{url: url, source_video_id: source_video_id, timestamp: timestamp} = opts) do
     config = Map.get(opts, :config, YtDlpConfig.get_download_config())
-    normalize_args = Map.get(opts, :normalize_args, FFmpegConfig.get_args(:download_normalization))
+
+    normalize_args =
+      Map.get(opts, :normalize_args, FFmpegConfig.get_args(:download_normalization))
 
     with :ok <- validate_dependencies(url),
          {:ok, temp_dir} <- create_temp_dir() do
       try do
         strategies = strategies_as_list(config.format_strategies)
 
-        with {:ok, downloaded_path, strategy} <- download_with_fallback(url, temp_dir, strategies, config),
+        with {:ok, downloaded_path, strategy} <-
+               download_with_fallback(url, temp_dir, strategies, config),
              final_path <- maybe_normalize(downloaded_path, temp_dir, strategy, normalize_args),
              :ok <- validate_file(final_path),
              probe <- extract_metadata(final_path),
@@ -126,53 +129,105 @@ defmodule Heaters.Processing.Download.Downloader do
       end
     rescue
       e in ErlangError ->
-        {:error, "timed out after #{div(download_timeout(config), 1_000)}s: #{Exception.message(e)}"}
+        {:error,
+         "timed out after #{div(download_timeout(config), 1_000)}s: #{Exception.message(e)}"}
     end
   end
 
   defp build_ytdlp_args(url, temp_dir, format, config) do
-    base = config.base_options
-    timeouts = config.timeout_config
+    base = Map.get(config, :base_options, %{})
+    timeouts = Map.get(config, :timeout_config, %{})
 
-    [
+    static_args = [
       # Format selection
-      "-f", format,
-      "--merge-output-format", "mp4",
+      "-f",
+      format,
+      "--merge-output-format",
+      to_string(Map.get(base, :merge_output_format, "mp4")),
 
       # Output template
-      "-o", Path.join(temp_dir, "%(title).200B.%(ext)s"),
+      "-o",
+      Path.join(temp_dir, "%(title).200B.%(ext)s"),
 
       # Reliability
-      "--retries", to_string(Map.get(base, :retries, 3)),
-      "--fragment-retries", to_string(Map.get(base, :fragment_retries, 5)),
-      "--socket-timeout", to_string(Map.get(timeouts, :socket_timeout, 300)),
+      "--retries",
+      to_string(Map.get(base, :retries, 3)),
+      "--fragment-retries",
+      to_string(Map.get(base, :fragment_retries, 5)),
+      "--socket-timeout",
+      to_string(Map.get(timeouts, :socket_timeout, 300)),
 
       # Single video only
-      "--no-playlist",
-      "--playlist-items", "1",
-
-      # No caching (prevents stale video downloads)
-      "--no-cache-dir",
+      "--playlist-items",
+      to_string(Map.get(base, :playlist_items, "1")),
 
       # Filesystem
-      "--restrict-filenames",
       "--no-overwrites",
 
-      # Certificate handling
-      "--no-check-certificates",
-
-      # FFmpeg postprocessor args for merge operations
-      "--postprocessor-args", "ffmpeg_i:-err_detect ignore_err -fflags +genpts",
-
       # Concurrent fragment downloads for speed
-      "--concurrent-fragments", to_string(Map.get(base, :concurrent_fragment_downloads, 5)),
+      "--concurrent-fragments",
+      to_string(Map.get(base, :concurrent_fragment_downloads, 5)),
 
       # Write info JSON for title/metadata extraction without extra network call
-      "--write-info-json",
-
-      # The URL
-      url
+      "--write-info-json"
     ]
+
+    option_args =
+      []
+      |> maybe_add_flag(Map.get(base, :ignoreerrors, false), "--ignore-errors")
+      |> maybe_add_flag(not Map.get(base, :ignoreerrors, false), "--abort-on-error")
+      |> maybe_add_flag(Map.get(base, :noplaylist, true), "--no-playlist")
+      |> maybe_add_flag(Map.get(base, :extract_flat, false), "--flat-playlist")
+      |> maybe_add_flag(not Map.get(base, :extract_flat, false), "--no-flat-playlist")
+      |> maybe_add_cache_args(base)
+      |> maybe_add_flag(Map.get(base, :restrictfilenames, true), "--restrict-filenames")
+      |> maybe_add_flag(Map.get(base, :nocheckcertificate, true), "--no-check-certificates")
+      |> maybe_add_flag(
+        Map.get(base, :skip_unavailable_fragments, true),
+        "--skip-unavailable-fragments"
+      )
+      |> maybe_add_flag(
+        not Map.get(base, :skip_unavailable_fragments, true),
+        "--no-skip-unavailable-fragments"
+      )
+      |> maybe_add_flag(Map.get(base, :embedmetadata, false), "--embed-metadata")
+      |> maybe_add_flag(not Map.get(base, :embedmetadata, false), "--no-embed-metadata")
+      |> maybe_add_flag(Map.get(base, :embedthumbnail, false), "--embed-thumbnail")
+      |> maybe_add_flag(not Map.get(base, :embedthumbnail, false), "--no-embed-thumbnail")
+      |> maybe_add_option(Map.get(base, :external_downloader), "--downloader")
+      |> maybe_add_option(build_postprocessor_args(base), "--postprocessor-args")
+
+    static_args ++ option_args ++ [url]
+  end
+
+  defp maybe_add_flag(args, true, flag), do: args ++ [flag]
+  defp maybe_add_flag(args, _value, _flag), do: args
+
+  defp maybe_add_option(args, value, flag) when is_binary(value) and value != "" do
+    args ++ [flag, value]
+  end
+
+  defp maybe_add_option(args, _value, _flag), do: args
+
+  defp maybe_add_cache_args(args, base) do
+    no_cache_dir = Map.get(base, :no_cache_dir, false)
+    cache_dir = Map.get(base, :cachedir)
+
+    cond do
+      no_cache_dir or cache_dir == false -> args ++ ["--no-cache-dir"]
+      is_binary(cache_dir) and cache_dir != "" -> args ++ ["--cache-dir", cache_dir]
+      true -> args
+    end
+  end
+
+  defp build_postprocessor_args(base) do
+    case get_in(base, [:postprocessor_args, :ffmpeg_i]) do
+      ffmpeg_i_args when is_list(ffmpeg_i_args) and ffmpeg_i_args != [] ->
+        "ffmpeg_i:" <> Enum.join(ffmpeg_i_args, " ")
+
+      _ ->
+        nil
+    end
   end
 
   # -- Normalization -----------------------------------------------------------
@@ -199,7 +254,10 @@ defmodule Heaters.Processing.Download.Downloader do
           end
 
         {output, code} ->
-          Logger.warning("Normalization failed (exit #{code}), using original: #{String.slice(output, 0, 300)}")
+          Logger.warning(
+            "Normalization failed (exit #{code}), using original: #{String.slice(output, 0, 300)}"
+          )
+
           path
       end
     rescue
@@ -213,9 +271,12 @@ defmodule Heaters.Processing.Download.Downloader do
 
   defp extract_metadata(path) do
     args = [
-      "-v", "quiet",
-      "-print_format", "json",
-      "-show_format", "-show_streams",
+      "-v",
+      "quiet",
+      "-print_format",
+      "json",
+      "-show_format",
+      "-show_streams",
       to_string(path)
     ]
 
@@ -348,6 +409,7 @@ defmodule Heaters.Processing.Download.Downloader do
     |> Enum.filter(&Map.has_key?(strategies, &1))
     |> Enum.map(fn key ->
       strategy = Map.fetch!(strategies, key)
+
       %{
         name: to_string(key),
         format: strategy.format,

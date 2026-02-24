@@ -35,7 +35,9 @@ defmodule Heaters.Processing.Download.Worker do
     case Videos.get_source_video(source_video_id) do
       {:ok, source_video} ->
         case check_idempotency(source_video) do
-          :ok -> handle_ingest_work(args)
+          :ok ->
+            handle_ingest_work(args)
+
           {:error, :already_processed} ->
             WorkerBehavior.handle_already_processed("Source video", source_video_id)
         end
@@ -54,13 +56,17 @@ defmodule Heaters.Processing.Download.Worker do
       complete_download(source_video_id, result)
     else
       {:error, reason} ->
-        Logger.error("DownloadWorker: Failed for source video #{source_video_id}: #{inspect(reason)}")
+        Logger.error(
+          "DownloadWorker: Failed for source video #{source_video_id}: #{inspect(reason)}"
+        )
+
         {:error, reason}
     end
   end
 
   defp execute_download(video) do
     config = YtDlpConfig.get_download_config()
+    :ok = YtDlpConfig.validate_config!(config)
 
     download_opts = %{
       url: video.original_url,
@@ -70,15 +76,42 @@ defmodule Heaters.Processing.Download.Worker do
       normalize_args: FFmpegConfig.get_args(:download_normalization)
     }
 
-    Logger.info("DownloadWorker: Downloading source_video_id: #{video.id}, URL: #{video.original_url}")
+    Logger.info(
+      "DownloadWorker: Downloading source_video_id: #{video.id}, URL: #{video.original_url}"
+    )
 
-    case Downloader.download(download_opts) do
-      {:ok, result} ->
-        Logger.info("DownloadWorker: Download succeeded for source_video_id: #{video.id}")
-        {:ok, result}
+    try do
+      case Downloader.download(download_opts) do
+        {:ok, result} ->
+          Logger.info("DownloadWorker: Download succeeded for source_video_id: #{video.id}")
+          {:ok, result}
 
-      {:error, reason} ->
-        Logger.error("DownloadWorker: Download failed for source_video_id: #{video.id}: #{inspect(reason)}")
+        {:error, reason} ->
+          Logger.error(
+            "DownloadWorker: Download failed for source_video_id: #{video.id}: #{inspect(reason)}"
+          )
+
+          Core.mark_failed(video, :download_failed, reason)
+          {:error, reason}
+      end
+    rescue
+      error ->
+        reason = Exception.message(error)
+
+        Logger.error(
+          "DownloadWorker: Download crashed for source_video_id: #{video.id}: #{Exception.format(:error, error, __STACKTRACE__)}"
+        )
+
+        Core.mark_failed(video, :download_failed, reason)
+        {:error, reason}
+    catch
+      kind, value ->
+        reason = "#{kind}: #{inspect(value)}"
+
+        Logger.error(
+          "DownloadWorker: Download crashed for source_video_id: #{video.id} (#{kind}): #{inspect(value)}"
+        )
+
         Core.mark_failed(video, :download_failed, reason)
         {:error, reason}
     end
@@ -139,15 +172,20 @@ defmodule Heaters.Processing.Download.Worker do
         title: updated_video.title,
         duration_seconds: updated_video.duration_seconds,
         file_size_bytes: result.file_size_bytes,
-        format_info: %{
-          width: result.width,
-          height: result.height,
-          fps: result.fps
-        } |> reject_nil_values(),
-        quality_metrics: %{
-          resolution: build_resolution_string(result.width, result.height),
-          fps: result.fps
-        } |> reject_nil_values()
+        format_info:
+          %{
+            width: result.width,
+            height: result.height,
+            fps: result.fps
+          }
+          |> reject_nil_values(),
+        quality_metrics:
+          %{
+            resolution: build_resolution_string(result.width, result.height),
+            fps: result.fps
+          }
+          |> reject_nil_values(),
+        metadata: result.metadata
       })
 
     ResultBuilder.log_result(__MODULE__, download_result)
@@ -159,7 +197,10 @@ defmodule Heaters.Processing.Download.Worker do
   defp ensure_downloading_state(source_video) do
     case source_video.ingest_state do
       :downloading ->
-        Logger.info("DownloadWorker: Video #{source_video.id} already in downloading state, resuming")
+        Logger.info(
+          "DownloadWorker: Video #{source_video.id} already in downloading state, resuming"
+        )
+
         {:ok, source_video}
 
       _ ->
@@ -167,7 +208,10 @@ defmodule Heaters.Processing.Download.Worker do
     end
   end
 
-  defp check_idempotency(%{ingest_state: state}) when state in [:new, :downloading, :download_failed], do: :ok
+  defp check_idempotency(%{ingest_state: state})
+       when state in [:new, :downloading, :download_failed],
+       do: :ok
+
   defp check_idempotency(_), do: {:error, :already_processed}
 
   defp generate_timestamp do
