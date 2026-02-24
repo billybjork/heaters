@@ -29,11 +29,14 @@ def main():
     
     parser = argparse.ArgumentParser(description="A CLI to run various Python tasks")
     parser.add_argument("task_name", help="The name of the task module to run (e.g., 'submit', 'splice').")
-    
+
     # Support both command line JSON and file-based JSON
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--args-json", help="A JSON string containing the arguments for the task.")
     group.add_argument("--args-file", help="Path to a file containing JSON arguments for the task.")
+
+    parser.add_argument("--result-file", required=True,
+                        help="Path to write the JSON result to on success.")
     
     args = parser.parse_args()
     task_module_name = args.task_name
@@ -82,10 +85,10 @@ def main():
             environment=os.getenv("APP_ENV", "development")
         )
         
-        # On success, print the final result as a single JSON line to stdout,
-        # prefixed with a token for reliable parsing by Elixir.
-        # This is how the task signals its result back to Elixir.
-        print(f"FINAL_JSON:{json.dumps(result)}")
+        # Write the result to the result file so Elixir can read it after
+        # the process exits. This keeps stdout purely for logging/progress.
+        with open(args.result_file, 'w') as rf:
+            json.dump(result, rf)
 
     except Exception:
         # On any failure, log the full exception traceback and exit with a non-zero code.
