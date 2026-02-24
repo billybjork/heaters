@@ -365,15 +365,22 @@ defmodule Heaters.Pipeline.Config do
   end
 
   defp execute_chained_worker(current_worker, item, next_worker, args) do
-    Task.start(fn ->
-      string_args = for {key, value} <- args, into: %{}, do: {to_string(key), value}
-      next_worker.handle_work(string_args)
-    end)
+    case Oban.insert(next_worker.new(args)) do
+      {:ok, %Oban.Job{id: job_id}} ->
+        Logger.info(
+          "PipelineConfig: Chained #{inspect(current_worker)} → #{inspect(next_worker)} " <>
+            "for item #{item.id} (Oban job #{job_id})"
+        )
 
-    Logger.info(
-      "PipelineConfig: Chained #{inspect(current_worker)} → #{inspect(next_worker)} for item #{item.id}"
-    )
+        :ok
 
-    :ok
+      {:error, reason} ->
+        Logger.error(
+          "PipelineConfig: Failed to chain #{inspect(current_worker)} → #{inspect(next_worker)} " <>
+            "for item #{item.id}: #{inspect(reason)}"
+        )
+
+        {:error, reason}
+    end
   end
 end
