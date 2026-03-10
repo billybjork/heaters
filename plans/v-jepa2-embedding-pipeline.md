@@ -2,7 +2,15 @@
 
 ## Overview
 
-V-JEPA 2 (Video Joint-Embedding Predictive Architecture 2) is Meta's self-supervised video encoder released June 2025. It achieves state-of-the-art on motion understanding tasks (77.3% top-1 on Something-Something v2, 39.7 R@5 on Epic-Kitchens-100 action anticipation) and is trained on 1M+ hours of internet video with no labels. It is a strong candidate as the frozen backbone encoder for the heaters contrastive sorting / embedding pipeline (trick2vec / spot2vec).
+V-JEPA 2 (Video Joint-Embedding Predictive Architecture 2) is Meta's self-supervised video encoder released June 2025. It achieves state-of-the-art on motion understanding tasks (77.3% top-1 on Something-Something v2, 39.7 R@5 on Epic-Kitchens-100 action anticipation) and is trained on 1M+ hours of internet video with no labels. It is the right backbone candidate for the heaters clip indexing and semantic retrieval stack, but it should not be treated as the whole system.
+
+**Recommended direction**
+- Use a frozen V-JEPA 2 backbone for the initial motion-aware video prior.
+- Train the actual retrieval geometry with a lightweight learned head on top of frozen features, using human similarity judgments.
+- Keep text search separate at first: structured metadata, synonyms, and faceted / lexical retrieval should ship before any shared video-text embedding.
+- Add a separate text-alignment head later, trained only on curated metadata, canonical trick descriptions, cluster names, and real query data.
+
+This is a better fit than "single shared embedding for everything." Visual similarity, structured trick attributes, and text-query intent overlap, but they are not identical objectives. The plan should preserve that separation from the beginning.
 
 **References:**
 - [Paper](https://arxiv.org/abs/2506.09985)
@@ -27,8 +35,11 @@ The codebase has a **production-ready embedding pipeline** that V-JEPA 2 can plu
 | Python embed task | `py/tasks/embed.py` | ✅ Ready (needs V-JEPA 2 loader) |
 | Pipeline config | `Pipeline.Config` | ✅ Ready (add new defaults) |
 | ANN index | pgvector `<=>` operator | ✅ Ready |
+| Neighbor exploration UI | `HeatersWeb.QueryLive` | ✅ Ready as bootstrap inspection tool |
 | Contrastive sorting UI | — | ❌ Not yet built |
-| Triplet extraction & projection head training | — | ❌ Not yet built |
+| Retrieval-head training loop | — | ❌ Not yet built |
+| Structured metadata / faceted search layer | — | ❌ Not yet built |
+| Text-alignment head | — | ❌ Not yet built |
 
 ### Critical Architecture Change: Keyframes → Video
 
@@ -52,6 +63,15 @@ V-JEPA 2 is fundamentally a **video model** that processes 3D spatiotemporal tub
 
 Option 1 is simpler and aligns better with V-JEPA 2's design — it can handle video files directly.
 
+**Important implementation note for this repo**: the current clip state machine is `exported -> keyframing -> keyframed -> embedding -> embedded`. For the first V-JEPA 2 phase, we should avoid a disruptive state-machine rewrite. The pragmatic path is:
+
+- keep the current pipeline stages intact initially
+- let `EmbeddingWorker` branch on `generation_strategy`
+- continue using keyframes for image-based strategies
+- fetch the exported clip MP4 directly for video-based strategies
+
+That preserves the existing workflow and lets us validate V-JEPA 2 without changing sacrosanct ingest-state behavior upfront.
+
 ### Generation Strategy Enum
 
 Add new strategies to `Processing.Embed.Embedding`:
@@ -66,7 +86,10 @@ Add new strategies to `Processing.Embed.Embedding`:
 :video_full_clip       # Embed entire clip (up to 64 frames uniformly sampled)
 :video_centered_64     # 64 frames centered on clip midpoint
 :video_trick_window    # 64 frames centered on trick initiation/apex (requires metadata)
+:video_dual_window     # Fuse full-clip + execution-window features before projection
 ```
+
+For MVP we should start with `:video_full_clip` and `:video_centered_64`. `:video_trick_window` and `:video_dual_window` become more valuable once we have better event boundaries or lightweight trick-localization metadata.
 
 ### Worker Changes
 
@@ -92,6 +115,8 @@ args = %{
 ```
 
 The worker can detect strategy type and branch accordingly, or we can add a separate `VideoEmbeddingWorker`.
+
+Recommendation: keep a single `EmbeddingWorker` initially and branch by strategy. A second worker is only worth the extra state/config complexity if video embedding ends up needing materially different retry, timeout, or queue behavior.
 
 ### Python Task Extension
 
@@ -130,6 +155,12 @@ default_embedding_generation_strategy: "keyframe_multi_avg"
 
 The backfill stage (`get_clips_needing_embeddings/0`) will automatically queue jobs for clips missing the configured default embedding variant.
 
+One nuance here: `Pipeline.Config` currently derives default embedding strategy from keyframe strategy. That coupling is fine for the current image path but becomes leaky once video strategies are first-class. We should decouple them in the plan:
+
+- `default_keyframe_strategy` remains for image models
+- `default_embedding_model` and `default_embedding_generation_strategy` become independently authoritative
+- video-based embedding strategies must not require a matching keyframe strategy
+
 ---
 
 ## Why V-JEPA 2 (and not a contrastive model)
@@ -140,7 +171,7 @@ V-JEPA 2 is fundamentally **not** a contrastive learning method. It uses **maske
 
 2. **Motion understanding >> appearance matching**: V-JEPA 2 outperforms contrastive encoders specifically on motion-centric tasks. For snowboarding tricks, the motion *is* the signal. A backside 540 and a frontside 540 look nearly identical in any single frame — the difference is the spatiotemporal trajectory. V-JEPA 2 encodes this natively.
 
-3. **Compatible with downstream contrastive fine-tuning**: The architecture is designed for frozen encoder + lightweight head. You extract V-JEPA 2 embeddings, then train *your own* contrastive projection head on top using the triplets from the sorting pipeline. The general-purpose encoder handles "what's happening in this video" while the projection head learns "is this the same trick as that one."
+3. **Compatible with downstream retrieval fine-tuning**: The architecture is designed for frozen encoder + lightweight head. You extract V-JEPA 2 embeddings, then train your own retrieval head on top using human similarity judgments. The general-purpose encoder handles "what's happening in this video" while the learned head shapes the actual retrieval space.
 
 4. **Self-supervised = no label dependency at base level**: Trained on 1M+ hours of unlabeled video. You inherit all of that world knowledge without needing any snowboarding-specific training data at the encoder level.
 
@@ -204,57 +235,71 @@ For snowboarding tricks, this means V-JEPA 2 likely represents a backside 540 no
 
 ---
 
-## Proposed Architecture: V-JEPA 2 + Contrastive Sorting Pipeline
+## Proposed Architecture: Multi-Layer Retrieval System
 
-The right mental model is a **two-layer embedding system**:
+The right mental model is a **multi-layer retrieval system**, not a single embedding trying to do every job:
 
 ```
-Layer 1: V-JEPA 2 frozen encoder (general video understanding)
-   ↓ high-dimensional spatiotemporal embeddings (1024-dim for ViT-L)
-Layer 2: Lightweight contrastive projection head (trick2vec / spot2vec)
-   ↓ domain-specific similarity space (128-256 dim)
-pgvector ANN index → contrastive sorting UI → triplets → back to Layer 2
+video clip
+  -> V-JEPA 2 backbone
+  -> temporal / spatiotemporal pooling
+  -> base feature h
+
+h -> retrieval head z_r  -> ANN similarity index
+h -> attribute heads z_a -> metadata store / faceted search index
+h -> text head z_t       -> optional text-to-video retrieval later
 ```
+
+The retrieval head is the main product for "find clips like this." The attribute heads and metadata layer support explainable filters and reliable conventional search. The text-alignment head is explicitly later-stage, auxiliary functionality.
+
+### Serving Model by Maturity
+
+**MVP**
+- Similarity search uses ANN over the retrieval embedding.
+- Text search uses structured metadata, synonym normalization, and lexical / faceted retrieval.
+- Hybrid queries run metadata filter first, then embedding rerank, or embedding candidate generation first, then metadata rerank depending on query intent.
+
+**Later**
+- Add a separate text-alignment head and text encoder for curated trick/query language.
+- Support hybrid queries like "like this clip + backside 540" or pure text discovery over a reranked candidate pool.
 
 ### How it maps to the existing pipeline
 
-**Pipeline Stage 7 (Embeddings)** → Replace CLIP/DINOv2 with V-JEPA 2 frozen encoder
-- Extract embeddings for all clips using V-JEPA 2
-- These are your initial vectors for the ANN index
-- V-JEPA 2's motion features should produce meaningfully better initial neighbors than image models
+**Pipeline Stage 7 (Embeddings)** -> add frozen V-JEPA 2 baseline support
+- Extract frozen video embeddings for all clips using V-JEPA 2.
+- Persist those embeddings through the existing `embeddings` table as the bootstrap representation.
+- Use the current nearest-neighbor path (`Processing.Embed.Search` and `QueryLive`) to sanity-check whether neighborhoods are already meaningfully motion-aware.
 
-**New: Contrastive Sorting UI** → Human-in-the-loop refinement
-- Present anchor clip, surface reference clips from pgvector similarity search
-- User selects closest match (positive), skipped clips become negatives
-- Active learning / uncertainty sampling to maximize information gain per interaction
-- V-JEPA 2's better initial representations mean fewer sorting iterations needed
+**New: Retrieval supervision workflow** -> human-in-the-loop refinement
+- Present an anchor clip plus a list of 8-12 candidates from ANN retrieval.
+- Ask the expert for top-k most similar, optional ordering, ties, or "none are good."
+- Treat pairwise triplets as derived data, not the primary annotation interface.
 
-**New: Triplet Event Logging** → Append-only `clip_sorting_events` table
-- All sorting events logged (anchor_clip_id, selected_positive_clip_id, rejected_clip_ids[])
-- Projected into triplet dataset: (anchor_embedding, positive_embedding, negative_embeddings)
+**New: Retrieval-head training** -> train on top of frozen V-JEPA features
+- Add a lightweight projection head with L2-normalized retrieval embeddings in the 256-512d range.
+- Optimize with listwise ranking as the primary objective, plus pairwise terms derived from the same labels.
+- Maintain separate retrieval heads for different notions of similarity only if the product proves they are materially different.
 
-**New: Projection Head Training** → Train contrastive head, NOT the full encoder
-- Lightweight MLP or small transformer head on top of frozen V-JEPA 2 features
-- Trained with triplet loss (or InfoNCE / supervised contrastive loss) using human-generated triplets
-- Fast to train, fast to iterate on, doesn't require massive compute
-- Separate heads for trick2vec and spot2vec
+**New: Metadata / faceted search layer** -> separate from the vector space
+- Create a controlled trick ontology and searchable metadata document per clip.
+- Add synonym normalization (`bs 540`, `cab 5`, `rail tricks`, etc.) and confidence-scored structured fields.
+- Use this layer as the initial text search system instead of forcing text into the retrieval embedding too early.
 
-**Re-embedding Loop** → Re-embed all clips through encoder + trained projection head
-- New ANN index in the projected space
-- Subsequent sorting rounds converge faster
-- Active learning selects clips uncertain *in the projected space*
+**Later: Text-alignment head** -> optional multimodal capability
+- Train a separate text/video alignment head only after metadata quality and human labels are strong.
+- Supervise it with curated text only: metadata, cluster names, canonical trick descriptions, query logs.
 
 ### Why Frozen Encoder + Projection Head (not full fine-tuning)
 
-1. **Data efficiency**: You'll have hundreds, maybe low thousands of triplets initially. Full fine-tuning a 1B parameter model on that will overfit catastrophically. A projection head with ~1-10M params is the right scale.
+1. **Data efficiency**: We'll have hundreds or low thousands of human judgments before we have anything close to full-model fine-tuning scale. A retrieval head with ~1-10M params is the right first step.
 
-2. **Iteration speed**: Retraining the projection head can happen frequently. The sorting → triplets → retrain → re-embed loop can run daily or on-demand.
+2. **Iteration speed**: Retraining the retrieval head can happen frequently. The label -> retrain -> re-project loop should be cheap enough to run repeatedly.
 
-3. **Stable base features**: The frozen encoder provides consistent, high-quality features regardless of how the projection head evolves. You can always re-project from the same base embeddings.
+3. **Stable base features**: The frozen encoder provides consistent, high-quality motion features regardless of how the learned heads evolve. We can always re-project from the same base embeddings.
 
-4. **Separate concerns**: trick2vec and spot2vec can share the same frozen V-JEPA 2 encoder but have different projection heads. The encoder computes once; the heads are cheap.
+4. **Separate concerns**: retrieval, structured attributes, and later text alignment can share the same frozen encoder while keeping their objectives cleanly separated.
 
-5. **Progressive enhancement**: Start frozen, move to LoRA fine-tuning of later encoder layers once you have enough data, then eventually full fine-tuning if warranted.
+5. **Progressive enhancement**: Start frozen, move to LoRA / adapters or shallow last-block unfreezing only after we have a stable eval set and enough human signal.
 
 ---
 
@@ -266,140 +311,128 @@ This architecture is explicitly aligned with [Sutton's Bitter Lesson](http://www
 - V-JEPA 2's 1M+ hours of self-supervised pretraining = pure compute leverage
 - No hand-crafted features about snowboarding, tricks, rotations, or grabs baked in
 - The model learned spatiotemporal dynamics from watching the world — including human motion, physics, rotation, gravity — without being told what any of it means
-- The contrastive sorting pipeline is a *learning* method: it lets the embedding space discover the structure of tricks through data (human similarity judgments), not through a taxonomy you designed
+- The retrieval training loop is a *learning* method: it lets the embedding space discover the structure of tricks through human similarity judgments, not brittle rules
 
 **What you're NOT doing (brittle heuristics):**
 - Not building a rule-based trick classifier ("if rotation > 360 AND grab == mute THEN backside_540_mute")
-- Not manually defining feature hierarchies or decision trees
+- Not expecting one vector to satisfy similarity, taxonomy, and text intent equally well
 - Not encoding snowboarding-specific physics or trick definitions into the model
 - Not relying on pose estimation as the *primary* embedding signal (though it can augment)
 
 **Where domain knowledge enters appropriately:**
-- The *structure* of the sorting pipeline (contrastive pairs, active learning, triplet generation) is a meta-method — it's the mechanism by which the model captures domain complexity, not domain knowledge itself
-- Separate vectors for trick vs spot similarity is a structural choice, not a heuristic
+- The metadata / ontology layer exists for search reliability and explainability, not as a substitute for learned retrieval geometry
+- The labeling workflow and active learning policy are structural choices about how to collect signal efficiently, not brittle recognition rules
 
 ---
 
 ## Implementation Phases
 
-### Phase 1: V-JEPA 2 Baseline Embeddings
+### Phase 0: Bootstrap Frozen Video Embeddings
 
-**Goal**: Replace CLIP/DINOv2 with V-JEPA 2, using existing infrastructure.
+**Goal**: validate that frozen V-JEPA 2 neighborhoods are strong enough to support labeling and downstream retrieval work.
 
-- [ ] Add V-JEPA 2 model loader to `py/tasks/embed.py`
-- [ ] Add video-based generation strategies to `Embedding` schema enum
-- [ ] Modify `EmbeddingWorker` to pass video path for V-JEPA strategies
-- [ ] Add `run_video_embed()` function to Python task
-- [ ] Update `Pipeline.Config` defaults to use V-JEPA 2
-- [ ] Batch extract V-JEPA 2 embeddings for all existing exported clips
-- [ ] Evaluate: do raw V-JEPA 2 nearest neighbors look reasonable?
+- [ ] Add V-JEPA 2 model loading and video embedding support to `py/tasks/embed.py`
+- [ ] Add video-based generation strategies to `Embedding` enum
+- [ ] Modify `EmbeddingWorker` to fetch either keyframes or exported clip video depending on strategy
+- [ ] Decouple embedding defaults from keyframe defaults in `Pipeline.Config`
+- [ ] Backfill frozen V-JEPA 2 embeddings for existing exported clips
+- [ ] Use `QueryLive` and targeted sampling to assess whether raw nearest neighbors are already useful
 
-**Files to modify:**
-- `lib/heaters/processing/embed/embedding.ex` (enum)
-- `lib/heaters/processing/embed/worker.ex` (video path support)
-- `lib/heaters/pipeline/config.ex` (defaults)
-- `py/tasks/embed.py` (V-JEPA 2 loader + video embedding)
-- New migration for enum values
+**Phase 0 output**
+- frozen per-clip V-JEPA embeddings stored in the existing `embeddings` table
+- a clear answer to: "are the bootstrap neighborhoods good enough to drive human labeling?"
 
-**Compute considerations:**
-- ViT-L (304M params) runs on CPU but slowly (~5-10s per clip)
-- GPU recommended for batch processing
-- Consider FLAME wrapping for elastic GPU compute on Fly.io
+### Phase 1: MVP Retrieval System
 
-### Phase 2: Contrastive Sorting UI
+**Goal**: ship the first real clip-similarity system using frozen features plus a learned retrieval head.
 
-**Goal**: Build the human-in-the-loop sorting interface.
+- [ ] Build a sorting / ranking LiveView around anchor + candidate lists, not binary triplets alone
+- [ ] Create append-only judgment logging for anchor, candidate set, selections, order, ties, and skips
+- [ ] Add lightweight retrieval-head training in Python
+- [ ] Store learned head versions and projected embeddings separately from raw backbone embeddings
+- [ ] Build ANN search over projected retrieval embeddings
+- [ ] Evaluate frozen baseline vs learned-head retrieval on held-out judgments
 
-- [ ] Design sorting LiveView (`SortLive`)
-- [ ] Implement anchor + candidates display using `EmbedSearch.similar_clips/2`
-- [ ] Add keyboard shortcuts for rapid selection
-- [ ] Create `clip_sorting_events` table (append-only event log)
-- [ ] Implement triplet extraction from event log
-- [ ] Add active learning: surface uncertain clips for next round
+**Evaluation gates**
+- Recall@K / NDCG@K on held-out ranked candidate sets
+- expert preference wins against the frozen baseline
+- failure analysis split by likely confounders such as rider identity, session, feature type, and camera/background similarity
 
-**New files:**
-- `lib/heaters_web/live/sort_live.ex`
-- `lib/heaters/sorting/event.ex` (schema)
-- `lib/heaters/sorting/triplet_extraction.ex`
-- Migration for `clip_sorting_events`
+**Labeling defaults**
+- Primary unit: anchor + 8-12 candidates, choose top-k most similar
+- Secondary unit: targeted attribute questions for confusion points
+- Periodic cluster/prototype review: label cluster exemplars and ambiguous boundaries
 
-**Design principle: Sorting as Training Signal**
-
-The sorting UI isn't just labeling data—it's generating **paired (perception, human_judgment) training signal**, analogous to RLHF in language models. This affects event schema design:
+**Suggested event schema**
 
 ```elixir
-# Capture rich signal, not just the selection
 schema "clip_sorting_events" do
   belongs_to :anchor_clip, Clip
-  belongs_to :selected_clip, Clip           # The positive
-  field :rejected_clip_ids, {:array, :id}   # Hard negatives (explicitly skipped)
-  field :candidate_clip_ids, {:array, :id}  # All candidates shown (for implicit negatives)
-  field :sorting_mode, Ecto.Enum            # :trick_similarity, :spot_similarity
-  field :session_id, :binary_id             # Group events by sorting session
-  field :response_time_ms, :integer         # Faster = more confident judgment
-  field :candidate_rankings, {:array, :map} # Optional: rank order if UI supports it
+  field :candidate_clip_ids, {:array, :id}
+  field :selected_clip_ids, {:array, :id}
+  field :rejected_clip_ids, {:array, :id}
+  field :candidate_rankings, {:array, :map}
+  field :sorting_mode, Ecto.Enum
+  field :session_id, :binary_id
+  field :response_time_ms, :integer
+  field :notes, :map
   timestamps()
 end
 ```
 
-Key signals to capture:
-- **Hard negatives**: Clips explicitly passed over (stronger signal than random negatives)
-- **Response time**: Faster selections may indicate more obvious differences
-- **Session context**: Sequential selections within a session have dependencies
-- **Sorting mode**: Same clip pair might be similar for tricks but different for spots
+Derived training data can still include positive pairs, hard negatives, and triplets, but the annotation surface should optimize for label efficiency instead of forcing triplets as the primitive.
 
-### Phase 3: Projection Head Training
+### Phase 2: Domain Adaptation + Searchable Structure
 
-**Goal**: Train lightweight heads to create trick2vec / spot2vec spaces.
+**Goal**: improve retrieval quality and add reliable conventional search.
 
-- [ ] Design projection head architecture (2-3 layer MLP, ~1-5M params)
-- [ ] Implement triplet loss training in Python
-- [ ] Add `run_train_projection_head()` task
-- [ ] Create `projection_heads` table to store trained weights
-- [ ] Implement re-embedding through encoder + projection head
-- [ ] Add separate heads for trick similarity vs spot similarity
+- [ ] Add temporal pooling and retrieval-head improvements if frozen-mean pooling is limiting
+- [ ] Introduce shallow adaptation only after enough labels exist: LoRA, adapters, or last-block unfreezing
+- [ ] Add structured attribute heads for stable fields like trick family, stance, spin direction, rotation amount, grab, slide/contact, terrain feature
+- [ ] Create a metadata document / ontology layer for lexical and faceted retrieval
+- [ ] Add synonym and normalization logic (`bs 540`, `cab 5`, `switch frontside 540`, etc.)
+- [ ] Support hybrid search: metadata filter + vector rerank, and vector candidate generation + metadata rerank
 
-**New files:**
-- `py/tasks/train_projection.py`
-- `lib/heaters/processing/embed/projection_head.ex` (schema)
-- `lib/heaters/processing/embed/projected_embedding.ex` (schema for projected vectors)
+**Why this phase matters**
+- It prevents the retrieval embedding from having to carry the full burden of exact queryability.
+- It gives us explainable search behavior before any multimodal alignment work.
 
-### Phase 4: Active Learning Loop
+### Phase 3: Text Alignment on Curated Language
 
-**Goal**: Close the feedback loop for continuous improvement.
+**Goal**: add text-queryable retrieval without making weak captions the foundation of the system.
 
-- [ ] Implement uncertainty sampling in projected embedding space
-- [ ] Continuous retrain: new triplets → retrain head → re-project → update index
-- [ ] Measure convergence: sorting iterations until neighbors stabilize
-- [ ] Add metrics dashboard for embedding quality
+- [ ] Train a separate text encoder / text-alignment head using curated text only
+- [ ] Use supervision from metadata docs, canonical trick names, cluster labels, expert-authored descriptors, and real query logs if available
+- [ ] Add text-to-video reranking or ANN retrieval over the text-aligned head
+- [ ] Support mixed queries such as "like this clip + backside 540"
 
-### Phase 5: Scale Up (if warranted)
+**Explicit non-goal for early phases**
+- no shared video-text training on auto-captions or weak VLM-generated descriptions
 
-- [ ] LoRA fine-tuning of V-JEPA 2 encoder's later layers
-- [ ] Upgrade to ViT-g (1B params) if ViT-L proves limiting
-- [ ] Evaluate segmentation-augmented embeddings (rider masks)
-- [ ] Explore multi-scale embeddings (full clip + sub-clips)
+### Phase 4: Scale Up Only If the Product Justifies It
+
+- [ ] Upgrade to deeper adaptation or larger checkpoints only if eval data shows a ceiling
+- [ ] Explore dual-window / multi-scale representations
+- [ ] Consider richer metadata retrieval models only if the metadata corpus becomes large enough to justify them
+- [ ] Split retrieval heads if we discover materially distinct notions of similarity such as trick semantics vs style vs filming context
 
 ---
 
 ## Open Questions
 
-1. **Embedding dimensionality**: V-JEPA 2 ViT-L outputs 1024-dim embeddings. Should the projection head reduce this (e.g., to 128 or 256)? Lower dims are faster for ANN search but may lose information. Start with 256, test 128 and 512.
+1. **Retrieval embedding dimensionality**: default to 256d or 384d for the learned retrieval head, then compare against 512d on held-out ranking quality and index size.
 
-2. **Projection head architecture**: Simple MLP vs. small transformer? MLP is simpler and likely sufficient for initial data volumes.
+2. **Temporal pooling choice**: start with simple temporal pooling over a single 64-frame view, then test dual-window fusion if background leakage or poor trick-localization shows up in error analysis.
 
-3. **Contrastive loss function**: Triplet loss vs. InfoNCE vs. supervised contrastive. InfoNCE handles multiple negatives per anchor more efficiently. Could start with triplet loss and migrate to InfoNCE as batch sizes grow.
+3. **Ranking loss mix**: primary objective should be listwise ranking on expert-ranked candidate sets; pairwise or triplet terms are auxiliary, derived from the same event log.
 
-4. **Frame sampling for V-JEPA 2**: Uses 64 frames. For short trick clips (2-5 seconds at 30fps = 60-150 frames), 64 frames covers most of the action. For longer clips, need to decide: subsample uniformly, or use trick keyframes to center the window?
+4. **When to adapt the backbone**: define explicit criteria before any LoRA / last-block tuning, such as a stable held-out eval set and evidence that the learned head has plateaued.
 
-5. **Multi-scale embeddings**: Should we embed full clips AND sub-clips (individual tricks within lines)? V-JEPA 2 can handle variable-length inputs.
+5. **Metadata schema scope**: decide the smallest useful ontology that supports faceted search without overcommitting to an overly rigid closed-set taxonomy too early.
 
-6. **GPU compute**: V-JEPA 2 is significantly more compute-intensive than CLIP. Options:
-   - FLAME with GPU-enabled Fly machines
-   - Batch processing on external GPU (Lambda Labs, Vast.ai)
-   - Modal.com for serverless GPU inference
+6. **GPU strategy**: V-JEPA 2 is materially heavier than CLIP. Decide whether backfill / training jobs run through FLAME, a separate GPU service, or an offline batch path.
 
-7. **Storage for V-JEPA embeddings**: 1024-dim vectors are 4x larger than 256-dim CLIP embeddings. pgvector handles this fine, but monitor index size.
+7. **Storage layout for raw vs projected vectors**: projected retrieval embeddings should likely live separately from raw backbone embeddings so we can reproject without recomputing the backbone.
 
 ---
 
